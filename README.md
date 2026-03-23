@@ -2,6 +2,8 @@
 
 Authentication service for the Discord clone project (CSE 356). Handles local signup/login and OAuth (Google, GitHub, course OIDC).
 
+**Implementation scope and how it compares to the full Discord-style architecture** (nginx, Cassandra messages, Elasticsearch, DMs over WebSockets/SSE, etc.) is documented in **[IMPLEMENTATION.md](./IMPLEMENTATION.md)**.
+
 ## Prerequisites
 
 - **Node.js** v18+
