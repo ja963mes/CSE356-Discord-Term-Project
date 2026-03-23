@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+**/node_modules/
 
 # Environment variables
 .env
@@ -8,6 +9,7 @@ node_modules/
 
 # Build output
 dist/
+**/dist/
 
 # OS files
 Thumbs.db

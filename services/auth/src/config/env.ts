@@ -1,6 +1,10 @@
 import { z } from "zod";
 import dotenv from "dotenv";
-dotenv.config();
+import path from "path";
+
+// Workspace scripts run with `cwd` set to the package directory, so we
+// explicitly load the repo-root `.env`.
+dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
 
 const envSchema = z.object({
   PORT: z.string().default("3001"),

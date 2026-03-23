@@ -1,6 +1,8 @@
-# Auth Service
+# Discord Clone (CSE 356) — Monorepo
 
-Authentication service for the Discord clone project (CSE 356). Handles local signup/login and OAuth (Google, GitHub, course OIDC).
+Monorepo containing multiple backend services plus a React frontend. The primary backend service in this repo is the authentication service (Express) with session auth backed by Redis and PostgreSQL.
+
+Implementation scope and how this compares to the full architecture (nginx, Cassandra messages, Elasticsearch, DMs over WebSockets/SSE, etc.) is documented in **[IMPLEMENTATION.md](./IMPLEMENTATION.md)**.
 
 ## Prerequisites
 
@@ -41,54 +43,65 @@ Get the `.env` file from a team member and place it in the project root.
 npm run db:migrate
 ```
 
-### 5. Start the dev server
+### 5. Start services
+
+Start the auth service (required for login):
 
 ```bash
-npm run dev
+npm run dev:auth
 ```
 
-The app will be running at **http://localhost:3001**.
+Start the React frontend:
 
-- Login/Register page: http://localhost:3001/login.html
-- Landing page (requires auth): http://localhost:3001/
+```bash
+npm run dev:frontend
+```
+
+The frontend will be running at **http://localhost:5173**.
+
+- Login (wireframe UI): http://localhost:5173/login
+- Chat (wireframe UI): http://localhost:5173/
+
+Optional stub services for the wireframes:
+
+- `npm run dev:communities` (port 3002)
+- `npm run dev:messages` (port 3003)
+- `npm run dev:search` (port 3004)
+- `npm run dev:realtime` (port 3005)
+
+Note: the frontend includes fallback sample data, so it can render even if some stub services are not running.
 
 ## Available Scripts
 
 | Command | Description |
 |---|---|
-| `npm run dev` | Start dev server with auto-reload (nodemon + ts-node) |
-| `npm run build` | Compile TypeScript to `dist/` |
-| `npm start` | Run compiled app from `dist/` |
-| `npm run db:generate` | Generate a new migration from schema changes |
-| `npm run db:migrate` | Apply pending migrations to the database |
+| `npm run dev:auth` | Start authentication service (port 3001) |
+| `npm run dev:frontend` | Start React frontend (port 5173) |
+| `npm run dev:communities` | Start communities stub service (port 3002) |
+| `npm run dev:messages` | Start messages stub service (port 3003) |
+| `npm run dev:search` | Start search stub service (port 3004) |
+| `npm run dev:realtime` | Start realtime stub service (port 3005) |
+| `npm run db:generate` | Generate a new migration (auth service) |
+| `npm run db:migrate` | Apply pending migrations (auth service) |
 
 ## Project Structure
 
 ```
-src/
-  index.ts              # Express app entry point
-  config/
-    env.ts              # Environment variable validation (Zod)
-    oauth.ts            # OAuth/OIDC provider configuration
-  db/
-    index.ts            # Drizzle ORM + pg pool
-    redis.ts            # Redis connection (ioredis)
-    schema.ts           # Database schema (users, identities)
-  middleware/
-    session.ts          # requireAuth middleware
-  routes/
-    auth.ts             # All auth routes (register, login, OAuth)
-  types/
-    express.d.ts        # Express Request type augmentation
-public/
-  login.html            # Sign up / Sign in page
-  home.html             # Post-login landing page
-drizzle/
-  *.sql                 # Generated migration files
+services/
+  auth/
+    src/
+    public/
+    drizzle/
+  communities/
+  messages/
+  search/
+  realtime/
+frontend/
+  src/
 ```
 
 ## Troubleshooting
 
 - **Redis connection errors** — Make sure Redis is running: `docker ps` or `redis-cli ping`
 - **Database migration fails** — Make sure Postgres is running and `auth_db` exists: `docker exec postgres-auth psql -U postgres -c "SELECT 1"`
-- **Port already in use** — Change `PORT` in `.env` or kill the existing process
+- **Port already in use** — Change `PORT` in `.env` or kill the existing process (auth defaults to 3001)

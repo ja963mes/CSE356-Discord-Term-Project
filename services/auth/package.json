@@ -1,30 +1,15 @@
 {
-  "name": "discord-term-project",
+  "name": "auth-service",
   "version": "1.0.0",
-  "main": "index.js",
   "private": true,
-  "workspaces": [
-    "services/*",
-    "frontend"
-  ],
+  "main": "dist/index.js",
   "scripts": {
-    "dev": "npm run dev:frontend",
-    "dev:auth": "npm run dev --workspace auth-service",
-    "dev:communities": "npm run dev --workspace communities-service",
-    "dev:messages": "npm run dev --workspace messages-service",
-    "dev:search": "npm run dev --workspace search-service",
-    "dev:realtime": "npm run dev --workspace realtime-service",
-    "dev:frontend": "npm run dev --workspace frontend",
-    "build": "npm run build:auth && npm run build:frontend",
-    "build:auth": "npm run build --workspace auth-service",
-    "build:frontend": "npm run build --workspace frontend",
-    "db:generate": "npm run db:generate --workspace auth-service",
-    "db:migrate": "npm run db:migrate --workspace auth-service"
+    "dev": "nodemon --exec ts-node src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
   "dependencies": {
     "bcrypt": "^6.0.0",
     "cookie-parser": "^1.4.7",
@@ -59,3 +44,4 @@
     "typescript": "^5.9.3"
   }
 }
+
