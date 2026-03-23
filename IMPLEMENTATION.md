@@ -113,14 +113,15 @@ Deployment will be handled by Kubernetes/nginx; RabbitMQ connectivity details wi
 
 ---
 
-### Future DM communication (WebSockets, single channel)
+### Future Real-time Communication (WebSockets, bidirectional)
 
-For real-time messaging (especially DMs), the intended transport is a **single WebSocket connection per authenticated client**.
+For real-time messaging (group chats and DMs), the intended transport is a **single WebSocket connection per authenticated client**.
 
 Design choice:
 - **One WebSocket** handles both directions:
-  - client sends `message.send` / `dm.input` events (user text)
-  - server broadcasts `message.created` / `dm.message` events back to all connected clients that should receive them
+- **Bidirectional by design**:
+  - client sends `message.send` events (user text + routing info like `channelId`/`dmId`)
+  - server broadcasts `message.created` events back to all connected clients that should receive them
 - **No SSE polling tandem**: WebSockets already provide server push for new messages, so adding SSE in parallel would duplicate transport complexity.
 - **Optional fallback**: SSE can be considered later only for clients/environments where WebSockets are unavailable, but it is not the primary mechanism.
 
