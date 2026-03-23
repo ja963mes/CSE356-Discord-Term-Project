@@ -4,9 +4,13 @@ This document describes **what is implemented in this repository today** and how
 
 ## Summary
 
-The codebase is an **authentication service** (`auth-service`): one **Express 5** application that provides local signup/login, session-based auth backed by **Redis**, user and identity records in **PostgreSQL** (via **Drizzle ORM**), and **OAuth 2 / OIDC** flows for Google, GitHub, and the course OIDC provider. Static HTML in `public/` implements a minimal login UI served by the same server.
+The codebase is now a **monorepo**:
 
-**Not present in this repo:** nginx (or any reverse proxy config), Cassandra, Elasticsearch, WebSockets or SSE for DMs, separate microservices, a dedicated SPA frontend folder with API middleware, or Postgres schemas for communities/channels/messages beyond user auth data.
+- An **authentication service** (`services/auth`) providing local signup/login, session-based auth backed by **Redis**, user and identity records in **PostgreSQL** (via **Drizzle ORM**), and **OAuth 2 / OIDC** flows for Google, GitHub, and the course OIDC provider.
+- Stub microservices under `services/` (`communities`, `messages`, `search`, `realtime`) so the frontend can run with local stub services.
+- A **React (Vite) frontend** under `frontend/` that renders the `/stitch/` wireframes (login + main chat) and calls the backend via the Vite dev proxy.
+
+**Not present in this repo (yet):** nginx (or any reverse proxy config), Cassandra, Elasticsearch, fully implemented WebSockets/SSE for DMs, and Postgres schemas for communities/channels/messages beyond user auth data.
 
 ---
 
@@ -20,7 +24,7 @@ The codebase is an **authentication service** (`auth-service`): one **Express 5*
 | **Postgres** for communities & channels | Not implemented | Postgres holds **`users`** and **`identities`** only (auth-related). No communities/channels tables here. |
 | **WebSockets (Express) or SSE for DMs** | Not implemented | No `socket.io`, `ws`, or SSE endpoints. |
 | **Elasticsearch** for search | Not implemented | No Elasticsearch integration. |
-| **Frontend in separate folder + middleware to backend** | **Partial** | UI lives under **`public/`** as static HTML/JS calling `/auth/*` on the **same origin**. There is no separate frontend package or Next/Vite app; **`requireAuth`** in `src/middleware/session.ts` is server-side middleware only (not a frontend API layer). |
+| **Frontend in separate folder + middleware to backend** | **Implemented (wireframes)** | React frontend lives under **`frontend/`** (Vite + Tailwind) and renders `/stitch/` wireframes; it calls backend via the Vite dev proxy (cookies for `/auth/*`). |
 
 ---
 
@@ -28,8 +32,8 @@ The codebase is an **authentication service** (`auth-service`): one **Express 5*
 
 ### Runtime and HTTP API
 
-- **Express** (`src/index.ts`): JSON body parsing, cookies, static files from `public/`, health check.
-- **Routes** (`src/routes/auth.ts`):
+- **Express** (`services/auth/src/index.ts`): JSON body parsing, cookies, static files from `services/auth/public/`, health check.
+- **Routes** (`services/auth/src/routes/auth.ts`):
   - `POST /auth/register` — local account; bcrypt password hashing.
   - `POST /auth/login` — local login; sets `session_token` cookie.
   - `POST /auth/logout` — clears session in Redis and cookie.
@@ -41,13 +45,20 @@ The codebase is an **authentication service** (`auth-service`): one **Express 5*
 - **GET `/`** — intended as a protected landing page (`requireAuth`); see routing note below.
 - **GET `/auth/oauth/pending`** — serves `login.html` for OAuth completion UI.
 
+### Stub microservices (for local UI)
+
+- `services/communities` exposes `GET /channels` (sample channels for the wireframe UI).
+- `services/messages` exposes `GET /messages?channelId=...` (sample channel history).
+- `services/search` exposes `GET /search?q=...` (sample search results).
+- `services/realtime` exposes `GET /dms/sse` (placeholder; currently returns `501 Not Implemented`).
+
 ### Middleware
 
-- **`requireAuth`** (`src/middleware/session.ts`): Reads `session_token` cookie, loads `session:<token>` from Redis, attaches `req.user.internal_id`, returns 401 if missing/invalid.
+- **`requireAuth`** (`services/auth/src/middleware/session.ts`): Reads `session_token` cookie, loads `session:<token>` from Redis, attaches `req.user.internal_id`, returns 401 if missing/invalid.
 
 ### Data layer (PostgreSQL)
 
-- **Drizzle** (`src/db/schema.ts`, `src/db/index.ts`, `drizzle/` migrations):
+- **Drizzle** (`services/auth/src/db/schema.ts`, `services/auth/src/db/index.ts`, `services/auth/drizzle/` migrations):
   - **`users`**: `internal_id`, `username`, optional `email`, optional `password_hash`, `profile` (JSONB), `created_at`.
   - **`identities`**: links OAuth `provider` + `provider_uid` to `users.internal_id` (unique on provider + provider_uid).
 
@@ -61,13 +72,17 @@ The codebase is an **authentication service** (`auth-service`): one **Express 5*
 
 ### Configuration
 
-- **`src/config/env.ts`**: Zod-validated env vars (`PORT`, `DATABASE_URL`, `REDIS_URL`, `SESSION_SECRET`, OAuth/OIDC URLs and secrets).
-- **`src/config/oauth.ts`**: Google/GitHub URL builders; OIDC discovery and callback handling.
+- **`services/auth/src/config/env.ts`**: Zod-validated env vars (`PORT`, `DATABASE_URL`, `REDIS_URL`, `SESSION_SECRET`, OAuth/OIDC URLs and secrets).
+- **`services/auth/src/config/oauth.ts`**: Google/GitHub URL builders; OIDC discovery and callback handling.
 
-### Frontend (minimal)
+### Frontend
 
-- **`public/login.html`**: Tabs for sign-in/sign-up, OAuth buttons, pending-OAuth create/link flows (fetch to `/auth/*`).
-- **`public/home.html`**: Post-login landing (loaded when authenticated).
+- **React + Vite**: `/stitch/` wireframes rendered as pages:
+  - `frontend/src/pages/LoginPage.tsx`
+  - `frontend/src/pages/ChatPage.tsx`
+- **OAuth pending / legacy pages** (still served by the auth service):
+  - `public/login.html` (OAuth completion UI)
+  - `public/home.html` (post-login landing)
 
 ### Unused / reserved dependencies
 
@@ -77,9 +92,39 @@ The codebase is an **authentication service** (`auth-service`): one **Express 5*
 
 ## Routing note (`GET /`)
 
-`src/index.ts` registers two handlers for `GET /`. In Express, the **first** matching route runs. The first registration uses `requireAuth`, so unauthenticated browser requests to `/` receive **401 JSON** rather than the redirect defined in a second `GET /` handler. Teams should treat this as something to reconcile if the product should redirect unauthenticated users to `login.html`.
+`services/auth/src/index.ts` registers two handlers for `GET /`. In Express, the **first** matching route runs. The first registration uses `requireAuth`, so unauthenticated browser requests to `/` receive **401 JSON** rather than the redirect defined in a second `GET /` handler. Teams should treat this as something to reconcile if the product should redirect unauthenticated users to `login.html`.
 
 ---
+
+### Future Messaging (RabbitMQ)
+
+Implementation note only (no RabbitMQ code yet).
+
+The intended architecture is to introduce RabbitMQ as an event/message broker between services. Typical event patterns:
+
+- `users.*` and `auth.*`: account created, session invalidated, password reset, etc.
+- `channels.*`: channel created/updated; membership changes.
+- `messages.*`: message created/edited/deleted; message delivery acknowledgements (future).
+- `dms.*`: DM message events once the DM transport is added (delivered over WebSockets; SSE polling is not required in the final design).
+
+We will later decide on exchanges/queues and topic naming (usually topic exchanges) so services can publish and subscribe without tight coupling.
+
+Deployment will be handled by Kubernetes/nginx; RabbitMQ connectivity details will be wired via environment variables and service discovery.
+
+---
+
+### Future DM communication (WebSockets, single channel)
+
+For real-time messaging (especially DMs), the intended transport is a **single WebSocket connection per authenticated client**.
+
+Design choice:
+- **One WebSocket** handles both directions:
+  - client sends `message.send` / `dm.input` events (user text)
+  - server broadcasts `message.created` / `dm.message` events back to all connected clients that should receive them
+- **No SSE polling tandem**: WebSockets already provide server push for new messages, so adding SSE in parallel would duplicate transport complexity.
+- **Optional fallback**: SSE can be considered later only for clients/environments where WebSockets are unavailable, but it is not the primary mechanism.
+
+This transport decision is compatible with introducing RabbitMQ later: once RabbitMQ is wired, services can publish/consume events and then use the WebSocket layer to fan them out to connected clients.
 
 ## Suggested next steps (for the full architecture)
 
