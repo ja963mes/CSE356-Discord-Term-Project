@@ -8,7 +8,8 @@ export async function broadcastPresenceChange(
   connections: Map<string, { ws: WebSocket; userId: string }>
 ): Promise<void> {
   const relatedUserIds = await getRelatedUserIds(userId, connections);
-  const relatedUserSet = new Set(relatedUserIds);
+  // Always include the user themselves so their own UI updates
+  const relatedUserSet = new Set([...relatedUserIds, userId]);
 
   const payload = JSON.stringify({ type: "presence_update", userId, status });
 

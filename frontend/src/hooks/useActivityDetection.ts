@@ -3,7 +3,7 @@ import { useEffect, useRef } from "react";
 // 30s base + up to 10s jitter to avoid thundering herd under load
 const PING_INTERVAL_MS = 30_000 + Math.random() * 10_000;
 
-export function useActivityDetection(send: (msg: object) => void) {
+export function useActivityDetection(send: (msg: object) => boolean) {
   const lastPingRef = useRef<number>(0);
   const sendRef = useRef(send);
 
@@ -16,8 +16,10 @@ export function useActivityDetection(send: (msg: object) => void) {
       if (document.hidden) return;
       const now = Date.now();
       if (now - lastPingRef.current >= PING_INTERVAL_MS) {
-        lastPingRef.current = now;
-        sendRef.current({ type: "ping" });
+        const sent = sendRef.current({ type: "ping" });
+        // Only update lastPingRef if the ping was actually sent
+        // If WS isn't open yet, keep lastPingRef at 0 so next activity retries
+        if (sent) lastPingRef.current = now;
       }
     }
 
@@ -33,7 +35,9 @@ export function useActivityDetection(send: (msg: object) => void) {
     events.forEach((e) => window.addEventListener(e, maybePing));
     document.addEventListener("visibilitychange", onVisibilityChange);
 
-    // Send an initial ping on mount
+    // Attempt initial ping — if WS not open yet it'll be dropped,
+    // but we reset lastPingRef so the next activity event fires immediately
+    lastPingRef.current = 0;
     maybePing();
 
     return () => {

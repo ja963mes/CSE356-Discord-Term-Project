@@ -14,9 +14,7 @@ export function useWebSocket(onMessage?: (msg: IncomingMessage) => void) {
   const shouldReconnect = useRef(true);
 
   // Keep onMessage ref up to date without re-running the effect
-  useEffect(() => {
-    onMessageRef.current = onMessage;
-  }, [onMessage]);
+  useEffect(() => { onMessageRef.current = onMessage; }, [onMessage]);
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
@@ -49,10 +47,13 @@ export function useWebSocket(onMessage?: (msg: IncomingMessage) => void) {
     };
   }, []);
 
-  const send = useCallback((msg: object) => {
+  // Returns true if the message was sent, false if the socket isn't open
+  const send = useCallback((msg: object): boolean => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(msg));
+      return true;
     }
+    return false;
   }, []);
 
   useEffect(() => {

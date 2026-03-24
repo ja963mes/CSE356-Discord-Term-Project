@@ -1,15 +1,28 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Channel, Message, SearchResult, getChannels, getMessages, search } from "../api/discord";
+import { getMe, Me } from "../api/auth";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { useActivityDetection } from "../hooks/useActivityDetection";
 import { usePresence } from "../hooks/usePresence";
 import UserPresence from "../components/UserPresence";
 
-// TODO: replace with real logged-in user from /auth/me in Story 4
-const ME = { userId: "local", displayName: "You" };
-
 export default function ChatPage() {
-  const { handleMessage, getPresence } = usePresence();
+  const [me, setMe] = useState<Me | null>(null);
+
+  const { handleMessage: handlePresenceMessage, getPresence, setPresence } = usePresence();
+
+  const handleMessage = useCallback((msg: import("../hooks/useWebSocket").IncomingMessage) => {
+    console.log("[ws] incoming:", msg);
+    handlePresenceMessage(msg);
+  }, [handlePresenceMessage]);
+
+  useEffect(() => {
+    getMe().then((data) => {
+      setMe(data);
+      setPresence(data.internal_id, { status: data.presence as import("../hooks/usePresence").PresenceStatus });
+    }).catch(() => setMe(null));
+  }, [setPresence]);
+
   const { send } = useWebSocket(handleMessage);
   useActivityDetection(send);
 
@@ -151,9 +164,10 @@ export default function ChatPage() {
           <div className="p-2 bg-surface-container-lowest flex items-center gap-2">
             <div className="flex-1 overflow-hidden">
               <UserPresence
-                userId={ME.userId}
-                displayName={ME.displayName}
-                presence={getPresence(ME.userId)}
+                userId={me?.internal_id ?? ""}
+                displayName={me?.profile.displayName ?? "..."}
+                avatarUrl={me?.profile.avatar ?? undefined}
+                presence={getPresence(me?.internal_id ?? "")}
                 size="sm"
               />
             </div>

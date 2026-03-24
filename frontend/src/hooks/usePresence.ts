@@ -32,5 +32,13 @@ export function usePresence() {
     [presenceMap]
   );
 
-  return { handleMessage, getPresence, presenceMap };
+  const setPresence = useCallback((userId: string, state: PresenceState) => {
+    setPresenceMap((prev) => {
+      const next = new Map(prev);
+      next.set(userId, state);
+      return next;
+    });
+  }, []);
+
+  return { handleMessage, getPresence, setPresence, presenceMap };
 }
