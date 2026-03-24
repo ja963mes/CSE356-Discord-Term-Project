@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+<<<<<<< HEAD
 import {
   Channel,
   Community,
@@ -29,6 +30,38 @@ export default function ChatPage() {
   const [guildName, setGuildName] = useState("The Obsidian Architect");
   const [usingLiveCommunities, setUsingLiveCommunities] = useState(false);
   const [communityModal, setCommunityModal] = useState<CommunityModal>("none");
+=======
+import { useNavigate } from "react-router-dom";
+import { Channel, Message, SearchResult, getChannels, getMessages, search } from "../api/discord";
+import { getMe, getDmUsers, logout, Me, DmUser } from "../api/auth";
+import { useWebSocket } from "../hooks/useWebSocket";
+import { useActivityDetection } from "../hooks/useActivityDetection";
+import { usePresence } from "../hooks/usePresence";
+import UserPresence from "../components/UserPresence";
+
+export default function ChatPage() {
+  const navigate = useNavigate();
+  const [me, setMe] = useState<Me | null>(null);
+  const [dmUsers, setDmUsers] = useState<DmUser[]>([]);
+
+  const { handleMessage: handlePresenceMessage, getPresence, setPresence } = usePresence();
+
+  const handleMessage = useCallback((msg: import("../hooks/useWebSocket").IncomingMessage) => {
+    console.log("[ws] incoming:", msg);
+    handlePresenceMessage(msg);
+  }, [handlePresenceMessage]);
+
+  useEffect(() => {
+    getMe().then((data) => {
+      setMe(data);
+      setPresence(data.internal_id, { status: data.presence as import("../hooks/usePresence").PresenceStatus });
+    }).catch(() => setMe(null));
+    getDmUsers().then(setDmUsers).catch(() => setDmUsers([]));
+  }, [setPresence]);
+
+  const { send } = useWebSocket(handleMessage);
+  useActivityDetection(send);
+>>>>>>> 91721a8 (feat: login page guard now working. refs: DEV-22)
 
   const [channels, setChannels] = useState<Channel[]>([]);
   const [selectedChannelId, setSelectedChannelId] = useState<string>("general-chat");
@@ -311,6 +344,13 @@ export default function ChatPage() {
               </span>
               <span className="material-symbols-outlined text-lg p-1 hover:bg-surface-container-high rounded transition-colors cursor-pointer">
                 settings
+              </span>
+              <span
+                className="material-symbols-outlined text-lg p-1 hover:bg-surface-container-high rounded transition-colors cursor-pointer"
+                title="Log out"
+                onClick={() => logout().then(() => navigate("/login", { replace: true })).catch(() => navigate("/login", { replace: true }))}
+              >
+                logout
               </span>
             </div>
           </div>
