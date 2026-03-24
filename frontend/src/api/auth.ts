@@ -43,7 +43,6 @@ export interface Me {
   username: string;
   email: string | null;
   profile: { displayName: string; avatar: string | null };
-  presence: string;
 }
 
 export async function getMe(): Promise<Me> {

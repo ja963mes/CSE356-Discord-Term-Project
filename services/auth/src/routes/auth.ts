@@ -20,7 +20,6 @@ import {
   handleOidcCallback,
 } from "../config/oauth";
 
-const REALTIME_URL = process.env.REALTIME_URL ?? "http://localhost:3005";
 
 const avatarStorage = multer.diskStorage({
   destination: (_req, _file, cb) => {
@@ -523,22 +522,11 @@ router.get("/me", requireAuth, async (req: Request, res: Response): Promise<void
       return;
     }
 
-    // Fetch presence from realtime service
-    let presence = "offline";
-    try {
-      const presenceRes = await fetch(`${REALTIME_URL}/internal/presence/${user.internal_id}`);
-      const presenceData = await presenceRes.json() as { status: string };
-      presence = presenceData.status;
-    } catch {
-      // realtime service down — default to offline
-    }
-
     res.json({
       internal_id: user.internal_id,
       username: user.username,
       email: user.email,
       profile: user.profile,
-      presence,
     });
   } catch (err) {
     console.error(err);
@@ -601,6 +589,16 @@ router.post("/profile/avatar", requireAuth, uploadAvatar.single("avatar"), async
     if (!user) {
       res.status(404).json({ error: "User not found" });
       return;
+    }
+
+    // Delete old avatar file if one exists
+    const oldProfile = user.profile as { avatar?: string | null };
+    if (oldProfile.avatar) {
+      const oldFilename = oldProfile.avatar.split("/").pop();
+      if (oldFilename) {
+        const oldPath = path.resolve(__dirname, "../../uploads/avatars", oldFilename);
+        fs.unlink(oldPath, () => {}); // best-effort, ignore errors
+      }
     }
 
     const avatarUrl = `/auth/avatars/${req.file.filename}`;

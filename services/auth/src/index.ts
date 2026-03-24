@@ -11,6 +11,8 @@ const app = express();
 app.use(express.json());
 app.use(cookieParser());
 
+app.use("/auth/avatars", express.static(path.join(__dirname, "../uploads/avatars")));
+
 app.use("/auth", authRouter);
 
 // Session probe for frontend route guards.
@@ -34,7 +36,6 @@ app.get("/", (_req, res) => {
 });
 
 app.use(express.static(path.join(__dirname, "../public")));
-app.use("/auth/avatars", express.static(path.join(__dirname, "../../uploads/avatars")));
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "auth-service" });
