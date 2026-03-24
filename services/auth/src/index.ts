@@ -28,6 +28,7 @@ app.get("/", (_req, res) => {
 });
 
 app.use(express.static(path.join(__dirname, "../public")));
+app.use("/auth/avatars", express.static(path.join(__dirname, "../../uploads/avatars")));
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "auth-service" });

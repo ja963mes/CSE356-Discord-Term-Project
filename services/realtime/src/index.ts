@@ -37,6 +37,13 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "realtime-service", connections: connections.size });
 });
 
+// Internal endpoint — only called by other services, not exposed publicly
+app.get("/internal/presence/:userId", async (req, res) => {
+  const { userId } = req.params;
+  const status = await computePresence(redis, userId);
+  res.json({ userId, status });
+});
+
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
