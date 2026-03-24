@@ -484,6 +484,28 @@ router.post("/oauth/complete", async (req: Request, res: Response): Promise<void
 //  Profile & Presence
 // ════════════════════════════════════════════
 
+// GET /auth/dm-users
+// TODO: replace with real DM participants endpoint once Direct Conversations service is built.
+// Should return only users that the current user has an active DM conversation with (1-to-1 or group).
+// For now returns all users except self so we can test presence display.
+router.get("/dm-users", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { internal_id } = req.user as { internal_id: string };
+  try {
+    const allUsers = await db
+      .select({
+        internal_id: users.internal_id,
+        username: users.username,
+        profile: users.profile,
+      })
+      .from(users);
+
+    res.json({ users: allUsers.filter((u) => u.internal_id !== internal_id) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // GET /auth/me
 router.get("/me", requireAuth, async (req: Request, res: Response): Promise<void> => {
   const { internal_id } = req.user as { internal_id: string };

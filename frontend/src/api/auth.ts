@@ -62,6 +62,20 @@ export async function updateProfile(displayName: string): Promise<void> {
   if (!res.ok) throw new Error("Failed to update profile");
 }
 
+export interface DmUser {
+  internal_id: string;
+  username: string;
+  profile: { displayName: string; avatar: string | null };
+}
+
+// TODO: replace with real DM participants once Direct Conversations service is built
+export async function getDmUsers(): Promise<DmUser[]> {
+  const res = await fetch("/auth/dm-users", { credentials: "include" });
+  if (!res.ok) return [];
+  const data = (await res.json()) as { users: DmUser[] };
+  return data.users;
+}
+
 export async function uploadAvatar(file: File): Promise<string> {
   const form = new FormData();
   form.append("avatar", file);

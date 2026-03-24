@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Channel, Message, SearchResult, getChannels, getMessages, search } from "../api/discord";
-import { getMe, Me } from "../api/auth";
+import { getMe, getDmUsers, Me, DmUser } from "../api/auth";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { useActivityDetection } from "../hooks/useActivityDetection";
 import { usePresence } from "../hooks/usePresence";
@@ -8,6 +8,7 @@ import UserPresence from "../components/UserPresence";
 
 export default function ChatPage() {
   const [me, setMe] = useState<Me | null>(null);
+  const [dmUsers, setDmUsers] = useState<DmUser[]>([]);
 
   const { handleMessage: handlePresenceMessage, getPresence, setPresence } = usePresence();
 
@@ -21,6 +22,7 @@ export default function ChatPage() {
       setMe(data);
       setPresence(data.internal_id, { status: data.presence as import("../hooks/usePresence").PresenceStatus });
     }).catch(() => setMe(null));
+    getDmUsers().then(setDmUsers).catch(() => setDmUsers([]));
   }, [setPresence]);
 
   const { send } = useWebSocket(handleMessage);
@@ -115,50 +117,25 @@ export default function ChatPage() {
       <main className="flex w-full ml-20 h-screen overflow-hidden">
         {/* COLUMN 2: Channel List */}
         <section className="w-64 bg-surface-container-low flex flex-col flex-shrink-0">
-          <div className="h-16 flex items-center px-4 font-headline font-bold text-lg text-on-surface">
-            The Obsidian Architect
-            <span className="material-symbols-outlined ml-auto text-on-surface-variant cursor-pointer">
-              expand_more
-            </span>
-          </div>
 
           <div className="flex-1 overflow-y-auto py-2 px-2 flex flex-col gap-1">
-            <div className="flex items-center px-2 pt-4 pb-1 text-on-surface-variant uppercase text-[10px] font-bold tracking-widest">
-              <span className="material-symbols-outlined text-[14px] mr-1">expand_more</span>
-              Text Channels
-            </div>
 
-            {channels.map((c) => {
-              const active = c.id === selectedChannelId;
-              return (
-                <button
-                  key={c.id}
-                  className={
-                    active
-                      ? "flex items-center gap-2 px-2 py-2 rounded-lg bg-surface-container-highest text-on-surface font-semibold group transition-all"
-                      : "flex items-center gap-2 px-2 py-2 rounded-lg text-on-surface-variant hover:bg-surface-variant/50 hover:text-on-surface group transition-all"
-                  }
-                  onClick={() => setSelectedChannelId(c.id)}
-                >
-                  <span className="material-symbols-outlined text-on-surface-variant group-hover:text-on-surface">
-                    tag
-                  </span>
-                  {c.name}
-                </button>
-              );
-            })}
-
-            {/* Placeholder voice section (wireframe layout) */}
+            {/* TODO: replace with real DM conversations once Direct Conversations service is built */}
             <div className="flex items-center px-2 pt-6 pb-1 text-on-surface-variant uppercase text-[10px] font-bold tracking-widest">
               <span className="material-symbols-outlined text-[14px] mr-1">expand_more</span>
-              Voice Channels
+              Direct Messages
             </div>
-            <button className="flex items-center gap-2 px-2 py-2 rounded-lg text-on-surface-variant hover:bg-surface-variant/50 hover:text-on-surface group transition-all">
-              <span className="material-symbols-outlined text-on-surface-variant group-hover:text-on-surface">
-                volume_up
-              </span>
-              Main Lounge
-            </button>
+            {dmUsers.map((u) => (
+              <div key={u.internal_id} className="px-2 py-1.5 rounded-lg hover:bg-surface-variant/50 cursor-pointer transition-all">
+                <UserPresence
+                  userId={u.internal_id}
+                  displayName={u.profile.displayName}
+                  avatarUrl={u.profile.avatar ?? undefined}
+                  presence={getPresence(u.internal_id)}
+                  size="sm"
+                />
+              </div>
+            ))}
           </div>
 
           <div className="p-2 bg-surface-container-lowest flex items-center gap-2">
@@ -189,7 +166,7 @@ export default function ChatPage() {
             <div className="flex items-center gap-3">
               <span className="material-symbols-outlined text-on-surface-variant">tag</span>
               <h1 className="text-[#f6f6fc] font-headline font-bold text-lg tracking-tight">
-                {selectedChannel?.id ?? "general-chat"}
+                Empty chat
               </h1>
             </div>
 
@@ -225,49 +202,8 @@ export default function ChatPage() {
           </header>
 
           {/* Chat History */}
-          <div className="flex-1 overflow-y-auto px-6 py-4 flex flex-col gap-6 scroll-smooth">
-            {messages.length === 0 ? (
-              <div className="py-10 text-on-surface-variant">No messages yet.</div>
-            ) : null}
-
-            <div className="py-10">
-              <p className="text-on-surface-variant text-sm">
-                Welcome to the {selectedChannel?.name ?? "general-chat"} channel.
-              </p>
-            </div>
-
-            {messages.map((m) => (
-              <div key={m.id} className="flex gap-3 items-start">
-                <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant text-xs">
-                  {m.author.slice(0, 1).toUpperCase()}
-                </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-bold text-on-surface">{m.author}</p>
-                    <span className="text-[10px] text-on-surface-variant">
-                      {new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                    </span>
-                  </div>
-                  <p className="text-sm text-on-surface mt-1">{m.content}</p>
-                </div>
-              </div>
-            ))}
-
-            {searchResults.length > 0 ? (
-              <div className="mt-4 p-3 rounded-lg bg-surface-container-highest">
-                <p className="text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-2">
-                  Search results
-                </p>
-                <div className="flex flex-col gap-2">
-                  {searchResults.map((r) => (
-                    <div key={r.id} className="text-sm text-on-surface">
-                      <p className="font-semibold">{r.title}</p>
-                      <p className="text-on-surface-variant">{r.snippet}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
+          <div className="flex-1 flex items-center justify-center">
+            <p className="text-on-surface-variant text-sm">Empty chat</p>
           </div>
 
           {/* Message Composer */}
@@ -275,7 +211,7 @@ export default function ChatPage() {
             <div className="flex items-center gap-3">
               <input
                 className="flex-1 bg-surface-container-lowest border-none rounded-lg px-4 py-2 text-sm text-on-surface placeholder:text-on-surface-variant focus:ring-1 focus:ring-primary"
-                placeholder="Message #general-chat"
+                placeholder="Message empty chat"
                 onChange={() => {
                   // Placeholder composer
                 }}
