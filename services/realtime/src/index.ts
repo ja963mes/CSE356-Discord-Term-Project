@@ -5,6 +5,14 @@ import { parse as parseCookie } from "cookie";
 import Redis from "ioredis";
 import { randomUUID } from "crypto";
 import { env } from "./env";
+import {
+  registerConnection,
+  removeConnection,
+  updateActivity,
+  setAway,
+  clearAway,
+  computePresence,
+} from "./presence";
 
 const redis = new Redis(env.REDIS_URL);
 redis.on("connect", () => console.log("Redis connected"));
@@ -42,11 +50,38 @@ wss.on("connection", async (ws, req) => {
 
   const connId = randomUUID();
   connections.set(connId, { ws, userId });
-  console.log(`[connect] userId=${userId} connId=${connId} total=${connections.size}`);
 
-  ws.on("close", () => {
+  await registerConnection(redis, userId, connId);
+  const presence = await computePresence(redis, userId);
+  console.log(`[connect] userId=${userId} connId=${connId} presence=${presence} total=${connections.size}`);
+
+  ws.on("message", async (data) => {
+    let msg: { type: string; message?: string };
+
+    try {
+      msg = JSON.parse(data.toString());
+    } catch {
+      return;
+    }
+
+    if (msg.type === "ping") {
+      await updateActivity(redis, userId, connId);
+    } else if (msg.type === "away") {
+      await setAway(redis, userId, msg.message ?? "");
+      const newPresence = await computePresence(redis, userId);
+      console.log(`[away] userId=${userId} presence=${newPresence}`);
+    } else if (msg.type === "back") {
+      await clearAway(redis, userId);
+      const newPresence = await computePresence(redis, userId);
+      console.log(`[back] userId=${userId} presence=${newPresence}`);
+    }
+  });
+
+  ws.on("close", async () => {
     connections.delete(connId);
-    console.log(`[disconnect] userId=${userId} connId=${connId} total=${connections.size}`);
+    await removeConnection(redis, userId, connId);
+    const presence = await computePresence(redis, userId);
+    console.log(`[disconnect] userId=${userId} connId=${connId} presence=${presence} total=${connections.size}`);
   });
 
   ws.on("error", (err) => {
