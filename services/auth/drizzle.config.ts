@@ -1,6 +1,9 @@
 import type { Config } from "drizzle-kit";
 import dotenv from "dotenv";
-dotenv.config();
+import path from "path";
+
+// `drizzle-kit` runs with cwd `services/auth`; load repo-root `.env` like `src/config/env.ts`.
+dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 
 export default {
   schema: "./src/db/schema.ts",
