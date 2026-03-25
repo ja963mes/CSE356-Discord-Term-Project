@@ -5,8 +5,8 @@ const IDLE_THRESHOLD_MS = 60 * 1000; // 1 minute
 export type PresenceStatus = "online" | "idle" | "away" | "offline";
 
 export async function registerConnection(redis: Redis, userId: string, connId: string): Promise<void> {
-  const now = Date.now();
-  await redis.hset(`presence:conns:${userId}`, connId, now);
+  // Use 0 as sentinel — connect/reconnect doesn't count as activity per spec
+  await redis.hset(`presence:conns:${userId}`, connId, 0);
 }
 
 export async function removeConnection(redis: Redis, userId: string, connId: string): Promise<void> {

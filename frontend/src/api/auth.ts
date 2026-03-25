@@ -38,3 +38,54 @@ export async function logout(): Promise<void> {
   if (!res.ok) throw new Error("Logout failed");
 }
 
+export interface Me {
+  internal_id: string;
+  username: string;
+  email: string | null;
+  profile: { displayName: string; avatar: string | null };
+  presence: string;
+}
+
+export async function getMe(): Promise<Me> {
+  const res = await fetch("/auth/me", { credentials: "include" });
+  if (!res.ok) throw new Error("Not authenticated");
+  return (await res.json()) as Me;
+}
+
+export async function updateProfile(displayName: string): Promise<void> {
+  const res = await fetch("/auth/profile", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ displayName }),
+  });
+  if (!res.ok) throw new Error("Failed to update profile");
+}
+
+export interface DmUser {
+  internal_id: string;
+  username: string;
+  profile: { displayName: string; avatar: string | null };
+}
+
+// TODO: replace with real DM participants once Direct Conversations service is built
+export async function getDmUsers(): Promise<DmUser[]> {
+  const res = await fetch("/auth/dm-users", { credentials: "include" });
+  if (!res.ok) return [];
+  const data = (await res.json()) as { users: DmUser[] };
+  return data.users;
+}
+
+export async function uploadAvatar(file: File): Promise<string> {
+  const form = new FormData();
+  form.append("avatar", file);
+  const res = await fetch("/auth/profile/avatar", {
+    method: "POST",
+    credentials: "include",
+    body: form,
+  });
+  if (!res.ok) throw new Error("Failed to upload avatar");
+  const data = (await res.json()) as { avatarUrl: string };
+  return data.avatarUrl;
+}
+

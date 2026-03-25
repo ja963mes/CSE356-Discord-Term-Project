@@ -17,7 +17,16 @@ import {
 import { broadcastPresenceChange } from "./broadcast";
 
 const redis = new Redis(env.REDIS_URL);
-redis.on("connect", () => console.log("Redis connected"));
+redis.on("connect", async () => {
+  console.log("Redis connected");
+  // Clear all stale presence connection data from previous server sessions
+  // Activity and presence are ephemeral and only relevant while the server is running, so it's safe to clear them on startup
+  const keys = await redis.keys("presence:conns:*");
+  if (keys.length > 0) {
+    await redis.del(...keys);
+    console.log(`[startup] cleared ${keys.length} stale presence entries`);
+  }
+});
 redis.on("error", (err) => console.error("Redis error:", err));
 
 // Track active connections: connId -> { ws, userId }
@@ -35,6 +44,13 @@ const app = express();
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "realtime-service", connections: connections.size });
+});
+
+// Internal endpoint — only called by other services, not exposed publicly
+app.get("/internal/presence/:userId", async (req, res) => {
+  const { userId } = req.params;
+  const status = await computePresence(redis, userId);
+  res.json({ userId, status });
 });
 
 const server = http.createServer(app);
@@ -66,6 +82,15 @@ wss.on("connection", async (ws, req) => {
 
   console.log(`[connect] userId=${userId} connId=${connId} total=${connections.size}`);
   await updateAndBroadcast(userId, prevStatus);
+  const currentStatus = await computePresence(redis, userId);
+  lastKnownPresence.set(userId, currentStatus);
+
+  // Always send the current presence to the newly connected client
+  const selfPayload = JSON.stringify({ type: "presence_update", userId, status: currentStatus });
+  // Use setImmediate to ensure the handshake is fully complete before sending
+  setImmediate(() => {
+    if (ws.readyState === WebSocket.OPEN) ws.send(selfPayload);
+  });
 
   ws.on("message", async (data) => {
     let msg: { type: string; message?: string };
@@ -101,6 +126,27 @@ wss.on("connection", async (ws, req) => {
     console.error(`[error] connId=${connId}`, err);
   });
 });
+
+// Track last known presence per user to detect transitions in the idle check
+const lastKnownPresence = new Map<string, PresenceStatus>();
+
+// Every 30s check all connected users for idle transitions
+// Worst case the ui will update 90s after the user goes idle
+// The truth lives on the server and the ui only learns about it when this fires 30s after that 60s idle timeout
+setInterval(async () => {
+  const checkedUsers = new Set<string>();
+  for (const { userId } of connections.values()) {
+    if (checkedUsers.has(userId)) continue;
+    checkedUsers.add(userId);
+    const prev = lastKnownPresence.get(userId) ?? "offline";
+    const newStatus = await computePresence(redis, userId);
+    lastKnownPresence.set(userId, newStatus);
+    if (newStatus !== prev) {
+      console.log(`[presence] userId=${userId} ${prev} → ${newStatus}`);
+      await broadcastPresenceChange(userId, newStatus, connections);
+    }
+  }
+}, 30_000);
 
 server.listen(Number(env.PORT), () => {
   console.log(`Realtime service running on port ${env.PORT}`);
