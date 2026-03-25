@@ -435,19 +435,15 @@ export default function ChatPage() {
               members.map((m) => (
                 <div
                   key={m.user_id}
-                  className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-surface-variant/40"
+                  className="px-2 py-1.5 rounded-md hover:bg-surface-variant/40"
                 >
-                  <div className="relative flex-shrink-0">
-                    <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant text-xs">
-                      {m.display_name.slice(0, 1).toUpperCase()}
-                    </div>
-                    <div
-                      className={`absolute bottom-0 right-0 w-2.5 h-2.5 border-2 border-surface-container-low rounded-full ${presenceDotClass(getPresence(m.user_id)?.status ?? "offline")}`}
-                      title={presenceLabel(getPresence(m.user_id)?.status ?? "offline")}
+                  <div className="flex flex-col gap-0.5">
+                    <UserPresence
+                      userId={m.user_id}
+                      displayName={m.display_name}
+                      presence={getPresence(m.user_id)}
+                      size="sm"
                     />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-on-surface truncate">{m.display_name}</p>
                     <p className="text-[10px] text-on-surface-variant truncate">{roleLabel(m.role)}</p>
                   </div>
                 </div>
