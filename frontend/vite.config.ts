@@ -15,12 +15,8 @@ export default defineConfig({
         target: "http://localhost:3006",
         changeOrigin: true,
       },
-      // Communities service (list, join, channels, members, presence)
+      // Communities service (list, join, channels, members)
       "/communities": {
-        target: "http://localhost:3002",
-        changeOrigin: true,
-      },
-      "/presence": {
         target: "http://localhost:3002",
         changeOrigin: true,
       },
