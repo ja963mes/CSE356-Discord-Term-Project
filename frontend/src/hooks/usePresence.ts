@@ -19,7 +19,11 @@ export function usePresence() {
 
       setPresenceMap((prev) => {
         const next = new Map(prev);
-        next.set(userId, { status, awayMessage });
+        const existing = prev.get(userId);
+        next.set(userId, {
+          status,
+          awayMessage: awayMessage ?? (status === "away" ? existing?.awayMessage : undefined),
+        });
         return next;
       });
     }
@@ -32,13 +36,5 @@ export function usePresence() {
     [presenceMap]
   );
 
-  const setPresence = useCallback((userId: string, state: PresenceState) => {
-    setPresenceMap((prev) => {
-      const next = new Map(prev);
-      next.set(userId, state);
-      return next;
-    });
-  }, []);
-
-  return { handleMessage, getPresence, setPresence, presenceMap };
+  return { handleMessage, getPresence, presenceMap };
 }

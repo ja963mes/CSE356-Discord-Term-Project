@@ -14,16 +14,18 @@ export default function UserPresence({ displayName, avatarUrl, presence, size = 
   const avatarSize = size === "sm" ? "w-8 h-8" : "w-10 h-10";
   const dotSize = size === "sm" ? "w-3 h-3" : "w-3.5 h-3.5";
   const nameSize = size === "sm" ? "text-sm" : "text-base";
+  const [imgFailed, setImgFailed] = React.useState(false);
 
   return (
     <div className="flex items-center gap-3">
       {/* Avatar */}
       <div className="relative flex-shrink-0">
-        {avatarUrl ? (
+        {avatarUrl && !imgFailed ? (
           <img
             src={avatarUrl}
             alt={displayName}
             className={`${avatarSize} rounded-full object-cover`}
+            onError={() => setImgFailed(true)}
           />
         ) : (
           <div className={`${avatarSize} rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant font-bold text-sm`}>
