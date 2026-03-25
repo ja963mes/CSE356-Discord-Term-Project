@@ -1,5 +1,5 @@
 {
-  "name": "realtime-service",
+  "name": "create-community-service",
   "version": "1.0.0",
   "private": true,
   "main": "dist/index.js",
@@ -9,17 +9,19 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "cookie": "^1.1.1",
+    "cookie-parser": "^1.4.7",
     "dotenv": "^17.3.1",
+    "drizzle-orm": "^0.45.1",
     "express": "^5.2.1",
-    "ioredis": "^5.10.1",
-    "ws": "^8.20.0"
+    "ioredis": "^5.10.0",
+    "pg": "^8.20.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@types/cookie": "^0.6.0",
+    "@types/cookie-parser": "^1.4.10",
     "@types/express": "^5.0.6",
     "@types/node": "^25.5.0",
-    "@types/ws": "^8.18.1",
+    "@types/pg": "^8.18.0",
     "nodemon": "^3.1.14",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"

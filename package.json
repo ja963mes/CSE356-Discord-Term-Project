@@ -9,7 +9,9 @@
   ],
   "scripts": {
     "dev": "npm run dev:frontend",
+    "dev:all": "concurrently -n auth,create-community,communities,messages,search,realtime,frontend -c auto \"npm run dev:auth\" \"npm run dev:create-community\" \"npm run dev:communities\" \"npm run dev:messages\" \"npm run dev:search\" \"npm run dev:realtime\" \"npm run dev:frontend\"",
     "dev:auth": "npm run dev --workspace auth-service",
+    "dev:create-community": "npm run dev --workspace create-community-service",
     "dev:communities": "npm run dev --workspace communities-service",
     "dev:messages": "npm run dev --workspace messages-service",
     "dev:search": "npm run dev --workspace search-service",
@@ -52,6 +54,7 @@
     "@types/passport-google-oauth20": "^2.0.17",
     "@types/pg": "^8.18.0",
     "@types/uuid": "^10.0.0",
+    "concurrently": "^9.0.1",
     "drizzle-kit": "^0.31.9",
     "nodemon": "^3.1.14",
     "ts-node": "^10.9.2",
