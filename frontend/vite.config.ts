@@ -10,17 +10,7 @@ export default defineConfig({
         target: "http://localhost:3001",
         changeOrigin: true,
       },
-      // Create-community service (POST only; max 100 created per user)
-      "/create-community": {
-        target: "http://localhost:3006",
-        changeOrigin: true,
-      },
-      // Communities service (list, join, channels, members)
-      "/communities": {
-        target: "http://localhost:3002",
-        changeOrigin: true,
-      },
-      // Optional legacy stub path (not implemented on communities service; client falls back)
+      // Stubbed microservices for the wireframe UI
       "/channels": {
         target: "http://localhost:3002",
         changeOrigin: true,
