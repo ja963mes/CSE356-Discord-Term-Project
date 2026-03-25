@@ -7,7 +7,7 @@ Implementation scope and how this compares to the full architecture (nginx, Cass
 ## Prerequisites
 
 - **Node.js** v18+
-- **PostgreSQL** running on `localhost:5432`
+- **PostgreSQL** running (often `localhost:5433` with this repo's `docker-compose.yml`, or `5432` if you run Postgres directly)
 - **Redis** running on `localhost:6379`
 - **Docker** (easiest way to run Postgres and Redis)
 
@@ -15,7 +15,17 @@ Implementation scope and how this compares to the full architecture (nginx, Cass
 
 ### 1. Start Postgres and Redis
 
-If you have Docker:
+If you have Docker Compose (recommended):
+
+```bash
+docker compose up -d
+```
+
+This starts Postgres on host **5433** and Redis on **6379**.
+
+If you do not want Docker Compose and instead run Postgres/Redis directly, use the options below.
+
+If you have Docker (no compose):
 
 ```bash
 # PostgreSQL
@@ -36,6 +46,10 @@ npm install
 ### 3. Set up environment variables
 
 Get the `.env` file from a team member and place it in the project root.
+Make sure `DATABASE_URL` matches how Postgres is running:
+
+- Docker Compose default: `localhost:5433`
+- Docker run / local Postgres default: `localhost:5432`
 
 ### 4. Run database migrations
 
@@ -75,6 +89,8 @@ Note: the frontend includes fallback sample data, so it can render even if some 
 
 | Command | Description |
 |---|---|
+| `npm run dev:all` | Start auth + stubs + frontend in parallel |
+| `npm run dev` | Start React frontend (port 5173) |
 | `npm run dev:auth` | Start authentication service (port 3001) |
 | `npm run dev:frontend` | Start React frontend (port 5173) |
 | `npm run dev:communities` | Start communities stub service (port 3002) |
@@ -103,5 +119,7 @@ frontend/
 ## Troubleshooting
 
 - **Redis connection errors** — Make sure Redis is running: `docker ps` or `redis-cli ping`
-- **Database migration fails** — Make sure Postgres is running and `auth_db` exists: `docker exec postgres-auth psql -U postgres -c "SELECT 1"`
+- **Database migration fails** — Make sure Postgres is running and `auth_db` exists:
+  - Docker Compose: `docker exec discord-clone-postgres psql -U postgres -d auth_db -c "SELECT 1"`
+  - Docker run: `docker exec postgres-auth psql -U postgres -d auth_db -c "SELECT 1"`
 - **Port already in use** — Change `PORT` in `.env` or kill the existing process (auth defaults to 3001)

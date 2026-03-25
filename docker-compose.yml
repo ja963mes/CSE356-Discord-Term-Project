@@ -1,5 +1,5 @@
 # Local dev dependencies only: Postgres + Redis.
-# Run apps on the host: `npm run dev:all` (or individual `npm run dev:*`).
+# Run apps on the host: `npm run dev:*` (auth, frontend, and optional stubs).
 #
 # Usage:
 #   docker compose up -d
