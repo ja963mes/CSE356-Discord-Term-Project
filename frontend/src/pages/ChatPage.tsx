@@ -1,9 +1,19 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Channel, Message, SearchResult, getChannels, getMessages, search } from "../api/discord";
+import { useWebSocket, IncomingMessage } from "../hooks/useWebSocket";
+import { useActivityDetection } from "../hooks/useActivityDetection";
 
 const me = { name: "Neo_Architect", tag: "#9921" };
 
 export default function ChatPage() {
+  const handleMessage = useCallback((msg: IncomingMessage) => {
+    // TODO: handle presence_update and other incoming events in Story 6
+    console.log("[ws] incoming:", msg);
+  }, []);
+
+  const { send } = useWebSocket(handleMessage);
+  useActivityDetection(send);
+
   const [channels, setChannels] = useState<Channel[]>([]);
   const [selectedChannelId, setSelectedChannelId] = useState<string>("general-chat");
   const [messages, setMessages] = useState<Message[]>([]);
