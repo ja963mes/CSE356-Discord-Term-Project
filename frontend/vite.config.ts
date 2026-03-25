@@ -10,7 +10,21 @@ export default defineConfig({
         target: "http://localhost:3001",
         changeOrigin: true,
       },
-      // Stubbed microservices for the wireframe UI
+      // Create-community service (POST only; max 100 created per user)
+      "/create-community": {
+        target: "http://localhost:3006",
+        changeOrigin: true,
+      },
+      // Communities service (list, join, channels, members, presence)
+      "/communities": {
+        target: "http://localhost:3002",
+        changeOrigin: true,
+      },
+      "/presence": {
+        target: "http://localhost:3002",
+        changeOrigin: true,
+      },
+      // Optional legacy stub path (not implemented on communities service; client falls back)
       "/channels": {
         target: "http://localhost:3002",
         changeOrigin: true,
