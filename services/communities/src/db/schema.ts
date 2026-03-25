@@ -1,3 +1,6 @@
+/**
+ * Must stay aligned with `services/auth/src/db/schema.ts` (same Postgres tables).
+ */
 import { pgTable, uuid, text, jsonb, timestamp, unique, integer, primaryKey } from "drizzle-orm/pg-core";
 
 export const users = pgTable("users", {
@@ -14,14 +17,13 @@ export const identities = pgTable("identities", {
   internal_id: uuid("internal_id")
     .notNull()
     .references(() => users.internal_id, { onDelete: "cascade" }),
-  provider: text("provider").notNull(),   // "google", "github", "oidc"
+  provider: text("provider").notNull(),
   provider_uid: text("provider_uid").notNull(),
   created_at: timestamp("created_at").notNull().defaultNow(),
 }, (table) => ({
   unique_provider: unique().on(table.provider, table.provider_uid),
 }));
 
-/** A community (guild / server): named space with members and channels. */
 export const communities = pgTable("communities", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
