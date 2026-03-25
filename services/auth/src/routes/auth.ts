@@ -10,6 +10,7 @@ import { users, identities } from "../db/schema";
 import { redis } from "../db/redis";
 import { eq, and } from "drizzle-orm";
 import { requireAuth } from "../middleware/session";
+import { env } from "../config/env";
 import {
   googleConfig,
   githubConfig,
@@ -48,6 +49,7 @@ const uploadAvatar = multer({
 const router = Router();
 const SESSION_TTL = 60 * 60 * 24 * 7; // 7 days
 const OAUTH_TEMP_TTL = 600; // 10 minutes
+const FRONTEND_ROOT = `${env.FRONTEND_URL.replace(/\/$/, "")}/`;
 
 // ─── Helper: create session ───
 async function createSession(res: Response, internalId: string) {
@@ -77,7 +79,7 @@ async function handleOAuthResult(
   if (identity) {
     // Already linked — log them in
     await createSession(res, identity.internal_id);
-    return res.redirect("/");
+    return res.redirect(FRONTEND_ROOT);
   }
 
   // New OAuth identity — store temporarily so the user can create or link

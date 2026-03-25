@@ -11,6 +11,7 @@ const envSchema = z.object({
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string(),
   SESSION_SECRET: z.string().min(16),
+  FRONTEND_URL: z.string().url().default("http://localhost:5173"),
 
   // OAuth - Google
   GOOGLE_CLIENT_ID: z.string().default(""),
