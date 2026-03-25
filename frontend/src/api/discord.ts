@@ -4,79 +4,12 @@ export type Message = { id: string; author: string; content: string; ts: string 
 
 export type SearchResult = { id: string; type: string; title: string; snippet: string; score: number };
 
-export type Community = { id: string; name: string; created_at: string };
-
-export type CommunityMember = {
-  user_id: string;
-  username: string;
-  display_name: string;
-  role: string;
-  joined_at: string;
-};
-
-async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T | null> {
-  try {
-    const res = await fetch(input, { ...init, credentials: "include" });
-    if (!res.ok) return null;
-    return (await res.json()) as T;
-  } catch {
-    return null;
-  }
-}
-
-/** List communities for the logged-in user (requires session). Returns null if unauthenticated or error. */
-export async function listCommunities(): Promise<Community[] | null> {
-  const body = await fetchJson<{ communities: Community[] }>("/communities");
-  return body?.communities ?? null;
-}
-
-export async function getCommunityChannels(communityId: string): Promise<Channel[] | null> {
-  const body = await fetchJson<{ channels: Channel[] }>(`/communities/${encodeURIComponent(communityId)}/channels`);
-  return body?.channels ?? null;
-}
-
-export async function getCommunityMembers(communityId: string): Promise<CommunityMember[] | null> {
-  const body = await fetchJson<{ members: CommunityMember[] }>(`/communities/${encodeURIComponent(communityId)}/members`);
-  return body?.members ?? null;
-}
-
 const sampleChannels: Channel[] = [
   { id: "general-chat", name: "general-chat", type: "text" },
   { id: "design-critique", name: "design-critique", type: "text" },
   { id: "resources", name: "resources", type: "text" },
   { id: "main-lounge", name: "Main Lounge", type: "voice" },
   { id: "pair-programming", name: "Pair Programming", type: "voice" },
-];
-
-const sampleMembers: CommunityMember[] = [
-  {
-    user_id: "sample-1",
-    username: "neo_architect",
-    display_name: "Neo_Architect",
-    role: "owner",
-    joined_at: new Date().toISOString(),
-  },
-  {
-    user_id: "sample-2",
-    username: "guest",
-    display_name: "Guest",
-    role: "member",
-    joined_at: new Date().toISOString(),
-  },
-  {
-    user_id: "sample-3",
-    username: "design_bot",
-    display_name: "Design Bot",
-    role: "member",
-    joined_at: new Date().toISOString(),
-  },
-  {
-    user_id: "sample-4",
-    username: "offline_user",
-    display_name: "Offline User",
-    role: "member",
-    joined_at: new Date().toISOString(),
-  },
 ];
 
 const sampleMessagesByChannel: Record<string, Message[]> = {
@@ -117,10 +50,6 @@ function fallbackMessages(channelId: string): Message[] {
   );
 }
 
-/**
- * Legacy wireframe path: tries GET /channels on the messages/community stub.
- * Prefer loading channels via getCommunityChannels when you have a community id.
- */
 export async function getChannels(): Promise<Channel[]> {
   try {
     const res = await fetch("/channels");
@@ -143,14 +72,6 @@ export async function getMessages(channelId: string): Promise<Message[]> {
   }
 }
 
-export function getSampleChannels(): Channel[] {
-  return sampleChannels;
-}
-
-export function getSampleMembers(): CommunityMember[] {
-  return sampleMembers;
-}
-
 export async function search(q: string): Promise<SearchResult[]> {
   try {
     const res = await fetch(`/search?q=${encodeURIComponent(q)}`);
@@ -171,3 +92,4 @@ export async function search(q: string): Promise<SearchResult[]> {
     ];
   }
 }
+
