@@ -1,16 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Channel, Message, SearchResult, getChannels, getMessages, search } from "../api/discord";
-import { useWebSocket, IncomingMessage } from "../hooks/useWebSocket";
+import { useWebSocket } from "../hooks/useWebSocket";
 import { useActivityDetection } from "../hooks/useActivityDetection";
+import { usePresence } from "../hooks/usePresence";
+import UserPresence from "../components/UserPresence";
 
-const me = { name: "Neo_Architect", tag: "#9921" };
+// TODO: replace with real logged-in user from /auth/me in Story 4
+const ME = { userId: "local", displayName: "You" };
 
 export default function ChatPage() {
-  const handleMessage = useCallback((msg: IncomingMessage) => {
-    // TODO: handle presence_update and other incoming events in Story 6
-    console.log("[ws] incoming:", msg);
-  }, []);
-
+  const { handleMessage, getPresence } = usePresence();
   const { send } = useWebSocket(handleMessage);
   useActivityDetection(send);
 
@@ -149,18 +148,14 @@ export default function ChatPage() {
             </button>
           </div>
 
-          <div className="p-2 bg-surface-container-lowest flex items-center gap-3">
-            <div className="relative">
-              <img
-                className="w-8 h-8 rounded-full"
-                alt="Self user avatar"
-                src="https://lh3.googleusercontent.com/aida-public/AB6AXuA9LGtaqFYYezmeHm0w1uyea5hhxikzo0BeZequRGWnnUkPCfJYQqsi-SvrfSc7bTEH2zN-nB3OehoR2Pe1dGQcSIV-BTU7X909usxl9_KXU09luJfqE8KfDEgpxPVUAOq7Y1lhq_nCoEq_LYR5ISaN471rB5nJj8afHnKMjyFsCUqJN6xa789XdkqwWBCehfPyBW4TF5pVCOttBM0z0psxKPREqEketjnG_KUka14iKeajg1Nd4HDIkyMdbf5rE0MAo2_2dL0tyhKQ"
-              />
-              <div className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-surface-container-lowest rounded-full" />
-            </div>
+          <div className="p-2 bg-surface-container-lowest flex items-center gap-2">
             <div className="flex-1 overflow-hidden">
-              <p className="text-sm font-bold text-on-surface truncate">{me.name}</p>
-              <p className="text-[10px] text-on-surface-variant">{me.tag}</p>
+              <UserPresence
+                userId={ME.userId}
+                displayName={ME.displayName}
+                presence={getPresence(ME.userId)}
+                size="sm"
+              />
             </div>
             <div className="flex gap-1 text-on-surface-variant">
               <span className="material-symbols-outlined text-lg p-1 hover:bg-surface-container-high rounded transition-colors cursor-pointer">
