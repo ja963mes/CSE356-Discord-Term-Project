@@ -11,6 +11,9 @@ node_modules/
 dist/
 **/dist/
 
+# Accidental tsc emit next to Drizzle schema sources
+services/auth/src/db/schema.js
+
 # OS files
 Thumbs.db
 .DS_Store

@@ -2,8 +2,7 @@ import type { Config } from "drizzle-kit";
 import dotenv from "dotenv";
 import path from "path";
 
-// Load environment variables from the .env file
-// not sure if u guys had the same issue, but without this, my env vars weren't being loaded
+// `drizzle-kit` runs with cwd `services/auth`; load repo-root `.env` like `src/config/env.ts`.
 dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 
 export default {
