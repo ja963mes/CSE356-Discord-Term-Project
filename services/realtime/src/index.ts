@@ -12,7 +12,9 @@ import {
   setAway,
   clearAway,
   computePresence,
+  PresenceStatus,
 } from "./presence";
+import { broadcastPresenceChange } from "./broadcast";
 
 const redis = new Redis(env.REDIS_URL);
 redis.on("connect", () => console.log("Redis connected"));
@@ -20,6 +22,14 @@ redis.on("error", (err) => console.error("Redis error:", err));
 
 // Track active connections: connId -> { ws, userId }
 const connections = new Map<string, { ws: WebSocket; userId: string }>();
+
+async function updateAndBroadcast(userId: string, prevStatus: PresenceStatus): Promise<void> {
+  const newStatus = await computePresence(redis, userId);
+  if (newStatus !== prevStatus) {
+    console.log(`[presence] userId=${userId} ${prevStatus} → ${newStatus}`);
+    await broadcastPresenceChange(userId, newStatus, connections);
+  }
+}
 
 const app = express();
 
@@ -49,11 +59,13 @@ wss.on("connection", async (ws, req) => {
   }
 
   const connId = randomUUID();
-  connections.set(connId, { ws, userId });
+  const prevStatus = await computePresence(redis, userId);
 
+  connections.set(connId, { ws, userId });
   await registerConnection(redis, userId, connId);
-  const presence = await computePresence(redis, userId);
-  console.log(`[connect] userId=${userId} connId=${connId} presence=${presence} total=${connections.size}`);
+
+  console.log(`[connect] userId=${userId} connId=${connId} total=${connections.size}`);
+  await updateAndBroadcast(userId, prevStatus);
 
   ws.on("message", async (data) => {
     let msg: { type: string; message?: string };
@@ -64,24 +76,25 @@ wss.on("connection", async (ws, req) => {
       return;
     }
 
+    const prev = await computePresence(redis, userId);
+
     if (msg.type === "ping") {
       await updateActivity(redis, userId, connId);
     } else if (msg.type === "away") {
       await setAway(redis, userId, msg.message ?? "");
-      const newPresence = await computePresence(redis, userId);
-      console.log(`[away] userId=${userId} presence=${newPresence}`);
     } else if (msg.type === "back") {
       await clearAway(redis, userId);
-      const newPresence = await computePresence(redis, userId);
-      console.log(`[back] userId=${userId} presence=${newPresence}`);
     }
+
+    await updateAndBroadcast(userId, prev);
   });
 
   ws.on("close", async () => {
+    const prev = await computePresence(redis, userId);
     connections.delete(connId);
     await removeConnection(redis, userId, connId);
-    const presence = await computePresence(redis, userId);
-    console.log(`[disconnect] userId=${userId} connId=${connId} presence=${presence} total=${connections.size}`);
+    console.log(`[disconnect] userId=${userId} connId=${connId} total=${connections.size}`);
+    await updateAndBroadcast(userId, prev);
   });
 
   ws.on("error", (err) => {
