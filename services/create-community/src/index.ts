@@ -19,7 +19,7 @@ app.get("/health", (_req, res) => {
 
 /**
  * Dedicated service for creating communities (max 100 per user).
- * Listing, channels, members, and presence remain on the communities service.
+ * Listing, join, channels, and members remain on the communities service.
  */
 app.post("/create-community", requireAuth, async (req: Request, res: Response) => {
   const userId = req.user!.internal_id;

@@ -6,18 +6,13 @@ export type SearchResult = { id: string; type: string; title: string; snippet: s
 
 export type Community = { id: string; name: string; created_at: string };
 
-export type PresenceInfo = { status: string; updated_at?: string };
-
 export type CommunityMember = {
   user_id: string;
   username: string;
   display_name: string;
   role: string;
   joined_at: string;
-  presence: PresenceInfo;
 };
-
-const jsonHeaders = { "Content-Type": "application/json" };
 
 async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T | null> {
   try {
@@ -45,17 +40,6 @@ export async function getCommunityMembers(communityId: string): Promise<Communit
   return body?.members ?? null;
 }
 
-export type PresenceStatus = "online" | "idle" | "dnd" | "offline";
-
-export async function sendPresenceHeartbeat(status: PresenceStatus): Promise<boolean> {
-  const body = await fetchJson<{ ok: boolean }>("/presence/heartbeat", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify({ status }),
-  });
-  return body?.ok === true;
-}
-
 const sampleChannels: Channel[] = [
   { id: "general-chat", name: "general-chat", type: "text" },
   { id: "design-critique", name: "design-critique", type: "text" },
@@ -71,7 +55,6 @@ const sampleMembers: CommunityMember[] = [
     display_name: "Neo_Architect",
     role: "owner",
     joined_at: new Date().toISOString(),
-    presence: { status: "online", updated_at: new Date().toISOString() },
   },
   {
     user_id: "sample-2",
@@ -79,7 +62,6 @@ const sampleMembers: CommunityMember[] = [
     display_name: "Guest",
     role: "member",
     joined_at: new Date().toISOString(),
-    presence: { status: "idle", updated_at: new Date().toISOString() },
   },
   {
     user_id: "sample-3",
@@ -87,7 +69,6 @@ const sampleMembers: CommunityMember[] = [
     display_name: "Design Bot",
     role: "member",
     joined_at: new Date().toISOString(),
-    presence: { status: "dnd", updated_at: new Date().toISOString() },
   },
   {
     user_id: "sample-4",
@@ -95,7 +76,6 @@ const sampleMembers: CommunityMember[] = [
     display_name: "Offline User",
     role: "member",
     joined_at: new Date().toISOString(),
-    presence: { status: "offline" },
   },
 ];
 

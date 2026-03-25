@@ -91,7 +91,7 @@ Users can **create** and **join** communities. A **community** is a named space 
 
 **Create-community** (port **3006**, `services/create-community/`) is a separate service for **creating** communities: it enforces the **100 communities per user** limit, inserts the community row, adds the creator as **owner**, and seeds a default **#general** text channel.
 
-**Communities** (port **3002**, `services/communities/`) handles listing, joining, channels, members, and presence. Both use the same PostgreSQL database as auth (see migrations under `services/auth/drizzle/`) and validate the **session cookie** (`session_token`) against Redis.
+**Communities** (port **3002**, `services/communities/`) handles listing, joining, channels, and members. Both use the same PostgreSQL database as auth (see migrations under `services/auth/drizzle/`) and validate the **session cookie** (`session_token`) against Redis.
 
 | Method | Path | Service | Purpose |
 |--------|------|---------|---------|
@@ -99,12 +99,9 @@ Users can **create** and **join** communities. A **community** is a named space 
 | `GET` | `/communities` | communities (3002) | List communities the current user is in |
 | `POST` | `/communities/:communityId/join` | communities (3002) | Join a community |
 | `GET` | `/communities/:communityId/channels` | communities (3002) | List channels (members only) |
-| `GET` | `/communities/:communityId/members` | communities (3002) | Members with display names and **presence** |
-| `POST` | `/presence/heartbeat` | communities (3002) | Body `{ "status": "online" \| "idle" \| "dnd" \| "offline" }`; updates Redis `presence:{user_id}` with TTL |
+| `GET` | `/communities/:communityId/members` | communities (3002) | Members with display names and roles |
 
-**Presence** is stored in Redis as JSON (`status`, `updated_at`). If no key exists, members are shown as **offline**. The chat UI lists members in a right-hand column and sends a periodic heartbeat while you are on the page (when logged in with a live community).
-
-The Vite dev server proxies `/create-community` to port **3006**, and `/communities` + `/presence` to port **3002** (see `frontend/vite.config.ts`).
+The Vite dev server proxies `/create-community` to port **3006** and `/communities` to port **3002** (see `frontend/vite.config.ts`).
 
 ### Start everything at once (recommended for full-stack local dev)
 

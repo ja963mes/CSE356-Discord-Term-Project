@@ -11,7 +11,6 @@ import {
   getSampleChannels,
   getSampleMembers,
   listCommunities,
-  sendPresenceHeartbeat,
   search,
 } from "../api/discord";
 import {
@@ -108,18 +107,6 @@ export default function ChatPage() {
       .catch(() => setMessages([]));
   }, [selectedChannelId]);
 
-  useEffect(() => {
-    if (!usingLiveCommunities || !selectedCommunityId) return;
-    sendPresenceHeartbeat("online");
-    const id = window.setInterval(() => {
-      void sendPresenceHeartbeat("online");
-    }, 25_000);
-    return () => {
-      window.clearInterval(id);
-      void sendPresenceHeartbeat("offline");
-    };
-  }, [usingLiveCommunities, selectedCommunityId]);
-
   const selectedChannel = useMemo(() => channels.find((c) => c.id === selectedChannelId), [channels, selectedChannelId]);
 
   const textChannels = useMemo(() => channels.filter((c) => c.type === "text"), [channels]);
@@ -136,30 +123,8 @@ export default function ChatPage() {
     }
   }
 
-  function presenceDotClass(status: string) {
-    switch (status) {
-      case "online":
-        return "bg-emerald-500";
-      case "idle":
-        return "bg-amber-400";
-      case "dnd":
-        return "bg-red-500";
-      default:
-        return "bg-zinc-500";
-    }
-  }
-
-  function presenceLabel(status: string) {
-    switch (status) {
-      case "online":
-        return "Online";
-      case "idle":
-        return "Idle";
-      case "dnd":
-        return "Do not disturb";
-      default:
-        return "Offline";
-    }
+  function roleLabel(role: string) {
+    return role === "owner" ? "Owner" : role === "member" ? "Member" : role;
   }
 
   function closeCommunityModals() {
@@ -335,7 +300,6 @@ export default function ChatPage() {
                 alt="Self user avatar"
                 src="https://lh3.googleusercontent.com/aida-public/AB6AXuA9LGtaqFYYezmeHm0w1uyea5hhxikzo0BeZequRGWnnUkPCfJYQqsi-SvrfSc7bTEH2zN-nB3OehoR2Pe1dGQcSIV-BTU7X909usxl9_KXU09luJfqE8KfDEgpxPVUAOq7Y1lhq_nCoEq_LYR5ISaN471rB5nJj8afHnKMjyFsCUqJN6xa789XdkqwWBCehfPyBW4TF5pVCOttBM0z0psxKPREqEketjnG_KUka14iKeajg1Nd4HDIkyMdbf5rE0MAo2_2dL0tyhKQ"
               />
-              <div className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-surface-container-lowest rounded-full" />
             </div>
             <div className="flex-1 overflow-hidden">
               <p className="text-sm font-bold text-on-surface truncate">{me.name}</p>
@@ -457,7 +421,7 @@ export default function ChatPage() {
           </div>
         </section>
 
-        {/* COLUMN 4: Members + presence */}
+        {/* COLUMN 4: Members */}
         <aside className="w-56 bg-surface-container-low border-l border-outline-variant/20 flex flex-col flex-shrink-0">
           <div className="h-16 flex items-center px-4 text-on-surface-variant uppercase text-[10px] font-bold tracking-widest">
             Members — {members.length}
@@ -471,18 +435,12 @@ export default function ChatPage() {
                   key={m.user_id}
                   className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-surface-variant/40"
                 >
-                  <div className="relative flex-shrink-0">
-                    <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant text-xs">
-                      {m.display_name.slice(0, 1).toUpperCase()}
-                    </div>
-                    <div
-                      className={`absolute bottom-0 right-0 w-2.5 h-2.5 border-2 border-surface-container-low rounded-full ${presenceDotClass(m.presence.status)}`}
-                      title={presenceLabel(m.presence.status)}
-                    />
+                  <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant text-xs flex-shrink-0">
+                    {m.display_name.slice(0, 1).toUpperCase()}
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-on-surface truncate">{m.display_name}</p>
-                    <p className="text-[10px] text-on-surface-variant truncate">{presenceLabel(m.presence.status)}</p>
+                    <p className="text-[10px] text-on-surface-variant truncate">{roleLabel(m.role)}</p>
                   </div>
                 </div>
               ))

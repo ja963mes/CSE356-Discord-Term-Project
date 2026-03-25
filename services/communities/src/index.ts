@@ -8,8 +8,6 @@ import { env } from "./env";
 import { requireAuth } from "./middleware/session";
 import { communities, communityMembers, channels, users } from "./db/schema";
 
-const PRESENCE_TTL_SEC = 120;
-
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
@@ -110,7 +108,7 @@ app.get("/communities/:communityId/channels", requireAuth, async (req: Request, 
   }
 });
 
-/** Members with display names and presence (Redis). */
+/** Members with display names and roles. */
 app.get("/communities/:communityId/members", requireAuth, async (req: Request, res: Response) => {
   const userId = req.user!.internal_id;
   const communityId = String(req.params.communityId);
@@ -139,61 +137,22 @@ app.get("/communities/:communityId/members", requireAuth, async (req: Request, r
       .innerJoin(users, eq(users.internal_id, communityMembers.user_id))
       .where(eq(communityMembers.community_id, communityId));
 
-    const members = [];
-    for (const row of rows) {
+    const members = rows.map((row) => {
       const profile = (row.profile as { displayName?: string } | null) ?? {};
       const displayName = profile.displayName ?? row.username;
-      const raw = await redis.get(`presence:${row.user_id}`);
-      let presence: { status: string; updated_at?: string } = { status: "offline" };
-      if (raw) {
-        try {
-          presence = JSON.parse(raw) as { status: string; updated_at?: string };
-        } catch {
-          presence = { status: "offline" };
-        }
-      }
-      members.push({
+      return {
         user_id: row.user_id,
         username: row.username,
         display_name: displayName,
         role: row.role,
         joined_at: row.joined_at,
-        presence,
-      });
-    }
+      };
+    });
 
     res.json({ members });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Failed to list members" });
-  }
-});
-
-/** Heartbeat so other members see your presence (stored in Redis). */
-app.post("/presence/heartbeat", requireAuth, async (req: Request, res: Response) => {
-  const userId = req.user!.internal_id;
-  const status = typeof req.body?.status === "string" ? req.body.status : "online";
-  const allowed = ["online", "idle", "dnd", "offline"];
-  if (!allowed.includes(status)) {
-    res.status(400).json({ error: "status must be one of: online, idle, dnd, offline" });
-    return;
-  }
-
-  const payload = JSON.stringify({
-    status,
-    updated_at: new Date().toISOString(),
-  });
-
-  try {
-    if (status === "offline") {
-      await redis.del(`presence:${userId}`);
-    } else {
-      await redis.set(`presence:${userId}`, payload, "EX", PRESENCE_TTL_SEC);
-    }
-    res.json({ ok: true });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: "Failed to update presence" });
   }
 });
 
