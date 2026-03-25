@@ -13,11 +13,14 @@ import {
   listCommunities,
   search,
 } from "../api/discord";
+import { useWebSocket } from "../hooks/useWebSocket";
+import { usePresence } from "../hooks/usePresence";
 import {
   CreateCommunityModal,
   JoinCommunityPlaceholderModal,
   ServerActionMenuModal,
 } from "../components/CommunityModals";
+import UserPresence from "../components/UserPresence";
 
 const me = { name: "Neo_Architect", tag: "#9921" };
 
@@ -34,6 +37,9 @@ export default function ChatPage() {
   const [selectedChannelId, setSelectedChannelId] = useState<string>("general-chat");
   const [messages, setMessages] = useState<Message[]>([]);
   const [members, setMembers] = useState<CommunityMember[]>([]);
+
+  const { handleMessage, getPresence } = usePresence();
+  useWebSocket(handleMessage);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
@@ -433,13 +439,14 @@ export default function ChatPage() {
               members.map((m) => (
                 <div
                   key={m.user_id}
-                  className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-surface-variant/40"
+                  className="px-2 py-1.5 rounded-md hover:bg-surface-variant/40"
                 >
-                  <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant text-xs flex-shrink-0">
-                    {m.display_name.slice(0, 1).toUpperCase()}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-on-surface truncate">{m.display_name}</p>
+                  <div className="flex flex-col gap-0.5">
+                    <UserPresence
+                      displayName={m.display_name}
+                      presence={getPresence(m.user_id)}
+                      size="sm"
+                    />
                     <p className="text-[10px] text-on-surface-variant truncate">{roleLabel(m.role)}</p>
                   </div>
                 </div>
