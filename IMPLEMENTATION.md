@@ -8,7 +8,7 @@ The codebase is now a **monorepo**:
 
 - An **authentication service** (`services/auth`) providing local signup/login, session-based auth backed by **Redis**, user and identity records in **PostgreSQL** (via **Drizzle ORM**), and **OAuth 2 / OIDC** flows for Google, GitHub, and the course OIDC provider.
 - Stub microservices under `services/` (`communities`, `messages`, `search`, `realtime`) so the frontend can run with local stub services.
-- A **React (Vite) frontend** under `frontend/` that renders the `/stitch/` wireframes (login + main chat) and calls the backend via the Vite dev proxy.
+- A **React (Vite) frontend** under `frontend/` that renders the `/login` and `/` wireframes (login + main chat) and calls the backend via the Vite dev proxy.
 
 **Not present in this repo (yet):** nginx (or any reverse proxy config), Cassandra, Elasticsearch, fully implemented WebSockets/SSE for DMs, and Postgres schemas for communities/channels/messages beyond user auth data.
 
@@ -24,7 +24,7 @@ The codebase is now a **monorepo**:
 | **Postgres** for communities & channels | Not implemented | Postgres holds **`users`** and **`identities`** only (auth-related). No communities/channels tables here. |
 | **WebSockets (Express) or SSE for DMs** | Not implemented | No `socket.io`, `ws`, or SSE endpoints. |
 | **Elasticsearch** for search | Not implemented | No Elasticsearch integration. |
-| **Frontend in separate folder + middleware to backend** | **Implemented (wireframes)** | React frontend lives under **`frontend/`** (Vite + Tailwind) and renders `/stitch/` wireframes; it calls backend via the Vite dev proxy (cookies for `/auth/*`). |
+| **Frontend in separate folder + middleware to backend** | **Implemented (wireframes)** | React frontend lives under **`frontend/`** (Vite + Tailwind) and renders `/login` and `/` wireframes; it calls backend via the Vite dev proxy (cookies for `/auth/*`). |
 
 ---
 
@@ -50,7 +50,7 @@ The codebase is now a **monorepo**:
 - `services/communities` exposes `GET /channels` (sample channels for the wireframe UI).
 - `services/messages` exposes `GET /messages?channelId=...` (sample channel history).
 - `services/search` exposes `GET /search?q=...` (sample search results).
-- `services/realtime` exposes `GET /dms/sse` (placeholder; currently returns `501 Not Implemented`).
+- `services/realtime` hosts a WebSocket server (authenticated via `session_token` cookie) and provides `GET /health`.
 
 ### Middleware
 
@@ -77,9 +77,9 @@ The codebase is now a **monorepo**:
 
 ### Frontend
 
-- **React + Vite**: `/stitch/` wireframes rendered as pages:
-  - `frontend/src/pages/LoginPage.tsx`
-  - `frontend/src/pages/ChatPage.tsx`
+- **React + Vite**: wireframes rendered at:
+  - `/login` (`frontend/src/pages/LoginPage.tsx`)
+  - `/` (`frontend/src/pages/ChatPage.tsx`)
 - **OAuth pending / legacy pages** (still served by the auth service):
   - `public/login.html` (OAuth completion UI)
   - `public/home.html` (post-login landing)
