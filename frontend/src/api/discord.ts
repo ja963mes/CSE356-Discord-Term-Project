@@ -40,6 +40,12 @@ export async function getCommunityMembers(communityId: string): Promise<Communit
   return body?.members ?? null;
 }
 
+/** Search all public communities by name. */
+export async function searchCommunities(q: string): Promise<Community[] | null> {
+  const body = await fetchJson<{ communities: Community[] }>(`/search-communities?q=${encodeURIComponent(q)}`);
+  return body?.communities ?? null;
+}
+
 const sampleChannels: Channel[] = [
   { id: "general-chat", name: "general-chat", type: "text" },
   { id: "design-critique", name: "design-critique", type: "text" },
