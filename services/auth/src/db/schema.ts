@@ -58,3 +58,40 @@ export const channels = pgTable("channels", {
   position: integer("position").notNull().default(0),
   created_at: timestamp("created_at").notNull().defaultNow(),
 });
+
+export const direct_conversations = pgTable("direct_conversations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name"),
+  type: text("type").notNull(), // "one_to_one" || "group"
+  created_at: timestamp("created_at").notNull().defaultNow(),
+  updated_at: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const dm_participants = pgTable(
+  "dm_participants",
+  { 
+    conversation_id: uuid("conversation_id")
+      .notNull()
+      .references(() => direct_conversations.id, { onDelete: "cascade" }),
+    user_id: uuid("user_id")
+      .notNull()
+      .references(() => users.internal_id, { onDelete: "cascade" }),
+    joined_at: timestamp("joined_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.conversation_id, table.user_id] }),
+  })
+);
+
+export const dm_messages = pgTable("direct_messages", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  conversation_id: uuid("conversation_id")
+    .notNull()
+    .references(() => direct_conversations.id, { onDelete: "cascade" }),
+  author_id: uuid("author_id")
+    .references(() => users.internal_id, { onDelete: "set null" }),
+  content: text("content").notNull(),
+  attachments: jsonb("attachments").notNull().default([]),
+  created_at: timestamp("created_at").notNull().defaultNow(),
+  updated_at: timestamp("updated_at"),
+});
