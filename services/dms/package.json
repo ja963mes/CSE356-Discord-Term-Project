@@ -1,5 +1,5 @@
 {
-  "name": "messages-service",
+  "name": "dms-service",
   "version": "1.0.0",
   "private": true,
   "main": "dist/index.js",
@@ -9,12 +9,19 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "cassandra-driver": "^4.8.0",
+    "cookie-parser": "^1.4.7",
     "dotenv": "^17.3.1",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "ioredis": "^5.10.0",
+    "uuid": "^13.0.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@types/cookie-parser": "^1.4.10",
     "@types/express": "^5.0.6",
     "@types/node": "^25.5.0",
+    "@types/uuid": "^10.0.0",
     "nodemon": "^3.1.14",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
