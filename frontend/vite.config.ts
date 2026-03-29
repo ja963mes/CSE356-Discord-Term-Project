@@ -29,9 +29,9 @@ export default defineConfig({
         target: "http://localhost:3003",
         changeOrigin: true,
       },
-      // Communities directory search (public server listing)
+      // Communities directory search (same service as /communities; match before /search)
       "/search-communities": {
-        target: "http://localhost:3007",
+        target: "http://localhost:3002",
         changeOrigin: true,
       },
       "/search": {

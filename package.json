@@ -9,13 +9,12 @@
   ],
   "scripts": {
     "dev": "npm run dev:frontend",
-    "dev:all": "concurrently -n auth,create-community,communities,messages,search,search-communities,realtime,frontend -c auto \"npm run dev:auth\" \"npm run dev:create-community\" \"npm run dev:communities\" \"npm run dev:messages\" \"npm run dev:search\" \"npm run dev:search-communities\" \"npm run dev:realtime\" \"npm run dev:frontend\"",
+    "dev:all": "concurrently -n auth,create-community,communities,messages,search,realtime,frontend -c auto \"npm run dev:auth\" \"npm run dev:create-community\" \"npm run dev:communities\" \"npm run dev:messages\" \"npm run dev:search\" \"npm run dev:realtime\" \"npm run dev:frontend\"",
     "dev:auth": "npm run dev --workspace auth-service",
     "dev:create-community": "npm run dev --workspace create-community-service",
     "dev:communities": "npm run dev --workspace communities-service",
     "dev:messages": "npm run dev --workspace messages-service",
     "dev:search": "npm run dev --workspace search-service",
-    "dev:search-communities": "npm run dev --workspace search-communities-service",
     "dev:realtime": "npm run dev --workspace realtime-service",
     "dev:frontend": "npm run dev --workspace frontend",
     "build": "npm run build:auth && npm run build:frontend",
@@ -63,6 +62,4 @@
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }
-
-  
 }

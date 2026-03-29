@@ -81,7 +81,6 @@ Optional stub services for the wireframes:
 - `npm run dev:communities` (port 3002)
 - `npm run dev:messages` (port 3003)
 - `npm run dev:search` (port 3004)
-- `npm run dev:search-communities` (port 3007)
 - `npm run dev:realtime` (port 3005)
 
 Note: the frontend includes fallback sample data, so it can render even if some stub services are not running.
@@ -92,11 +91,9 @@ Users can **create** and **join** communities. A **community** is a named space 
 
 **Create-community** (port **3006**, `services/create-community/`) is a separate service for **creating** communities: it enforces the **100 communities per user** limit, inserts the community row, adds the creator as **owner**, and seeds a default **#general** text channel.
 
-**Communities** (port **3002**, `services/communities/`) handles listing, joining, channels, and members. Both use the same PostgreSQL database as auth (see migrations under `services/auth/drizzle/`) and validate the **session cookie** (`session_token`) against Redis.
+**Communities** (port **3002**, `services/communities/`) handles listing, joining, leaving, channels, members, and **public directory search** (`GET /search-communities`) for the “Join a server” modal. It uses the same PostgreSQL database as auth (see migrations under `services/auth/drizzle/`). Authenticated routes validate the **session cookie** (`session_token`) against Redis; directory search is public (no membership filter).
 
-**Search-communities (directory)** (port **3007**, `services/search-communities/`) handles public directory search for communities by name (used by the “Join a server” modal). It queries the same PostgreSQL database as auth.
-
-**Joining from search** uses **`POST /communities/:communityId/join`** on the communities service (same session cookie). The frontend passes the `communityId` from search results—no extra data fetch. Optional future work (invites, deep links) can live under `services/join/` without changing this path.
+**Joining from search** uses **`POST /communities/:communityId/join`** (same service). Optional future work (invites, deep links) can live under `services/join/` without changing this path.
 
 | Method | Path | Service | Purpose |
 |--------|------|---------|---------|
@@ -104,11 +101,11 @@ Users can **create** and **join** communities. A **community** is a named space 
 | `GET` | `/communities` | communities (3002) | List communities the current user is in |
 | `POST` | `/communities/:communityId/join` | communities (3002) | Join a community |
 | `POST` | `/communities/:communityId/leave` | communities (3002) | Leave a community (removes membership) |
-| `GET` | `/search-communities?q=...` | search-communities (3007) | Search public communities by name |
+| `GET` | `/search-communities?q=...` | communities (3002) | Search public communities by name |
 | `GET` | `/communities/:communityId/channels` | communities (3002) | List channels (members only) |
 | `GET` | `/communities/:communityId/members` | communities (3002) | Members with display names and roles |
 
-The Vite dev server proxies `/create-community` to port **3006** and `/communities` to port **3002** (see `frontend/vite.config.ts`).
+The Vite dev server proxies `/create-community` to port **3006**, `/communities` and `/search-communities` to port **3002** (see `frontend/vite.config.ts`).
 
 ### Start everything at once (recommended for full-stack local dev)
 
@@ -137,7 +134,6 @@ chmod +x scripts/dev-all.sh   # once
 | `npm run dev:communities` | Start communities service (port 3002) |
 | `npm run dev:messages` | Start messages stub service (port 3003) |
 | `npm run dev:search` | Start search stub service (port 3004) |
-| `npm run dev:search-communities` | Start communities directory search service (port 3007) |
 | `npm run dev:realtime` | Start realtime stub service (port 3005) |
 | `npm run db:generate` | Generate a new migration (auth service) |
 | `npm run db:migrate` | Apply pending migrations (auth service) |
@@ -152,7 +148,6 @@ services/
     drizzle/
   create-community/
   communities/
-  search-communities/
   messages/
   search/
   realtime/
