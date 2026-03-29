@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Channel,
@@ -11,6 +11,7 @@ import {
   getMessages,
   getSampleChannels,
   getSampleMembers,
+  leaveCommunity,
   listCommunities,
   search,
 } from "../api/discord";
@@ -76,6 +77,11 @@ export default function ChatPage() {
 
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+
+  const [guildMenuOpen, setGuildMenuOpen] = useState(false);
+  const [leaveBusy, setLeaveBusy] = useState(false);
+  const [leaveError, setLeaveError] = useState<string | null>(null);
+  const guildMenuRef = useRef<HTMLDivElement>(null);
 
   const memberCommunityIds = useMemo(() => new Set(communities.map((c) => c.id)), [communities]);
 
@@ -216,6 +222,39 @@ export default function ChatPage() {
     setCommunityModal("none");
   }
 
+  useEffect(() => {
+    if (!guildMenuOpen) return;
+    function onDocMouseDown(e: MouseEvent) {
+      if (guildMenuRef.current && !guildMenuRef.current.contains(e.target as Node)) {
+        setGuildMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [guildMenuOpen]);
+
+  async function handleLeaveCommunity() {
+    if (!selectedCommunityId || !usingLiveCommunities || leaveBusy) return;
+    setLeaveBusy(true);
+    setLeaveError(null);
+    try {
+      const r = await leaveCommunity(selectedCommunityId);
+      if (!r.ok) {
+        setLeaveError(r.error);
+        return;
+      }
+      setGuildMenuOpen(false);
+      const list = await listCommunities();
+      if (list === null || list.length === 0) {
+        await refreshCommunities();
+        return;
+      }
+      await refreshCommunities({ preferSelectId: list[0].id });
+    } finally {
+      setLeaveBusy(false);
+    }
+  }
+
   return (
     <div className="flex h-screen w-full">
       <ServerActionMenuModal
@@ -301,11 +340,55 @@ export default function ChatPage() {
 
           {/* COLUMN 2: Channel List */}
           <section className="flex-1 bg-surface-container-low flex flex-col overflow-hidden">
-            <div className="h-16 flex items-center px-4 font-headline font-bold text-lg text-on-surface flex-shrink-0">
-              {guildName}
-              <span className="material-symbols-outlined ml-auto text-on-surface-variant cursor-pointer">
-                expand_more
-              </span>
+            <div className="h-16 flex items-center gap-2 px-4 font-headline font-bold text-lg text-on-surface flex-shrink-0 min-w-0">
+              <span className="truncate flex-1 min-w-0">{guildName}</span>
+              {usingLiveCommunities && selectedCommunityId ? (
+                <div className="relative ml-auto flex-shrink-0" ref={guildMenuRef}>
+                  <button
+                    type="button"
+                    aria-expanded={guildMenuOpen}
+                    aria-haspopup="menu"
+                    aria-label="Server options"
+                    className="flex h-8 w-8 items-center justify-center rounded text-on-surface-variant hover:bg-surface-variant/60 hover:text-on-surface"
+                    onClick={() => {
+                      setLeaveError(null);
+                      setGuildMenuOpen((o) => !o);
+                    }}
+                  >
+                    <span
+                      className={`material-symbols-outlined text-2xl transition-transform ${guildMenuOpen ? "rotate-180" : ""}`}
+                    >
+                      expand_more
+                    </span>
+                  </button>
+                  {guildMenuOpen ? (
+                    <div
+                      role="menu"
+                      className="absolute right-0 top-full z-[60] mt-1 min-w-[220px] rounded-lg border border-outline-variant/30 bg-[#111318] py-1 shadow-xl"
+                    >
+                      {leaveError ? (
+                        <p className="px-3 py-2 text-xs text-red-400 border-b border-outline-variant/20">{leaveError}</p>
+                      ) : null}
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={leaveBusy}
+                        className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-medium text-red-400 hover:bg-white/5 disabled:opacity-50"
+                        onClick={() => void handleLeaveCommunity()}
+                      >
+                        <span className="material-symbols-outlined text-[20px]" aria-hidden>
+                          delete
+                        </span>
+                        {leaveBusy ? "Leaving…" : "Leave community"}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <span className="material-symbols-outlined ml-auto flex-shrink-0 text-on-surface-variant opacity-40" aria-hidden>
+                  expand_more
+                </span>
+              )}
             </div>
             <div className="flex-1 overflow-y-auto py-2 px-2 flex flex-col gap-1">
               <div className="flex items-center px-2 pt-4 pb-1 text-on-surface-variant uppercase text-[10px] font-bold tracking-widest">

@@ -103,6 +103,7 @@ Users can **create** and **join** communities. A **community** is a named space 
 | `POST` | `/create-community` | create-community (3006) | Create a community (body: `{ "name": "..." }`) |
 | `GET` | `/communities` | communities (3002) | List communities the current user is in |
 | `POST` | `/communities/:communityId/join` | communities (3002) | Join a community |
+| `POST` | `/communities/:communityId/leave` | communities (3002) | Leave a community (removes membership) |
 | `GET` | `/search-communities?q=...` | search-communities (3007) | Search public communities by name |
 | `GET` | `/communities/:communityId/channels` | communities (3002) | List channels (members only) |
 | `GET` | `/communities/:communityId/members` | communities (3002) | Members with display names and roles |
