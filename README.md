@@ -96,7 +96,7 @@ Users can **create** and **join** communities. A **community** is a named space 
 
 **Search-communities (directory)** (port **3007**, `services/search-communities/`) handles public directory search for communities by name (used by the “Join a server” modal). It queries the same PostgreSQL database as auth.
 
-Joining (adding the current user to a community) is intentionally deferred to a dedicated join microservice under `services/join/` (placeholder scaffolding for next time).
+**Joining from search** uses **`POST /communities/:communityId/join`** on the communities service (same session cookie). The frontend passes the `communityId` from search results—no extra data fetch. Optional future work (invites, deep links) can live under `services/join/` without changing this path.
 
 | Method | Path | Service | Purpose |
 |--------|------|---------|---------|
