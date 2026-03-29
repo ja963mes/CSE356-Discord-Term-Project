@@ -58,3 +58,4 @@ export const channels = pgTable("channels", {
   position: integer("position").notNull().default(0),
   created_at: timestamp("created_at").notNull().defaultNow(),
 });
+

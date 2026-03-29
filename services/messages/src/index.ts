@@ -26,4 +26,3 @@ const port = Number(process.env.PORT ?? 3003);
 app.listen(port, () => {
   console.log(`Messages service running on port ${port}`);
 });
-

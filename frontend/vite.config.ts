@@ -39,7 +39,7 @@ export default defineConfig({
         changeOrigin: true,
       },
       "/dms": {
-        target: "http://localhost:3005",
+        target: "http://localhost:3007",
         changeOrigin: true,
       },
       "/ws": {

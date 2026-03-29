@@ -28,5 +28,11 @@ services:
     ports:
       - "${REDIS_PORT:-6379}:6379"
 
+  cassandra:
+    image: cassandra:4.0
+    container_name: discord-clone-cassandra
+    ports:
+      - "${CASSANDRA_PORT:-9042}:9042"
+
 volumes:
   postgres_data:

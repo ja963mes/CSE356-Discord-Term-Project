@@ -22,7 +22,8 @@
     "build:auth": "npm run build --workspace auth-service",
     "build:frontend": "npm run build --workspace frontend",
     "db:generate": "npm run db:generate --workspace auth-service",
-    "db:migrate": "npm run db:migrate --workspace auth-service"
+    "db:migrate": "npm run db:migrate --workspace auth-service",
+    "dev:dms": "npm run dev --workspace dms-service"
   },
   "keywords": [],
   "author": "",
@@ -62,4 +63,6 @@
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }
+
+  
 }
