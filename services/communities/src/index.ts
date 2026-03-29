@@ -1,7 +1,7 @@
 /// <reference path="./types/express.d.ts" />
 import express, { Request, Response } from "express";
 import cookieParser from "cookie-parser";
-import { eq, and, asc } from "drizzle-orm";
+import { eq, and, asc, desc, sql } from "drizzle-orm";
 import { db } from "./db";
 import { redis } from "./redis";
 import { env } from "./env";
@@ -14,6 +14,41 @@ app.use(cookieParser());
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "communities-service" });
+});
+
+/**
+ * Public directory search: all communities matching name (no membership filter).
+ * Query: q (required for results), limit (optional, default 25, max 100).
+ */
+app.get("/search-communities", async (req, res) => {
+  const qRaw = String(req.query.q ?? "");
+  const q = qRaw.trim();
+  const limitRaw = req.query.limit;
+  const limit = Math.min(Number(limitRaw ?? 25) || 25, 100);
+
+  if (!q) {
+    res.json({ query: "", communities: [] as Array<{ id: string; name: string; created_at: string }> });
+    return;
+  }
+
+  try {
+    const pattern = `%${q}%`;
+    const rows = await db
+      .select({
+        id: communities.id,
+        name: communities.name,
+        created_at: communities.created_at,
+      })
+      .from(communities)
+      .where(sql`${communities.name} ILIKE ${pattern}`)
+      .orderBy(desc(communities.created_at))
+      .limit(limit);
+
+    res.json({ query: q, communities: rows });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to search communities" });
+  }
 });
 
 /** List communities the current user belongs to. */
