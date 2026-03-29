@@ -71,6 +71,31 @@ export async function joinCommunity(communityId: string): Promise<JoinCommunityR
   }
 }
 
+export type LeaveCommunityResult = { ok: true } | { ok: false; error: string };
+
+/** Leave a community (membership removed). Uses communities service. */
+export async function leaveCommunity(communityId: string): Promise<LeaveCommunityResult> {
+  try {
+    const res = await fetch(`/communities/${encodeURIComponent(communityId)}/leave`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (res.status === 200) return { ok: true };
+    if (res.status === 404) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return { ok: false, error: body.error ?? "Cannot leave this server." };
+    }
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, error: "You must be signed in." };
+    }
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    return { ok: false, error: body.error ?? "Could not leave this server." };
+  } catch {
+    return { ok: false, error: "Network error." };
+  }
+}
+
 const sampleChannels: Channel[] = [
   { id: "general-chat", name: "general-chat", type: "text" },
   { id: "design-critique", name: "design-critique", type: "text" },

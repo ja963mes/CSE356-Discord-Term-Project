@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import type { Community } from "../api/discord";
 import { joinCommunity, searchCommunities } from "../api/discord";
 import { createCommunity } from "../services/createCommunity";
@@ -146,6 +146,8 @@ export function JoinCommunityPlaceholderModal({
   const [results, setResults] = useState<Community[]>([]);
   const [joiningId, setJoiningId] = useState<string | null>(null);
   const [joinErrorById, setJoinErrorById] = useState<Record<string, string>>({});
+  /** Blocks re-entrant joins before React state (joiningId) flushes — one click must not fire parallel POSTs. */
+  const joinInFlightRef = useRef(false);
 
   useEffect(() => {
     if (!open) return;
@@ -156,6 +158,7 @@ export function JoinCommunityPlaceholderModal({
     setResults([]);
     setJoiningId(null);
     setJoinErrorById({});
+    joinInFlightRef.current = false;
   }, [open]);
 
   if (!open) return null;
@@ -176,7 +179,9 @@ export function JoinCommunityPlaceholderModal({
         setResults([]);
         return;
       }
-      setResults(res);
+      // Dedupe by id so React keys and join targets stay stable.
+      const deduped = Array.from(new Map(res.map((x) => [String(x.id), x])).values());
+      setResults(deduped);
     } catch {
       setError("Search failed. Please try again.");
       setResults([]);
@@ -185,21 +190,33 @@ export function JoinCommunityPlaceholderModal({
     }
   }
 
-  async function handleJoin(c: Community) {
-    if (memberCommunityIds?.has(c.id)) return;
+  async function handleJoinById(communityIdRaw: string) {
+    const communityId = String(communityIdRaw ?? "").trim();
+    if (!communityId || joinInFlightRef.current) return;
+    if (memberCommunityIds?.has(communityId)) return;
+
+    const row = results.find((r) => String(r.id) === communityId);
+    if (!row) return;
+
+    joinInFlightRef.current = true;
     setJoinErrorById((prev) => {
       const next = { ...prev };
-      delete next[c.id];
+      delete next[communityId];
       return next;
     });
-    setJoiningId(c.id);
-    const result = await joinCommunity(c.id);
-    setJoiningId(null);
-    if (result.ok) {
-      await Promise.resolve(onJoined?.(c));
-      return;
+    setJoiningId(communityId);
+
+    try {
+      const result = await joinCommunity(communityId);
+      if (result.ok) {
+        await Promise.resolve(onJoined?.(row));
+        return;
+      }
+      setJoinErrorById((prev) => ({ ...prev, [communityId]: result.error }));
+    } finally {
+      joinInFlightRef.current = false;
+      setJoiningId(null);
     }
-    setJoinErrorById((prev) => ({ ...prev, [c.id]: result.error }));
   }
 
   return (
@@ -242,11 +259,13 @@ export function JoinCommunityPlaceholderModal({
 
             {!loading
               ? results.map((c) => {
-                  const already = memberCommunityIds?.has(c.id) ?? false;
-                  const busy = joiningId === c.id;
-                  const rowErr = joinErrorById[c.id];
+                  const id = String(c.id);
+                  const already = memberCommunityIds?.has(id) ?? false;
+                  const busy = joiningId === id;
+                  const joinLocked = joiningId !== null;
+                  const rowErr = joinErrorById[id];
                   return (
-                    <div key={c.id} className="px-3 py-2 rounded-lg bg-[#14171d] border border-white/5 mb-2">
+                    <div key={id} className="px-3 py-2 rounded-lg bg-[#14171d] border border-white/5 mb-2">
                       <div className="flex items-center justify-between gap-3">
                         <div className="min-w-0">
                           <p className="text-sm font-semibold text-[#f6f6fc] truncate">{c.name}</p>
@@ -257,8 +276,12 @@ export function JoinCommunityPlaceholderModal({
                         </div>
                         <button
                           type="button"
-                          disabled={already || busy || loading}
-                          onClick={() => handleJoin(c)}
+                          disabled={already || busy || loading || joinLocked}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            void handleJoinById(id);
+                          }}
                           className={
                             already
                               ? "px-3 py-1.5 rounded-lg text-[12px] font-semibold bg-[#2b2d31] text-[#b5bac1] border border-white/5 cursor-default"
