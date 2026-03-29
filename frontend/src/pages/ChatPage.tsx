@@ -64,6 +64,8 @@ export default function ChatPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
 
+  const memberCommunityIds = useMemo(() => new Set(communities.map((c) => c.id)), [communities]);
+
   const refreshCommunities = useCallback(async (opts?: { preferSelectId?: string }) => {
     const list = await listCommunities();
     if (list === null) {
@@ -189,6 +191,11 @@ export default function ChatPage() {
         open={communityModal === "join"}
         onBack={() => setCommunityModal("menu")}
         onClose={closeCommunityModals}
+        memberCommunityIds={memberCommunityIds}
+        onJoined={async (joined) => {
+          await refreshCommunities({ preferSelectId: joined.id });
+          closeCommunityModals();
+        }}
       />
 
       {/* LEFT PANEL: icon nav + channel list stacked, with shared profile bar at bottom */}

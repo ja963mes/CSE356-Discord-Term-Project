@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import type { Community } from "../api/discord";
+import { joinCommunity, searchCommunities } from "../api/discord";
 import { createCommunity } from "../services/createCommunity";
 
 type MenuProps = {
@@ -17,9 +18,7 @@ export function ServerActionMenuModal({ open, onClose, onCreate, onJoin }: MenuP
       <button type="button" className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} aria-label="Close" />
       <div className="relative w-full max-w-md rounded-xl bg-[#1e2128] border border-white/10 shadow-2xl p-6 z-[101]">
         <h2 className="text-xl font-bold text-[#f6f6fc] font-headline text-center mb-2">Add a server</h2>
-        <p className="text-sm text-[#b5bac1] text-center mb-6">
-          Create a new community or join one with an invite (join flow coming soon).
-        </p>
+        <p className="text-sm text-[#b5bac1] text-center mb-6">Create a new community or browse the directory to join one.</p>
         <div className="flex flex-col gap-3">
           <button
             type="button"
@@ -127,11 +126,81 @@ type JoinPlaceholderProps = {
   open: boolean;
   onBack: () => void;
   onClose: () => void;
+  /** IDs of communities the user is already in (sidebar list) — avoids redundant join requests. */
+  memberCommunityIds?: ReadonlySet<string>;
+  onJoined?: (community: Community) => void | Promise<void>;
 };
 
-/** Placeholder until the join service is implemented (see `services/join/`). */
-export function JoinCommunityPlaceholderModal({ open, onBack, onClose }: JoinPlaceholderProps) {
+/** Directory search + join via `POST /communities/:id/join` (communities service). */
+export function JoinCommunityPlaceholderModal({
+  open,
+  onBack,
+  onClose,
+  memberCommunityIds,
+  onJoined,
+}: JoinPlaceholderProps) {
+  const [query, setQuery] = useState("");
+  const [hasSearched, setHasSearched] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [results, setResults] = useState<Community[]>([]);
+  const [joiningId, setJoiningId] = useState<string | null>(null);
+  const [joinErrorById, setJoinErrorById] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!open) return;
+    setQuery("");
+    setHasSearched(false);
+    setLoading(false);
+    setError(null);
+    setResults([]);
+    setJoiningId(null);
+    setJoinErrorById({});
+  }, [open]);
+
   if (!open) return null;
+
+  async function handleSearch(e: React.FormEvent) {
+    e.preventDefault();
+    const q = query.trim();
+    if (!q) return;
+
+    setHasSearched(true);
+    setLoading(true);
+    setError(null);
+
+    try {
+      const res = await searchCommunities(q);
+      if (res === null) {
+        setError("Search service unavailable. Please try again.");
+        setResults([]);
+        return;
+      }
+      setResults(res);
+    } catch {
+      setError("Search failed. Please try again.");
+      setResults([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleJoin(c: Community) {
+    if (memberCommunityIds?.has(c.id)) return;
+    setJoinErrorById((prev) => {
+      const next = { ...prev };
+      delete next[c.id];
+      return next;
+    });
+    setJoiningId(c.id);
+    const result = await joinCommunity(c.id);
+    setJoiningId(null);
+    if (result.ok) {
+      await Promise.resolve(onJoined?.(c));
+      return;
+    }
+    setJoinErrorById((prev) => ({ ...prev, [c.id]: result.error }));
+  }
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" role="dialog" aria-modal="true">
@@ -139,13 +208,79 @@ export function JoinCommunityPlaceholderModal({ open, onBack, onClose }: JoinPla
       <div className="relative w-full max-w-md rounded-xl bg-[#1e2128] border border-white/10 shadow-2xl p-6 z-[101]">
         <h2 className="text-xl font-bold text-[#f6f6fc] font-headline text-center mb-2">Join a server</h2>
         <p className="text-sm text-[#b5bac1] text-center mb-6">
-          Joining by invite or directory will be handled by the join service. This screen is a placeholder.
+          Search the public directory for a server. Results load only after you submit a search.
         </p>
-        <div className="flex justify-end">
+
+        <form onSubmit={handleSearch} className="flex items-center gap-2 mb-4">
+          <input
+            className="flex-1 bg-[#111318] border border-white/10 text-[#f6f6fc] rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#5865F2] placeholder:text-[#6d737a]"
+            placeholder="Search servers"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            maxLength={100}
+            autoFocus
+            disabled={loading}
+          />
+          <button
+            type="submit"
+            disabled={loading || !query.trim()}
+            className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#5865F2] hover:bg-[#4752c4] text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {loading ? "Searching…" : "Search"}
+          </button>
+        </form>
+
+        {error ? <p className="mb-4 text-sm text-red-400">{error}</p> : null}
+
+        {hasSearched ? (
+          <div className="max-h-[340px] overflow-y-auto pr-1">
+            {loading ? <p className="text-sm text-[#b5bac1]">Searching…</p> : null}
+
+            {!loading && results.length === 0 ? (
+              <p className="text-sm text-[#b5bac1]">No servers found.</p>
+            ) : null}
+
+            {!loading
+              ? results.map((c) => {
+                  const already = memberCommunityIds?.has(c.id) ?? false;
+                  const busy = joiningId === c.id;
+                  const rowErr = joinErrorById[c.id];
+                  return (
+                    <div key={c.id} className="px-3 py-2 rounded-lg bg-[#14171d] border border-white/5 mb-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-[#f6f6fc] truncate">{c.name}</p>
+                          <p className="text-[10px] text-[#b5bac1] truncate">
+                            Created {new Date(c.created_at).toLocaleDateString()}
+                          </p>
+                          {rowErr ? <p className="text-[10px] text-red-400 mt-0.5 truncate">{rowErr}</p> : null}
+                        </div>
+                        <button
+                          type="button"
+                          disabled={already || busy || loading}
+                          onClick={() => handleJoin(c)}
+                          className={
+                            already
+                              ? "px-3 py-1.5 rounded-lg text-[12px] font-semibold bg-[#2b2d31] text-[#b5bac1] border border-white/5 cursor-default"
+                              : "px-3 py-1.5 rounded-lg text-[12px] font-semibold bg-[#5865F2] hover:bg-[#4752c4] text-white border border-white/10 disabled:opacity-50"
+                          }
+                        >
+                          {already ? "Member" : busy ? "…" : "Join"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              : null}
+          </div>
+        ) : null}
+
+        <div className="flex justify-end mt-5">
           <button
             type="button"
             onClick={onBack}
-            className="px-6 py-2 rounded-lg text-sm font-semibold bg-[#5865F2] hover:bg-[#4752c4] text-white transition-colors"
+            disabled={loading}
+            className="px-6 py-2 rounded-lg text-sm font-semibold bg-[#2b2d31] hover:bg-[#35373c] text-[#f6f6fc] disabled:opacity-50 transition-colors"
           >
             Back
           </button>

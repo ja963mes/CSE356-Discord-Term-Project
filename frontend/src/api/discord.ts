@@ -40,6 +40,37 @@ export async function getCommunityMembers(communityId: string): Promise<Communit
   return body?.members ?? null;
 }
 
+/** Search all public communities by name. */
+export async function searchCommunities(q: string): Promise<Community[] | null> {
+  const body = await fetchJson<{ communities: Community[] }>(`/search-communities?q=${encodeURIComponent(q)}`);
+  return body?.communities ?? null;
+}
+
+export type JoinCommunityResult =
+  | { ok: true; status: "joined" | "already" }
+  | { ok: false; error: string };
+
+/** Join a community (open join; session required). Uses communities service. */
+export async function joinCommunity(communityId: string): Promise<JoinCommunityResult> {
+  try {
+    const res = await fetch(`/communities/${encodeURIComponent(communityId)}/join`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (res.status === 201) return { ok: true, status: "joined" };
+    if (res.status === 200) return { ok: true, status: "already" };
+    if (res.status === 404) return { ok: false, error: "Community not found." };
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, error: "You must be signed in to join." };
+    }
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    return { ok: false, error: body.error ?? "Could not join this server." };
+  } catch {
+    return { ok: false, error: "Network error." };
+  }
+}
+
 const sampleChannels: Channel[] = [
   { id: "general-chat", name: "general-chat", type: "text" },
   { id: "design-critique", name: "design-critique", type: "text" },

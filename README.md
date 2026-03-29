@@ -81,6 +81,7 @@ Optional stub services for the wireframes:
 - `npm run dev:communities` (port 3002)
 - `npm run dev:messages` (port 3003)
 - `npm run dev:search` (port 3004)
+- `npm run dev:search-communities` (port 3007)
 - `npm run dev:realtime` (port 3005)
 
 Note: the frontend includes fallback sample data, so it can render even if some stub services are not running.
@@ -93,11 +94,16 @@ Users can **create** and **join** communities. A **community** is a named space 
 
 **Communities** (port **3002**, `services/communities/`) handles listing, joining, channels, and members. Both use the same PostgreSQL database as auth (see migrations under `services/auth/drizzle/`) and validate the **session cookie** (`session_token`) against Redis.
 
+**Search-communities (directory)** (port **3007**, `services/search-communities/`) handles public directory search for communities by name (used by the “Join a server” modal). It queries the same PostgreSQL database as auth.
+
+**Joining from search** uses **`POST /communities/:communityId/join`** on the communities service (same session cookie). The frontend passes the `communityId` from search results—no extra data fetch. Optional future work (invites, deep links) can live under `services/join/` without changing this path.
+
 | Method | Path | Service | Purpose |
 |--------|------|---------|---------|
 | `POST` | `/create-community` | create-community (3006) | Create a community (body: `{ "name": "..." }`) |
 | `GET` | `/communities` | communities (3002) | List communities the current user is in |
 | `POST` | `/communities/:communityId/join` | communities (3002) | Join a community |
+| `GET` | `/search-communities?q=...` | search-communities (3007) | Search public communities by name |
 | `GET` | `/communities/:communityId/channels` | communities (3002) | List channels (members only) |
 | `GET` | `/communities/:communityId/members` | communities (3002) | Members with display names and roles |
 
@@ -130,6 +136,7 @@ chmod +x scripts/dev-all.sh   # once
 | `npm run dev:communities` | Start communities service (port 3002) |
 | `npm run dev:messages` | Start messages stub service (port 3003) |
 | `npm run dev:search` | Start search stub service (port 3004) |
+| `npm run dev:search-communities` | Start communities directory search service (port 3007) |
 | `npm run dev:realtime` | Start realtime stub service (port 3005) |
 | `npm run db:generate` | Generate a new migration (auth service) |
 | `npm run db:migrate` | Apply pending migrations (auth service) |
@@ -144,6 +151,7 @@ services/
     drizzle/
   create-community/
   communities/
+  search-communities/
   messages/
   search/
   realtime/
