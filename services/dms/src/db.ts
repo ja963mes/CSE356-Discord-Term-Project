@@ -46,4 +46,11 @@ export const initializeCassandra = async (): Promise<void> => {
   for (const cql of schemaStatements) {
     await cassandra.execute(cql);
   }
+  try {
+    await cassandra.execute(
+      `ALTER TABLE ${env.CASSANDRA_KEYSPACE}.messages_by_conversation ADD is_deleted boolean`
+    );
+  } catch {
+    // Column already present on newer schemas
+  }
 };

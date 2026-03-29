@@ -35,6 +35,7 @@ export const buildSchemaStatements = (keyspace: string): string[] => [
     content text,
     attachments text,
     updated_at timestamp,
+    is_deleted boolean,
     PRIMARY KEY ((conversation_id), created_at, message_id)
   ) WITH CLUSTERING ORDER BY (created_at DESC, message_id ASC);`,
 ];

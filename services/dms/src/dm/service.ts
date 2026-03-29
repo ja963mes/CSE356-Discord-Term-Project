@@ -1,6 +1,7 @@
 import { types as cassandraTypes } from "cassandra-driver";
 import { v4 as uuidv4 } from "uuid";
 import { cassandra } from "../db";
+import { publishDmEvent } from "../events";
 
 export type ConversationType = "one_to_one" | "group";
 
@@ -18,8 +19,12 @@ export type MessageRecord = {
   authorId: string;
   content: string;
   attachments: string[];
+  /** ISO timestamp for display */
   createdAt: string;
+  /** Cassandra clustering key — required for edit/delete */
+  timeuuid: string;
   updatedAt: string | null;
+  deleted: boolean;
 };
 
 const toUuid = (value: string): cassandraTypes.Uuid => cassandraTypes.Uuid.fromString(value);
@@ -41,43 +46,52 @@ const mapConversation = (row: cassandraTypes.Row): ConversationRecord => ({
   updatedAt: (row.get("updated_at") as Date).toISOString(),
 });
 
-const mapMessage = (row: cassandraTypes.Row): MessageRecord => ({
-  messageId: row.get("message_id").toString(),
-  conversationId: row.get("conversation_id").toString(),
-  authorId: row.get("author_id").toString(),
-  content: row.get("content"),
-  attachments: JSON.parse(row.get("attachments") ?? "[]"),
-  createdAt: (row.get("created_at") as cassandraTypes.TimeUuid).getDate().toISOString(),
-  updatedAt: (row.get("updated_at") as Date | null)?.toISOString() ?? null,
-});
+const mapMessage = (row: cassandraTypes.Row): MessageRecord => {
+  const createdAtCol = row.get("created_at") as cassandraTypes.TimeUuid;
+  const deleted = row.get("is_deleted") === true;
+  return {
+    messageId: row.get("message_id").toString(),
+    conversationId: row.get("conversation_id").toString(),
+    authorId: row.get("author_id").toString(),
+    content: deleted ? "" : row.get("content"),
+    attachments: deleted ? [] : JSON.parse(row.get("attachments") ?? "[]"),
+    createdAt: createdAtCol.getDate().toISOString(),
+    timeuuid: createdAtCol.toString(),
+    updatedAt: (row.get("updated_at") as Date | null)?.toISOString() ?? null,
+    deleted,
+  };
+};
 
 export const editMessage = async (params: {
   conversationId: string;
   messageId: string;
   authorId: string;
-  createdAt: string;
+  timeuuid: string;
   content: string;
 }): Promise<MessageRecord> => {
   if(!(await isParticipant(params.conversationId, params.authorId))) {
     throw new DmError(403, "Only participants can edit messages");
   }
     const result = await cassandra.execute(
-    `SELECT author_id, attachments FROM messages_by_conversation
+    `SELECT author_id, attachments, is_deleted FROM messages_by_conversation
      WHERE conversation_id = ? AND created_at = ? AND message_id = ?`,
-    [toUuid(params.conversationId), toTimeUuid(params.createdAt), toUuid(params.messageId)],
+    [toUuid(params.conversationId), toTimeUuid(params.timeuuid), toUuid(params.messageId)],
     { prepare: true }
   );
   if(result.rowLength === 0){
     throw new DmError(404, "Message not found");
+  }
+  if (result.first().get("is_deleted") === true) {
+    throw new DmError(400, "This message was deleted");
   }
   if(result.first().get("author_id").toString() !== params.authorId){
     throw new DmError(403, "Only the author can edit this message"); 
   }
 
   const updatedAt = nowDate();
-  const edit= await cassandra.execute(
+  await cassandra.execute(
     `UPDATE messages_by_conversation SET content = ?, updated_at = ? WHERE conversation_id = ? AND created_at = ? AND message_id = ?`,
-    [params.content, updatedAt, toUuid(params.conversationId), toTimeUuid(params.createdAt), toUuid(params.messageId)],
+    [params.content, updatedAt, toUuid(params.conversationId), toTimeUuid(params.timeuuid), toUuid(params.messageId)],
     { prepare: true }
   );
 
@@ -89,11 +103,81 @@ export const editMessage = async (params: {
     authorId: params.authorId,
     content: params.content,
     attachments,
-    createdAt: toTimeUuid(params.createdAt).getDate().toISOString(),
+    createdAt: toTimeUuid(params.timeuuid).getDate().toISOString(),
+    timeuuid: params.timeuuid,
     updatedAt: updatedAt.toISOString(),
+    deleted: false,
   };
 
+  const participantIds = await listParticipantIds(params.conversationId);
+  await publishDmEvent({
+    type: "dm:message:edit",
+    conversationId: params.conversationId,
+    participantIds,
+    message: {
+      messageId: params.messageId,
+      authorId: params.authorId,
+      content: params.content,
+      createdAt: messageRecords.createdAt,
+      updatedAt: messageRecords.updatedAt!,
+      timeuuid: params.timeuuid,
+    },
+  });
+
   return messageRecords;
+};
+
+export const deleteMessage = async (params: {
+  conversationId: string;
+  messageId: string;
+  authorId: string;
+  timeuuid: string;
+}): Promise<void> => {
+  if (!(await isParticipant(params.conversationId, params.authorId))) {
+    throw new DmError(403, "Only participants can delete messages");
+  }
+
+  const result = await cassandra.execute(
+    `SELECT author_id, is_deleted FROM messages_by_conversation
+     WHERE conversation_id = ? AND created_at = ? AND message_id = ?`,
+    [toUuid(params.conversationId), toTimeUuid(params.timeuuid), toUuid(params.messageId)],
+    { prepare: true }
+  );
+
+  if (result.rowLength === 0) {
+    throw new DmError(404, "Message not found");
+  }
+
+  if (result.first().get("is_deleted") === true) {
+    return;
+  }
+
+  if (result.first().get("author_id").toString() !== params.authorId) {
+    throw new DmError(403, "Only the author can delete this message");
+  }
+
+  const deletedAt = nowDate();
+  await cassandra.execute(
+    `UPDATE messages_by_conversation SET is_deleted = true, content = '', attachments = ?, updated_at = ?
+     WHERE conversation_id = ? AND created_at = ? AND message_id = ?`,
+    [
+      JSON.stringify([]),
+      deletedAt,
+      toUuid(params.conversationId),
+      toTimeUuid(params.timeuuid),
+      toUuid(params.messageId),
+    ],
+    { prepare: true }
+  );
+
+  const participantIds = await listParticipantIds(params.conversationId);
+  await publishDmEvent({
+    type: "dm:message:delete",
+    conversationId: params.conversationId,
+    participantIds,
+    messageId: params.messageId,
+    authorId: params.authorId,
+  });
 };
 
 export const listConversations = async (userId: string): Promise<ConversationRecord[]> => {
@@ -231,13 +315,28 @@ export const createConversation = async (params: {
     })
   );
 
-  return {
+  const record: ConversationRecord = {
     conversationId,
     conversationType: params.conversationType,
     name: normalizedName,
     createdAt: createdAt.toISOString(),
     updatedAt: updatedAt.toISOString(),
   };
+
+  await publishDmEvent({
+    type: "dm:conversation:create",
+    conversationId,
+    participantIds: participants,
+    conversation: {
+      conversationId: record.conversationId,
+      conversationType: record.conversationType,
+      name: record.name,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+    },
+  });
+
+  return record;
 };
 
 export const inviteParticipant = async (
@@ -279,6 +378,14 @@ export const inviteParticipant = async (
   );
 
   await touchConversation(conversationId);
+
+  const participantIds = await listParticipantIds(conversationId);
+  await publishDmEvent({
+    type: "dm:participant:join",
+    conversationId,
+    participantIds,
+    userId: participantId,
+  });
 };
 
 const hardDeleteConversation = async (conversationId: string): Promise<void> => {
@@ -321,6 +428,15 @@ export const leaveConversation = async (conversationId: string, userId: string):
   );
 
   const remainingParticipants = await listParticipantIds(conversationId);
+
+  await publishDmEvent({
+    type: "dm:participant:leave",
+    conversationId,
+    participantIds: [...remainingParticipants, userId],
+    userId,
+    conversationDeleted: remainingParticipants.length === 0,
+  });
+
   if (remainingParticipants.length === 0) {
     await hardDeleteConversation(conversationId);
     return { deleted: true };
@@ -355,8 +471,8 @@ export const createMessage = async (params: {
   }
 
   await cassandra.execute(
-    `INSERT INTO messages_by_conversation (conversation_id, created_at, message_id, author_id, content, attachments)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO messages_by_conversation (conversation_id, created_at, message_id, author_id, content, attachments, is_deleted)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
     [
       toUuid(params.conversationId),
       createdAt,
@@ -364,20 +480,41 @@ export const createMessage = async (params: {
       toUuid(params.authorId),
       content,
       JSON.stringify(params.attachments),
+      false,
     ],
     { prepare: true }
   );
 
   await touchConversation(params.conversationId);
 
-  return {
+  const messageRecord: MessageRecord = {
     messageId,
     conversationId: params.conversationId,
     authorId: params.authorId,
     content,
     attachments: params.attachments,
     createdAt: createdAt.getDate().toISOString(),
+    timeuuid: createdAt.toString(),
+    updatedAt: null,
+    deleted: false,
   };
+
+  const participantIds = await listParticipantIds(params.conversationId);
+  await publishDmEvent({
+    type: "dm:message:create",
+    conversationId: params.conversationId,
+    participantIds,
+    message: {
+      messageId,
+      authorId: params.authorId,
+      content,
+      attachments: params.attachments,
+      createdAt: messageRecord.createdAt,
+      timeuuid: messageRecord.timeuuid,
+    },
+  });
+
+  return messageRecord;
 };
 
 export const listMessages = async (params: {
@@ -391,7 +528,7 @@ export const listMessages = async (params: {
   }
 
   const queryParts = [
-    `SELECT conversation_id, created_at, message_id, author_id, content, attachments`,
+    `SELECT conversation_id, created_at, message_id, author_id, content, attachments, updated_at, is_deleted`,
     `FROM messages_by_conversation`,
     `WHERE conversation_id = ?`,
   ];

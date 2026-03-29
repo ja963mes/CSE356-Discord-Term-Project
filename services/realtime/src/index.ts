@@ -30,6 +30,10 @@ redis.on("connect", async () => {
 });
 redis.on("error", (err) => console.error("Redis error:", err));
 
+// Dedicated Redis client for pub/sub (ioredis requires a separate connection for subscriptions)
+const redisSub = new Redis(env.REDIS_URL);
+redisSub.on("error", (err) => console.error("Redis sub error:", err));
+
 // Track active connections: connId -> { ws, userId }
 const connections = new Map<string, { ws: WebSocket; userId: string }>();
 
@@ -182,6 +186,32 @@ setInterval(async () => {
     }
   }
 }, 30_000);
+
+// Subscribe to DM events from the DMS service and forward to relevant WebSocket clients
+redisSub.subscribe("dm:events", (err) => {
+  if (err) console.error("[dm:events] subscribe failed:", err);
+  else console.log("[dm:events] subscribed");
+});
+
+redisSub.on("message", (channel, message) => {
+  if (channel !== "dm:events") return;
+
+  let event: { type: string; participantIds?: string[]; [key: string]: unknown };
+  try {
+    event = JSON.parse(message);
+  } catch {
+    return;
+  }
+
+  const targetUserIds = new Set(event.participantIds ?? []);
+  const payload = JSON.stringify(event);
+
+  for (const { ws, userId } of connections.values()) {
+    if (targetUserIds.has(userId) && ws.readyState === WebSocket.OPEN) {
+      ws.send(payload);
+    }
+  }
+});
 
 server.listen(Number(env.PORT), () => {
   console.log(`Realtime service running on port ${env.PORT}`);

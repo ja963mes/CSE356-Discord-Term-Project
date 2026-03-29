@@ -10,7 +10,9 @@ import { requireAuth } from "./middleware/session";
 import {
   createConversation,
   createMessage,
+  deleteMessage,
   DmError,
+  editMessage,
   inviteParticipant,
   leaveConversation,
   listConversations,
@@ -46,6 +48,15 @@ const createMessageSchema = z.object({
 const listMessagesSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
   before: z.string().optional(),
+});
+
+const editMessageSchema = z.object({
+  content: z.string().min(1).max(4000),
+  timeuuid: z.string().min(1),
+});
+
+const deleteMessageSchema = z.object({
+  timeuuid: z.string().min(1),
 });
 
 app.get("/dms", requireAuth, async (req, res, next) => {
@@ -120,6 +131,41 @@ app.get("/dms/:id/messages", requireAuth, async (req, res, next) => {
       before,
     });
     res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch("/dms/:id/messages/:msgId", requireAuth, async (req, res, next) => {
+  try {
+    const conversationId = z.string().uuid().parse(req.params.id);
+    const messageId = z.string().uuid().parse(req.params.msgId);
+    const { content, timeuuid } = editMessageSchema.parse(req.body);
+    const message = await editMessage({
+      conversationId,
+      messageId,
+      authorId: req.user.internal_id,
+      timeuuid,
+      content,
+    });
+    res.json({ message });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/dms/:id/messages/:msgId", requireAuth, async (req, res, next) => {
+  try {
+    const conversationId = z.string().uuid().parse(req.params.id);
+    const messageId = z.string().uuid().parse(req.params.msgId);
+    const { timeuuid } = deleteMessageSchema.parse(req.query);
+    await deleteMessage({
+      conversationId,
+      messageId,
+      authorId: req.user.internal_id,
+      timeuuid,
+    });
+    res.status(204).send();
   } catch (error) {
     next(error);
   }

@@ -15,11 +15,15 @@ import {
   search,
 } from "../api/discord";
 import { getMe, getDmUsers, logout, Me, DmUser } from "../api/auth";
-import { useWebSocket } from "../hooks/useWebSocket";
+import { Conversation, listConversations } from "../api/dms";
+import { IncomingMessage, useWebSocket } from "../hooks/useWebSocket";
 import { useActivityDetection } from "../hooks/useActivityDetection";
 import { usePresence } from "../hooks/usePresence";
 import UserPresence from "../components/UserPresence";
 import ProfileSettingsModal from "../components/ProfileSettingsModal";
+import DmList from "../components/DmList";
+import DmChatView from "../components/DmChatView";
+import CreateDmModal from "../components/CreateDmModal";
 import {
   CreateCommunityModal,
   JoinCommunityPlaceholderModal,
@@ -27,23 +31,32 @@ import {
 } from "../components/CommunityModals";
 
 type CommunityModal = "none" | "menu" | "create" | "join";
+type ViewMode = "channel" | "dm";
 
 export default function ChatPage() {
   const navigate = useNavigate();
   const [me, setMe] = useState<Me | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [dmUsers, setDmUsers] = useState<DmUser[]>([]);
+  const [dmConversations, setDmConversations] = useState<Conversation[]>([]);
+  const [selectedDmId, setSelectedDmId] = useState<string | null>(null);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [selectedCommunityId, setSelectedCommunityId] = useState<string | null>(null);
   const [guildName, setGuildName] = useState("The Obsidian Architect");
   const [usingLiveCommunities, setUsingLiveCommunities] = useState(false);
   const [communityModal, setCommunityModal] = useState<CommunityModal>("none");
+  const [showCreateDm, setShowCreateDm] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>("channel");
+  const [latestDmEvent, setLatestDmEvent] = useState<IncomingMessage | null>(null);
 
   const { handleMessage: handlePresenceMessage, getPresence } = usePresence();
 
-  const handleMessage = useCallback((msg: import("../hooks/useWebSocket").IncomingMessage) => {
+  const handleMessage = useCallback((msg: IncomingMessage) => {
     console.log("[ws] incoming:", msg);
     handlePresenceMessage(msg);
+    if (typeof msg.type === "string" && msg.type.startsWith("dm:")) {
+      setLatestDmEvent(msg);
+    }
   }, [handlePresenceMessage]);
 
   useEffect(() => {
@@ -131,6 +144,38 @@ export default function ChatPage() {
 
   const selectedChannel = useMemo(() => channels.find((c) => c.id === selectedChannelId), [channels, selectedChannelId]);
   const textChannels = useMemo(() => channels.filter((c) => c.type === "text"), [channels]);
+  const selectedDm = useMemo(() => dmConversations.find((c) => c.conversationId === selectedDmId), [dmConversations, selectedDmId]);
+
+  const dmDisplayNames = useMemo(() => {
+    const map: Record<string, string> = {};
+    if (me) {
+      map[me.internal_id] = me.profile.displayName || me.username;
+    }
+    for (const u of dmUsers) {
+      map[u.internal_id] = u.profile.displayName || u.username;
+    }
+    return map;
+  }, [me, dmUsers]);
+
+  useEffect(() => {
+    if (!latestDmEvent || !me) return;
+    const t = latestDmEvent.type;
+    if (t === "dm:conversation:create") {
+      const ids = latestDmEvent.participantIds as string[] | undefined;
+      const conv = latestDmEvent.conversation as Conversation | undefined;
+      if (!ids?.includes(me.internal_id) || !conv?.conversationId) return;
+      setDmConversations((prev) => {
+        if (prev.some((c) => c.conversationId === conv.conversationId)) return prev;
+        return [conv, ...prev];
+      });
+      return;
+    }
+    if (t === "dm:participant:join") {
+      const uid = latestDmEvent.userId as string | undefined;
+      if (uid !== me.internal_id) return;
+      listConversations().then(setDmConversations).catch(() => {});
+    }
+  }, [latestDmEvent, me]);
 
   async function onSearchSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -189,6 +234,15 @@ export default function ChatPage() {
         open={communityModal === "join"}
         onBack={() => setCommunityModal("menu")}
         onClose={closeCommunityModals}
+      />
+      <CreateDmModal
+        open={showCreateDm}
+        onClose={() => setShowCreateDm(false)}
+        onCreated={(conversation) => {
+          setDmConversations((prev) => [conversation, ...prev]);
+          setSelectedDmId(conversation.conversationId);
+          setViewMode("dm");
+        }}
       />
 
       {/* LEFT PANEL: icon nav + channel list stacked, with shared profile bar at bottom */}
@@ -252,7 +306,7 @@ export default function ChatPage() {
                 Text Channels
               </div>
               {textChannels.map((c) => {
-                const active = c.id === selectedChannelId;
+                const active = viewMode === "channel" && c.id === selectedChannelId;
                 return (
                   <button
                     key={c.id}
@@ -261,7 +315,7 @@ export default function ChatPage() {
                         ? "flex items-center gap-2 px-2 py-2 rounded-lg bg-surface-container-highest text-on-surface font-semibold group transition-all"
                         : "flex items-center gap-2 px-2 py-2 rounded-lg text-on-surface-variant hover:bg-surface-variant/50 hover:text-on-surface group transition-all"
                     }
-                    onClick={() => setSelectedChannelId(c.id)}
+                    onClick={() => { setSelectedChannelId(c.id); setViewMode("channel"); setSelectedDmId(null); }}
                   >
                     <span className="material-symbols-outlined text-on-surface-variant group-hover:text-on-surface">tag</span>
                     {c.name}
@@ -269,21 +323,13 @@ export default function ChatPage() {
                 );
               })}
 
-              <div className="flex items-center px-2 pt-6 pb-1 text-on-surface-variant uppercase text-[10px] font-bold tracking-widest">
-                <span className="material-symbols-outlined text-[14px] mr-1">expand_more</span>
-                Direct Messages
-              </div>
-              {dmUsers.map((u) => (
-                <div key={u.internal_id} className="px-2 py-1.5 rounded-lg hover:bg-surface-variant/50 cursor-pointer transition-all">
-                  <UserPresence
-                    userId={u.internal_id}
-                    displayName={u.profile.displayName}
-                    avatarUrl={u.profile.avatar ?? undefined}
-                    presence={getPresence(u.internal_id)}
-                    size="sm"
-                  />
-                </div>
-              ))}
+              <DmList
+                selectedId={selectedDmId}
+                onSelect={(c) => { setSelectedDmId(c.conversationId); setViewMode("dm"); }}
+                onNewDm={() => setShowCreateDm(true)}
+                conversations={dmConversations}
+                setConversations={setDmConversations}
+              />
             </div>
           </section>
         </div>
@@ -322,7 +368,20 @@ export default function ChatPage() {
 
       {/* MAIN WRAPPER */}
       <main className="flex flex-1 h-screen overflow-hidden">
-        {/* COLUMN 3: Main Chat Area */}
+        {/* COLUMN 3: Main Chat Area — channel view or DM view */}
+        {viewMode === "dm" && selectedDm && me ? (
+          <DmChatView
+            conversation={selectedDm}
+            currentUserId={me.internal_id}
+            displayNameByUserId={dmDisplayNames}
+            wsEvent={latestDmEvent}
+            onLeave={(id) => {
+              setDmConversations((prev) => prev.filter((c) => c.conversationId !== id));
+              setSelectedDmId(null);
+              setViewMode("channel");
+            }}
+          />
+        ) : (
         <section className="flex-1 bg-surface-container flex flex-col relative min-w-0">
           {/* TopNavBar */}
           <header className="h-16 flex items-center justify-between px-6 w-full bg-[#171a1f]/60 backdrop-blur-xl shadow-sm z-10">
@@ -422,8 +481,10 @@ export default function ChatPage() {
             </div>
           </div>
         </section>
+        )}
 
-        {/* COLUMN 4: Members + presence */}
+        {/* COLUMN 4: Members + presence (only in channel view) */}
+        {viewMode === "channel" && (
         <aside className="w-56 bg-surface-container-low border-l border-outline-variant/20 flex flex-col flex-shrink-0">
           <div className="h-16 flex items-center px-4 text-on-surface-variant uppercase text-[10px] font-bold tracking-widest">
             Members — {members.length}
@@ -451,6 +512,7 @@ export default function ChatPage() {
             )}
           </div>
         </aside>
+        )}
       </main>
 
       {showSettings && me && (
