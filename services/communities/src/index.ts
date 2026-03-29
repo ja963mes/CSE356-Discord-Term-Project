@@ -73,6 +73,35 @@ app.post("/communities/:communityId/join", requireAuth, async (req: Request, res
   }
 });
 
+/** Leave a community (removes membership row). */
+app.post("/communities/:communityId/leave", requireAuth, async (req: Request, res: Response) => {
+  const userId = req.user!.internal_id;
+  const communityId = String(req.params.communityId);
+
+  try {
+    const [exists] = await db.select({ id: communities.id }).from(communities).where(eq(communities.id, communityId)).limit(1);
+    if (!exists) {
+      res.status(404).json({ error: "Community not found" });
+      return;
+    }
+
+    const deleted = await db
+      .delete(communityMembers)
+      .where(and(eq(communityMembers.community_id, communityId), eq(communityMembers.user_id, userId)))
+      .returning({ community_id: communityMembers.community_id });
+
+    if (deleted.length === 0) {
+      res.status(404).json({ error: "Not a member of this community" });
+      return;
+    }
+
+    res.json({ message: "Left community" });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to leave community" });
+  }
+});
+
 /** Channels in a community (must be a member). */
 app.get("/communities/:communityId/channels", requireAuth, async (req: Request, res: Response) => {
   const userId = req.user!.internal_id;
