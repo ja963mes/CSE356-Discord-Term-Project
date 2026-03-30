@@ -1,5 +1,5 @@
 import { types as cassandraTypes } from "cassandra-driver";
-import { v4 as uuidv4, v5 as uuidv5 } from "uuid";
+import { uuidv4, uuidv5 } from "../uuid";
 import { and, eq, inArray } from "drizzle-orm";
 import { cassandra } from "../db";
 import { pg } from "../db/pg";

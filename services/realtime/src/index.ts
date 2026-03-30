@@ -178,12 +178,13 @@ wss.on("connection", async (ws, req) => {
     connections.delete(connId);
     await removeConnection(redis, userId, connId);
     console.log(`[disconnect] userId=${userId} connId=${connId} total=${connections.size}`);
-    // Only unsubscribe if user has no more connections
     const stillConnected = [...connections.values()].some((c) => c.userId === userId);
+    // Broadcast BEFORE unsubscribing — targets are looked up from context sets,
+    // which must still be in Redis when broadcastPresenceChange runs.
+    await updateAndBroadcast(userId, prev);
     if (!stillConnected) {
       await unsubscribeUser(redis, userId);
     }
-    await updateAndBroadcast(userId, prev);
   });
 
   ws.on("error", (err) => {
