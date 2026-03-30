@@ -341,6 +341,18 @@ app.post("/communities/:communityId/channels", requireAuth, async (req: Request,
       }
     }
 
+    await publishCommunityEvent({
+      type: "community:channel:create",
+      communityId,
+      channel: {
+        id: created.id,
+        name: created.name,
+        type: created.type,
+        position: created.position,
+        is_private: created.is_private,
+      },
+    });
+
     res.status(201).json({ channel: created });
   } catch (e) {
     console.error(e);
@@ -594,6 +606,13 @@ app.delete("/communities/:communityId/channels/:channelId", requireAuth, async (
     }
 
     await db.delete(channels).where(eq(channels.id, channelId));
+
+    await publishCommunityEvent({
+      type: "community:channel:delete",
+      communityId,
+      channelId,
+    });
+
     res.status(204).send();
   } catch (e) {
     console.error(e);

@@ -276,6 +276,19 @@ redisSub.on("message", (channel, message) => {
       })();
     }
 
+    if (event.type === "community:channel:create" || event.type === "community:channel:delete") {
+      const communityId = event.communityId as string;
+      const payload = JSON.stringify(event);
+      void (async () => {
+        for (const { ws, userId: connUserId } of connections.values()) {
+          const contexts = await redis.smembers(`presence:contexts:${connUserId}`);
+          if (contexts.includes(`guild:${communityId}`) && ws.readyState === WebSocket.OPEN) {
+            ws.send(payload);
+          }
+        }
+      })();
+    }
+
     if (event.type === "community:member:leave") {
       const communityId = event.communityId as string;
       const userId = event.userId as string;

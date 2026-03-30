@@ -1,13 +1,15 @@
 import { useCallback, useState } from "react";
-import { CommunityMember } from "../api/discord";
+import { Channel, CommunityMember } from "../api/discord";
 import { IncomingMessage } from "./useWebSocket";
 
 export function useCommunityEvents() {
   const [members, setMembers] = useState<CommunityMember[]>([]);
+  const [channels, setChannels] = useState<Channel[]>([]);
 
   const handleCommunityMessage = useCallback((msg: IncomingMessage, selectedCommunityId: string | null) => {
+    if ((msg.communityId as string) !== selectedCommunityId) return;
+
     if (msg.type === "community:member:join") {
-      if ((msg.communityId as string) !== selectedCommunityId) return;
       const newMember: CommunityMember = {
         user_id: msg.userId as string,
         username: msg.username as string,
@@ -22,10 +24,23 @@ export function useCommunityEvents() {
     }
 
     if (msg.type === "community:member:leave") {
-      if ((msg.communityId as string) !== selectedCommunityId) return;
       setMembers((prev) => prev.filter((m) => m.user_id !== (msg.userId as string)));
+    }
+
+    if (msg.type === "community:channel:create") {
+      const ch = msg.channel as Channel;
+      setChannels((prev) => {
+        if (prev.some((c) => c.id === ch.id)) return prev;
+        const next = [...prev, { ...ch, joined: !ch.is_private }];
+        return next.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+      });
+    }
+
+    if (msg.type === "community:channel:delete") {
+      const channelId = msg.channelId as string;
+      setChannels((prev) => prev.filter((c) => c.id !== channelId));
     }
   }, []);
 
-  return { members, setMembers, handleCommunityMessage };
+  return { members, setMembers, channels, setChannels, handleCommunityMessage };
 }

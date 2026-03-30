@@ -64,7 +64,7 @@ export default function ChatPage() {
     onConversationCreated,
     onConversationLeft,
   } = useDmEvents(me);
-  const { members, setMembers, handleCommunityMessage } = useCommunityEvents();
+  const { members, setMembers, channels, setChannels, handleCommunityMessage } = useCommunityEvents();
 
   const handleMessage = useCallback((msg: IncomingMessage) => {
     console.log("[ws] incoming:", msg);
@@ -91,7 +91,6 @@ export default function ChatPage() {
   const { send } = useWebSocket(handleMessage);
   useActivityDetection(send);
 
-  const [channels, setChannels] = useState<Channel[]>([]);
   const [selectedChannelId, setSelectedChannelId] = useState<string>("general-chat");
   const [messages, setMessages] = useState<Message[]>([]);
 
