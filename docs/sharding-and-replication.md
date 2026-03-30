@@ -1,6 +1,25 @@
-# Sharding and replication (future design)
+# Sharding and replication
 
-This document captures **design intent** for a time when PostgreSQL (or other stores) are **sharded** and **replicated** so communities are spread across instances. Nothing here is implemented yet; it is guidance for schema and API boundaries.
+This document describes **how we partition data today** (Cassandra channel messages) and **design intent** for future PostgreSQL sharding when communities are spread across instances.
+
+## Channel messages (Cassandra) — implemented
+
+The messages service **writes and reads guild channel history** from Cassandra, not PostgreSQL.
+
+| Concept | In this repo |
+|--------|----------------|
+| **Partition key** | `channel_id` — all messages for a channel live in one Cassandra partition (ordered by `created_at` timeuuid, descending). |
+| **Replication** | Keyspace replication is configured via env: **`CASSANDRA_TOPOLOGY`** (`simple` → `SimpleStrategy`, `network` → `NetworkTopologyStrategy`) and **`CASSANDRA_REPLICATION_FACTOR`**. For multi-datacenter clusters, set `network` and **`CASSANDRA_LOCAL_DATACENTER`** to match the DC name of the nodes you connect to. |
+| **Read/write tuning** | **`CASSANDRA_READ_CONSISTENCY`** / **`CASSANDRA_WRITE_CONSISTENCY`** (e.g. `localQuorum` writes, `localOne` reads) trade latency vs durability. |
+| **Routing hints (HTTP)** | Responses from `GET/POST /messages` include **`X-Partition-Key`** (channel id), **`X-Shard-Key-Community`** (guild id for correlation), **`X-Storage-Keyspace`**, and **`X-Cassandra-Replication`** (topology + RF + DC). |
+
+**Pagination:** `before` accepts a **timeuuid** string (or ISO timestamp parsed to a timeuuid) for “older than this” page.
+
+Postgres still holds **`channels`**, **`channel_members`**, and **`community_members`**; the service enforces ACL before touching Cassandra.
+
+## Future: PostgreSQL sharding (not implemented)
+
+The following captures **design intent** for a time when PostgreSQL is **sharded** so communities are spread across instances.
 
 ## Goals
 
@@ -67,6 +86,7 @@ Direct messages are **not** community-sharded; they use a **separate** partition
 | **Global** | Users, identities, sessions; index for “user → guilds” |
 | **Per shard** | Channels, members, messages for communities on that shard |
 | **Replication** | Per-shard replicas for reads and HA |
-| **DMs** | Separate store / partitioning (Cassandra in this repo) |
+| **Channel messages (today)** | Cassandra `messages_by_channel` partitioned by `channel_id` |
+| **DMs** | Separate keyspace / partitioning (Cassandra in this repo) |
 
-This aligns with common Discord-style architectures and with a migration path from today’s single Postgres without a big-bang rewrite.
+Guild metadata can stay on Postgres while message bodies scale on Cassandra partitions. Future Postgres sharding would target channels and membership, not the Cassandra message store.

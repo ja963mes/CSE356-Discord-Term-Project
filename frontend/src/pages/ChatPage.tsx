@@ -9,6 +9,7 @@ import {
   getCommunityChannels,
   getCommunityMembers,
   getMessages,
+  postChannelMessage,
   getSampleChannels,
   getSampleMembers,
   joinChannel,
@@ -93,6 +94,8 @@ export default function ChatPage() {
 
   const [selectedChannelId, setSelectedChannelId] = useState<string>("general-chat");
   const [messages, setMessages] = useState<Message[]>([]);
+  const [messageDraft, setMessageDraft] = useState("");
+  const [sendBusy, setSendBusy] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
@@ -174,6 +177,10 @@ export default function ChatPage() {
   }, [usingLiveCommunities, selectedChannel]);
 
   useEffect(() => {
+    setMessageDraft("");
+  }, [selectedChannelId]);
+
+  useEffect(() => {
     if (!channelAccessible) {
       setMessages([]);
       return;
@@ -228,6 +235,23 @@ export default function ChatPage() {
     if (!selectedCommunityId) return;
     const r = await joinChannel(selectedCommunityId, channelId);
     if (r.ok) setGuildDataVersion((v) => v + 1);
+  }
+
+  async function handleSendChannelMessage(e?: React.FormEvent) {
+    e?.preventDefault();
+    if (!usingLiveCommunities || !channelAccessible || !selectedChannelId || sendBusy) return;
+    const text = messageDraft.trim();
+    if (!text) return;
+    setSendBusy(true);
+    try {
+      const msg = await postChannelMessage(selectedChannelId, text);
+      if (msg) {
+        setMessages((prev) => [...prev, msg]);
+        setMessageDraft("");
+      }
+    } finally {
+      setSendBusy(false);
+    }
   }
 
   async function handleDeleteChannel(channelId: string) {
@@ -633,15 +657,11 @@ export default function ChatPage() {
             ) : null}
 
             {channelAccessible && messages.length === 0 ? (
-              <div className="py-10 text-on-surface-variant">No messages yet.</div>
-            ) : null}
-
-            {channelAccessible ? (
-            <div className="py-10">
-              <p className="text-on-surface-variant text-sm">
-                Welcome to the {selectedChannel?.name ?? "general-chat"} channel.
-              </p>
-            </div>
+              <div className="py-10">
+                <p className="text-on-surface-variant text-sm">
+                  Welcome to #{selectedChannel?.name ?? "channel"}. Send a message to start the conversation.
+                </p>
+              </div>
             ) : null}
 
             {channelAccessible ? messages.map((m) => (
@@ -679,29 +699,31 @@ export default function ChatPage() {
           </div>
 
           {/* Message Composer */}
-          <div className="p-4 border-t border-outline-variant/20">
+          <form className="p-4 border-t border-outline-variant/20" onSubmit={handleSendChannelMessage}>
             <div className="flex items-center gap-3">
               <input
                 className="flex-1 bg-surface-container-lowest border-none rounded-lg px-4 py-2 text-sm text-on-surface placeholder:text-on-surface-variant focus:ring-1 focus:ring-primary disabled:opacity-50"
                 placeholder={
-                  !channelAccessible && usingLiveCommunities
-                    ? "Join the channel to send messages"
-                    : `Message #${selectedChannel?.name ?? "general-chat"}`
+                  !usingLiveCommunities
+                    ? "Connect to a server to send messages"
+                    : !channelAccessible
+                      ? "Join the channel to send messages"
+                      : `Message #${selectedChannel?.name ?? "general-chat"}`
                 }
-                disabled={!channelAccessible && usingLiveCommunities}
-                onChange={() => {
-                  // Placeholder composer
-                }}
+                disabled={!usingLiveCommunities || (!channelAccessible && usingLiveCommunities)}
+                value={messageDraft}
+                onChange={(e) => setMessageDraft(e.target.value)}
               />
               <button
-                type="button"
+                type="submit"
                 className="material-symbols-outlined text-on-surface-variant hover:text-on-surface cursor-pointer disabled:opacity-40"
-                disabled={!channelAccessible && usingLiveCommunities}
+                disabled={sendBusy || !usingLiveCommunities || (!channelAccessible && usingLiveCommunities)}
+                aria-label="Send message"
               >
                 send
               </button>
             </div>
-          </div>
+          </form>
         </section>
         )}
 
