@@ -265,14 +265,48 @@ export async function getChannels(): Promise<Channel[]> {
   }
 }
 
+function looksLikeChannelUuid(channelId: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(channelId);
+}
+
+/** Load channel messages (session required for real channel UUIDs). */
 export async function getMessages(channelId: string): Promise<Message[]> {
   try {
-    const res = await fetch(`/messages?channelId=${encodeURIComponent(channelId)}`);
+    const res = await fetch(`/messages?channelId=${encodeURIComponent(channelId)}`, {
+      credentials: "include",
+    });
+    if (res.status === 401 || res.status === 403) {
+      return [];
+    }
     if (!res.ok) throw new Error("Failed to load messages");
     const body = (await res.json()) as { messages: Message[] };
     return body.messages;
   } catch {
-    return fallbackMessages(channelId);
+    if (!looksLikeChannelUuid(channelId)) {
+      return fallbackMessages(channelId);
+    }
+    return [];
+  }
+}
+
+/** Post to a guild text channel (session + channel_members required). */
+export async function postChannelMessage(channelId: string, content: string): Promise<Message | null> {
+  const text = content.trim();
+  if (!text) return null;
+  try {
+    const res = await fetch("/messages", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channelId, content: text }),
+    });
+    if (res.status === 201) {
+      const data = (await res.json()) as { message: Message };
+      return data.message ?? null;
+    }
+    return null;
+  } catch {
+    return null;
   }
 }
 

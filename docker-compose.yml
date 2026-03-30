@@ -1,4 +1,4 @@
-# Local dev dependencies only: Postgres + Redis.
+# Local dev dependencies: Postgres + Redis + Cassandra.
 # Run apps on the host: `npm run dev:all` (or individual `npm run dev:*`).
 #
 # Usage:

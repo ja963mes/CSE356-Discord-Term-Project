@@ -8,7 +8,7 @@ Implementation scope and how this compares to the full architecture (nginx, Cass
 
 The diagram below reflects **local development** (`npm run dev:all`): the browser loads the React app from the Vite dev server (**5173**), which **proxies** API paths to the matching backend port (see `frontend/vite.config.ts`). In production you would typically put a reverse proxy in front of the same routes.
 
-**Data:** Auth, communities, and create-community share **PostgreSQL** (Drizzle migrations live under `services/auth/drizzle/`). Session cookies are validated via **Redis** on those services. The **DM** service uses **Cassandra** for conversation data (see [DEV-27](./docs/DEV-27-Direct-conversations-dm-service-setup.md)). **Messages**, **search**, and **realtime** are still stubs with no durable backing store in this repo.
+**Data:** Auth, communities, and create-community share **PostgreSQL** (Drizzle migrations under `services/auth/drizzle/`). The **messages** service stores **channel** history in **Cassandra** (`messages_by_channel`, default keyspace **`messaging`** via **`MESSAGES_CASSANDRA_KEYSPACE`**) while still using Postgres for channel metadata and ACL checks via **`channel_members`**. Session cookies are validated via **Redis** on those services. The **DM** service uses a separate Cassandra keyspace for DM data (see [DEV-27](./docs/DEV-27-Direct-conversations-dm-service-setup.md)). **Search** and **realtime** are still stubs for non-persistent behavior.
 
 ```mermaid
 flowchart TB
@@ -48,6 +48,9 @@ flowchart TB
   Comm --> RD
   CC --> PG
   CC --> RD
+  Msg --> PG
+  Msg --> CAS
+  Msg --> RD
   Dms --> CAS
   Dms --> RD
 ```
@@ -71,11 +74,12 @@ flowchart TB
 - **Node.js** v18+
 - **PostgreSQL** reachable from the app (often `localhost:5433` when using Docker Compose; `5432` for a local-only install)
 - **Redis** running on `localhost:6379`
-- **Docker** + Docker Compose (optional but recommended for Postgres + Redis), **or** install Postgres/Redis via Homebrew
+- **Cassandra** on `localhost:9042` for channel messages and DMs (included in `docker compose up`)
+- **Docker** + Docker Compose (optional but recommended for Postgres + Redis + Cassandra), **or** install dependencies via Homebrew
 
 ## Quick Start
 
-### 1. Start Postgres and Redis
+### 1. Start Postgres, Redis, and Cassandra
 
 **Option A — Docker Compose (one command)**  
 From the repo root:
@@ -84,7 +88,7 @@ From the repo root:
 docker compose up -d
 ```
 
-This starts Postgres on host **5433** and Redis on **6379** (see [`docker-compose.yml`](./docker-compose.yml)). Copy [`.env.example`](./.env.example) to `.env` and set `DATABASE_URL` to use port **5433** for the DB. Stop with `docker compose down`.
+This starts Postgres on host **5433**, Redis on **6379**, and Cassandra on **9042** (see [`docker-compose.yml`](./docker-compose.yml)). Copy [`.env.example`](./.env.example) to `.env` and set `DATABASE_URL` to use port **5433** for the DB. Channel messages (`messages` service) and DMs expect Cassandra reachable at **`127.0.0.1:9042`** by default (see optional `CASSANDRA_*` variables in `.env.example`). Stop with `docker compose down`.
 
 **Option B — Docker without Compose**
 
@@ -172,8 +176,10 @@ Users can **create** and **join** communities. A **community** is a named space 
 | `POST` | `/communities/:communityId/channels/:channelId/members` | communities (3002) | Add user to channel — body `{ "user_id" }` (owner/admin; for private channels) |
 | `DELETE` | `/communities/:communityId/channels/:channelId` | communities (3002) | Delete channel (owner/admin; cannot delete the last channel in a guild) |
 | `GET` | `/communities/:communityId/members` | communities (3002) | Members with display names and roles |
+| `GET` | `/messages?channelId=&before=&limit=` | messages (3003) | List channel messages (session; must be in `channel_members`) |
+| `POST` | `/messages` | messages (3003) | Post message — body `{ "channelId", "content" }` (same ACL as GET) |
 
-The Vite dev server proxies `/create-community` to port **3006**, `/communities` and `/search-communities` to port **3002** (see `frontend/vite.config.ts`).
+The Vite dev server proxies `/create-community` to port **3006**, `/communities` and `/search-communities` to port **3002**, `/messages` to **3003** (see `frontend/vite.config.ts`).
 
 **Channels (DEV-28):** Implementation notes, API summary, and follow-up work are in [docs/DEV-28-Channels-scaffold-communities-service.md](./docs/DEV-28-Channels-scaffold-communities-service.md).
 
@@ -202,7 +208,7 @@ chmod +x scripts/dev-all.sh   # once
 | `npm run dev:frontend` | Start React frontend (port 5173) |
 | `npm run dev:create-community` | Start create-community service (port 3006) |
 | `npm run dev:communities` | Start communities service (port 3002) |
-| `npm run dev:messages` | Start messages stub service (port 3003) |
+| `npm run dev:messages` | Start messages service — channel chat API (port 3003) |
 | `npm run dev:search` | Start search stub service (port 3004) |
 | `npm run dev:realtime` | Start realtime stub service (port 3005) |
 | `npm run db:generate` | Generate a new migration (auth service) |
