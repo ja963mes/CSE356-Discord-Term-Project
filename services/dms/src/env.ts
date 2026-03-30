@@ -6,6 +6,7 @@ dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
 
 const envSchema = z.object({
   DMS_PORT: z.string().default("3007"),
+  DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().min(1),
   CASSANDRA_CONTACT_POINTS: z.string().default("127.0.0.1"),
   CASSANDRA_PORT: z.coerce.number().int().positive().default(9042),

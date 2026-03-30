@@ -53,11 +53,4 @@ export const initializeCassandra = async (): Promise<void> => {
   } catch {
     // Column already present on newer schemas
   }
-  try {
-    await cassandra.execute(
-      `ALTER TABLE ${env.CASSANDRA_KEYSPACE}.conversations_by_user ADD participant_ids list<uuid>`
-    );
-  } catch {
-    // Column already present on newer schemas
-  }
 };
