@@ -11,6 +11,7 @@ export type DmEvent =
         conversationId: string;
         conversationType: "one_to_one" | "group";
         name: string | null;
+        participantIds: string[];
         createdAt: string;
         updatedAt: string;
       };

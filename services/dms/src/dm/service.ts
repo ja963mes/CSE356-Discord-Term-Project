@@ -1,7 +1,11 @@
 import { types as cassandraTypes } from "cassandra-driver";
-import { v4 as uuidv4 } from "uuid";
+import { v4 as uuidv4, v5 as uuidv5 } from "uuid";
 import { cassandra } from "../db";
 import { publishDmEvent } from "../events";
+
+/** Derives a deterministic conversation ID from two user IDs. Always the same regardless of argument order. */
+const oneToOneConversationId = (a: string, b: string): string =>
+  uuidv5([a, b].sort().join(":"), uuidv5.URL);
 
 export type ConversationType = "one_to_one" | "group";
 
@@ -9,6 +13,7 @@ export type ConversationRecord = {
   conversationId: string;
   conversationType: ConversationType;
   name: string | null;
+  participantIds: string[];
   createdAt: string;
   updatedAt: string;
 };
@@ -42,6 +47,7 @@ const mapConversation = (row: cassandraTypes.Row): ConversationRecord => ({
   conversationId: row.get("conversation_id").toString(),
   conversationType: row.get("conversation_type") as ConversationType,
   name: row.get("name"),
+  participantIds: [],
   createdAt: (row.get("created_at") as Date).toISOString(),
   updatedAt: (row.get("updated_at") as Date).toISOString(),
 });
@@ -182,14 +188,19 @@ export const deleteMessage = async (params: {
 
 export const listConversations = async (userId: string): Promise<ConversationRecord[]> => {
   const result = await cassandra.execute(
-    `SELECT conversation_id, conversation_type, name, created_at, updated_at
+    `SELECT conversation_id, conversation_type, name, participant_ids, created_at, updated_at
      FROM conversations_by_user
      WHERE user_id = ?`,
     [toUuid(userId)],
     { prepare: true }
   );
 
-  return result.rows.map(mapConversation).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return result.rows
+    .map((row) => ({
+      ...mapConversation(row),
+      participantIds: (row.get("participant_ids") as cassandraTypes.Uuid[] | null ?? []).map((id) => id.toString()),
+    }))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 };
 
 export const getConversation = async (conversationId: string): Promise<ConversationRecord | null> => {
@@ -228,13 +239,14 @@ const upsertConversationUserIndex = async (
   conversationId: string,
   conversationType: ConversationType,
   name: string | null,
+  participantIds: string[],
   createdAt: Date,
   updatedAt: Date
 ): Promise<void> => {
   await cassandra.execute(
-    `INSERT INTO conversations_by_user (user_id, conversation_id, conversation_type, name, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [toUuid(userId), toUuid(conversationId), conversationType, name, createdAt, updatedAt],
+    `INSERT INTO conversations_by_user (user_id, conversation_id, conversation_type, name, participant_ids, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [toUuid(userId), toUuid(conversationId), conversationType, name, participantIds.map(toUuid), createdAt, updatedAt],
     { prepare: true }
   );
 };
@@ -260,6 +272,7 @@ const touchConversation = async (conversationId: string): Promise<void> => {
         conversationId,
         conversation.conversationType,
         conversation.name,
+        participants,
         new Date(conversation.createdAt),
         updatedAt
       )
@@ -284,17 +297,29 @@ export const createConversation = async (params: {
     throw new DmError(400, "group conversations must have at least 2 participants");
   }
 
-  const conversationId = uuidv4();
+  // For 1-to-1, derive a deterministic ID — if the conversation already exists, the INSERT is a no-op
+  const conversationId = params.conversationType === "one_to_one"
+    ? oneToOneConversationId(participants[0], participants[1])
+    : uuidv4();
   const createdAt = nowDate();
   const updatedAt = createdAt;
   const normalizedName = params.name?.trim() ? params.name.trim() : null;
 
-  await cassandra.execute(
+  const insertResult = await cassandra.execute(
     `INSERT INTO conversations (conversation_id, conversation_type, name, created_by, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?) IF NOT EXISTS`,
     [toUuid(conversationId), params.conversationType, normalizedName, toUuid(params.requesterId), createdAt, updatedAt],
     { prepare: true }
   );
+
+  // [applied] = false means the conversation already existed — return it without re-publishing
+  if (insertResult.first().get("[applied]") === false) {
+    const existing = await getConversation(conversationId);
+    if (existing) {
+      existing.participantIds = participants;
+      return existing;
+    }
+  }
 
   await Promise.all(
     participants.map(async (participantId) => {
@@ -309,6 +334,7 @@ export const createConversation = async (params: {
         conversationId,
         params.conversationType,
         normalizedName,
+        participants,
         createdAt,
         updatedAt
       );
@@ -319,6 +345,7 @@ export const createConversation = async (params: {
     conversationId,
     conversationType: params.conversationType,
     name: normalizedName,
+    participantIds: participants,
     createdAt: createdAt.toISOString(),
     updatedAt: updatedAt.toISOString(),
   };
@@ -331,6 +358,7 @@ export const createConversation = async (params: {
       conversationId: record.conversationId,
       conversationType: record.conversationType,
       name: record.name,
+      participantIds: participants,
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
     },
@@ -368,11 +396,13 @@ export const inviteParticipant = async (
     { prepare: true }
   );
 
+  const allParticipants = await listParticipantIds(conversationId);
   await upsertConversationUserIndex(
     participantId,
     conversationId,
     conversation.conversationType,
     conversation.name,
+    allParticipants,
     new Date(conversation.createdAt),
     new Date(conversation.updatedAt)
   );
@@ -429,15 +459,28 @@ export const leaveConversation = async (conversationId: string, userId: string):
 
   const remainingParticipants = await listParticipantIds(conversationId);
 
+  // For 1-to-1 conversations, leaving always deletes for both sides
+  const shouldDelete = remainingParticipants.length === 0 || conversation.conversationType === "one_to_one";
+
   await publishDmEvent({
     type: "dm:participant:leave",
     conversationId,
     participantIds: [...remainingParticipants, userId],
     userId,
-    conversationDeleted: remainingParticipants.length === 0,
+    conversationDeleted: shouldDelete,
   });
 
-  if (remainingParticipants.length === 0) {
+  if (shouldDelete) {
+    // Remove remaining participants from their user index
+    await Promise.all(
+      remainingParticipants.map((pid) =>
+        cassandra.execute(
+          `DELETE FROM conversations_by_user WHERE user_id = ? AND conversation_id = ?`,
+          [toUuid(pid), toUuid(conversationId)],
+          { prepare: true }
+        )
+      )
+    );
     await hardDeleteConversation(conversationId);
     return { deleted: true };
   }

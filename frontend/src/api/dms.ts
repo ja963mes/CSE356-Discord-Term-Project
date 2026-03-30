@@ -4,6 +4,7 @@ export type Conversation = {
   conversationId: string;
   conversationType: ConversationType;
   name: string | null;
+  participantIds: string[];
   createdAt: string;
   updatedAt: string;
 };

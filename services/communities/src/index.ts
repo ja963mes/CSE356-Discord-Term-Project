@@ -6,6 +6,7 @@ import { db } from "./db";
 import { env } from "./env";
 import { requireAuth } from "./middleware/session";
 import { communities, communityMembers, channels, channelMembers, users } from "./db/schema";
+import { publishCommunityEvent } from "./events";
 
 function isCommunityAdminRole(role: string): boolean {
   return role === "owner" || role === "admin";
@@ -109,13 +110,25 @@ app.post("/communities/:communityId/join", requireAuth, async (req: Request, res
       return;
     }
 
-    await db.insert(communityMembers).values({
+    const [newMember] = await db.insert(communityMembers).values({
       community_id: communityId,
       user_id: userId,
       role: "member",
-    });
+    }).returning();
 
     await addUserToAllPublicChannels(communityId, userId);
+
+    const [userRow] = await db.select({ username: users.username, profile: users.profile }).from(users).where(eq(users.internal_id, userId)).limit(1);
+    const profile = (userRow?.profile as { displayName?: string } | null) ?? {};
+    void publishCommunityEvent({
+      type: "community:member:join",
+      communityId,
+      userId,
+      username: userRow?.username ?? "",
+      displayName: profile.displayName ?? userRow?.username ?? "",
+      role: "member",
+      joinedAt: newMember.joined_at.toISOString(),
+    });
 
     res.status(201).json({ message: "Joined community" });
   } catch (e) {
@@ -158,6 +171,12 @@ app.post("/communities/:communityId/leave", requireAuth, async (req: Request, re
         )
       );
     }
+
+    void publishCommunityEvent({
+      type: "community:member:leave",
+      communityId,
+      userId,
+    });
 
     res.json({ message: "Left community" });
   } catch (e) {
@@ -321,6 +340,18 @@ app.post("/communities/:communityId/channels", requireAuth, async (req: Request,
         await db.insert(channelMembers).values({ channel_id: created.id, user_id: m.user_id }).onConflictDoNothing();
       }
     }
+
+    await publishCommunityEvent({
+      type: "community:channel:create",
+      communityId,
+      channel: {
+        id: created.id,
+        name: created.name,
+        type: created.type,
+        position: created.position,
+        is_private: created.is_private,
+      },
+    });
 
     res.status(201).json({ channel: created });
   } catch (e) {
@@ -575,6 +606,13 @@ app.delete("/communities/:communityId/channels/:channelId", requireAuth, async (
     }
 
     await db.delete(channels).where(eq(channels.id, channelId));
+
+    await publishCommunityEvent({
+      type: "community:channel:delete",
+      communityId,
+      channelId,
+    });
+
     res.status(204).send();
   } catch (e) {
     console.error(e);
