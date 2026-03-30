@@ -1,6 +1,6 @@
 {
   "id": "fb9ee78b-2a97-449f-8be7-9039e099e782",
-  "prevId": "a487c7d1-a75f-44ed-9abc-54f2efa587d2",
+  "prevId": "d296e2c0-deb9-426d-b357-4023925bd06b",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -34,12 +34,8 @@
           "name": "channel_members_channel_id_channels_id_fk",
           "tableFrom": "channel_members",
           "tableTo": "channels",
-          "columnsFrom": [
-            "channel_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["channel_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -47,12 +43,8 @@
           "name": "channel_members_user_id_users_internal_id_fk",
           "tableFrom": "channel_members",
           "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "internal_id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["internal_id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -60,12 +52,95 @@
       "compositePrimaryKeys": {
         "channel_members_channel_id_user_id_pk": {
           "name": "channel_members_channel_id_user_id_pk",
-          "columns": [
-            "channel_id",
-            "user_id"
-          ]
+          "columns": ["channel_id", "user_id"]
         }
       },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.channel_messages": {
+      "name": "channel_messages",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "channel_id": {
+          "name": "channel_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "author_id": {
+          "name": "author_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "content": {
+          "name": "content",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "channel_messages_channel_created_idx": {
+          "name": "channel_messages_channel_created_idx",
+          "columns": [
+            {
+              "expression": "channel_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "channel_messages_channel_id_channels_id_fk": {
+          "name": "channel_messages_channel_id_channels_id_fk",
+          "tableFrom": "channel_messages",
+          "tableTo": "channels",
+          "columnsFrom": ["channel_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "channel_messages_author_id_users_internal_id_fk": {
+          "name": "channel_messages_author_id_users_internal_id_fk",
+          "tableFrom": "channel_messages",
+          "tableTo": "users",
+          "columnsFrom": ["author_id"],
+          "columnsTo": ["internal_id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
@@ -128,12 +203,8 @@
           "name": "channels_community_id_communities_id_fk",
           "tableFrom": "channels",
           "tableTo": "communities",
-          "columnsFrom": [
-            "community_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["community_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -181,12 +252,8 @@
           "name": "communities_created_by_users_internal_id_fk",
           "tableFrom": "communities",
           "tableTo": "users",
-          "columnsFrom": [
-            "created_by"
-          ],
-          "columnsTo": [
-            "internal_id"
-          ],
+          "columnsFrom": ["created_by"],
+          "columnsTo": ["internal_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -234,12 +301,8 @@
           "name": "community_members_community_id_communities_id_fk",
           "tableFrom": "community_members",
           "tableTo": "communities",
-          "columnsFrom": [
-            "community_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["community_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -247,12 +310,8 @@
           "name": "community_members_user_id_users_internal_id_fk",
           "tableFrom": "community_members",
           "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "internal_id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["internal_id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -260,10 +319,140 @@
       "compositePrimaryKeys": {
         "community_members_community_id_user_id_pk": {
           "name": "community_members_community_id_user_id_pk",
+          "columns": ["community_id", "user_id"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.direct_conversations": {
+      "name": "direct_conversations",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "direct_conversations_created_by_users_internal_id_fk": {
+          "name": "direct_conversations_created_by_users_internal_id_fk",
+          "tableFrom": "direct_conversations",
+          "tableTo": "users",
+          "columnsFrom": ["created_by"],
+          "columnsTo": ["internal_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.dm_participants": {
+      "name": "dm_participants",
+      "schema": "",
+      "columns": {
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "joined_at": {
+          "name": "joined_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "dm_participants_user_idx": {
+          "name": "dm_participants_user_idx",
           "columns": [
-            "community_id",
-            "user_id"
-          ]
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "dm_participants_conversation_id_direct_conversations_id_fk": {
+          "name": "dm_participants_conversation_id_direct_conversations_id_fk",
+          "tableFrom": "dm_participants",
+          "tableTo": "direct_conversations",
+          "columnsFrom": ["conversation_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "dm_participants_user_id_users_internal_id_fk": {
+          "name": "dm_participants_user_id_users_internal_id_fk",
+          "tableFrom": "dm_participants",
+          "tableTo": "users",
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["internal_id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "dm_participants_conversation_id_user_id_pk": {
+          "name": "dm_participants_conversation_id_user_id_pk",
+          "columns": ["conversation_id", "user_id"]
         }
       },
       "uniqueConstraints": {},
@@ -314,12 +503,8 @@
           "name": "identities_internal_id_users_internal_id_fk",
           "tableFrom": "identities",
           "tableTo": "users",
-          "columnsFrom": [
-            "internal_id"
-          ],
-          "columnsTo": [
-            "internal_id"
-          ],
+          "columnsFrom": ["internal_id"],
+          "columnsTo": ["internal_id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -329,10 +514,7 @@
         "identities_provider_provider_uid_unique": {
           "name": "identities_provider_provider_uid_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "provider",
-            "provider_uid"
-          ]
+          "columns": ["provider", "provider_uid"]
         }
       },
       "policies": {},
@@ -390,9 +572,7 @@
         "users_username_unique": {
           "name": "users_username_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "username"
-          ]
+          "columns": ["username"]
         }
       },
       "policies": {},

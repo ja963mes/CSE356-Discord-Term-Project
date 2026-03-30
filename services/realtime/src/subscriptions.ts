@@ -10,11 +10,7 @@
  */
 
 import Redis from "ioredis";
-import { types as cassandraTypes } from "cassandra-driver";
-import { pg, cassandra } from "./db";
-import { env } from "./env";
-
-const ks = env.CASSANDRA_KEYSPACE;
+import { pg } from "./db";
 
 const GUILD_KEY = (id: string) => `presence:guild:${id}`;
 const DM_KEY = (id: string) => `presence:dm:${id}`;
@@ -155,13 +151,11 @@ async function fetchCommunityIds(userId: string): Promise<string[]> {
 
 async function fetchConversationIds(userId: string): Promise<string[]> {
   try {
-    const uuid = cassandraTypes.Uuid.fromString(userId);
-    const result = await cassandra.execute(
-      `SELECT conversation_id FROM ${ks}.conversations_by_user WHERE user_id = ?`,
-      [uuid],
-      { prepare: true }
+    const result = await pg.query<{ conversation_id: string }>(
+      `SELECT conversation_id FROM dm_participants WHERE user_id = $1`,
+      [userId]
     );
-    return result.rows.map((row) => row.get("conversation_id").toString());
+    return result.rows.map((r) => r.conversation_id);
   } catch (err) {
     console.error("[subscriptions] DM fetch failed:", err);
     return [];
