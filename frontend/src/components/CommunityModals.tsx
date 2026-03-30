@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import type { Community } from "../api/discord";
-import { joinCommunity, searchCommunities } from "../api/discord";
+import { createChannel, joinCommunity, searchCommunities } from "../api/discord";
 import { createCommunity } from "../services/createCommunity";
 
 type MenuProps = {
@@ -308,6 +308,103 @@ export function JoinCommunityPlaceholderModal({
             Back
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+type CreateChannelProps = {
+  open: boolean;
+  onClose: () => void;
+  communityId: string | null;
+  onCreated: () => void | Promise<void>;
+};
+
+export function CreateChannelModal({ open, onClose, communityId, onCreated }: CreateChannelProps) {
+  const [name, setName] = useState("");
+  const [isPrivate, setIsPrivate] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (open) {
+      setName("");
+      setIsPrivate(false);
+      setError(null);
+      setSubmitting(false);
+    }
+  }, [open]);
+
+  if (!open || !communityId) return null;
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!communityId) return;
+    setError(null);
+    const n = name.trim();
+    if (!n) {
+      setError("Channel name is required.");
+      return;
+    }
+    setSubmitting(true);
+    const result = await createChannel(communityId, { name: n, type: "text", is_private: isPrivate });
+    setSubmitting(false);
+    if (result.ok) {
+      await Promise.resolve(onCreated());
+      onClose();
+      return;
+    }
+    setError(result.error);
+  }
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="create-ch-title">
+      <button type="button" className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} aria-label="Close" />
+      <div className="relative w-full max-w-md rounded-xl bg-[#1e2128] border border-white/10 shadow-2xl p-6 z-[101]">
+        <h2 id="create-ch-title" className="text-xl font-bold text-[#f6f6fc] font-headline mb-4">
+          Create channel
+        </h2>
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <div>
+            <label htmlFor="ch-name" className="block text-xs font-bold uppercase text-[#b5bac1] mb-1">
+              Channel name
+            </label>
+            <input
+              id="ch-name"
+              className="w-full rounded-lg bg-[#2b2d31] border border-white/10 px-3 py-2 text-[#f6f6fc] text-sm"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="announcements"
+              autoFocus
+            />
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer text-sm text-[#b5bac1]">
+            <input
+              type="checkbox"
+              checked={isPrivate}
+              onChange={(e) => setIsPrivate(e.target.checked)}
+              className="rounded border-white/20"
+            />
+            Private channel (invite only)
+          </label>
+          {error ? <p className="text-sm text-red-400">{error}</p> : null}
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#2b2d31] text-[#f6f6fc] hover:bg-[#35373c]"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#5865F2] text-white hover:bg-[#4752c4] disabled:opacity-50"
+            >
+              {submitting ? "Creating…" : "Create channel"}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );

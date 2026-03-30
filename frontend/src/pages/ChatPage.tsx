@@ -6,11 +6,13 @@ import {
   CommunityMember,
   Message,
   SearchResult,
+  deleteChannel,
   getCommunityChannels,
   getCommunityMembers,
   getMessages,
   getSampleChannels,
   getSampleMembers,
+  joinChannel,
   leaveCommunity,
   listCommunities,
   search,
@@ -26,6 +28,7 @@ import DmList from "../components/DmList";
 import DmChatView from "../components/DmChatView";
 import CreateDmModal from "../components/CreateDmModal";
 import {
+  CreateChannelModal,
   CreateCommunityModal,
   JoinCommunityPlaceholderModal,
   ServerActionMenuModal,
@@ -81,6 +84,8 @@ export default function ChatPage() {
   const [guildMenuOpen, setGuildMenuOpen] = useState(false);
   const [leaveBusy, setLeaveBusy] = useState(false);
   const [leaveError, setLeaveError] = useState<string | null>(null);
+  const [showCreateChannel, setShowCreateChannel] = useState(false);
+  const [guildDataVersion, setGuildDataVersion] = useState(0);
   const guildMenuRef = useRef<HTMLDivElement>(null);
 
   const memberCommunityIds = useMemo(() => new Set(communities.map((c) => c.id)), [communities]);
@@ -142,15 +147,33 @@ export default function ChatPage() {
       setMembers(mems ?? []);
     })();
     return () => { cancelled = true; };
-  }, [usingLiveCommunities, selectedCommunityId]);
+  }, [usingLiveCommunities, selectedCommunityId, guildDataVersion]);
+
+  const selectedChannel = useMemo(() => channels.find((c) => c.id === selectedChannelId), [channels, selectedChannelId]);
+
+  const channelAccessible = useMemo(() => {
+    if (!usingLiveCommunities) return true;
+    if (!selectedChannel) return true;
+    return selectedChannel.joined !== false;
+  }, [usingLiveCommunities, selectedChannel]);
 
   useEffect(() => {
+    if (!channelAccessible) {
+      setMessages([]);
+      return;
+    }
     getMessages(selectedChannelId)
       .then(setMessages)
       .catch(() => setMessages([]));
-  }, [selectedChannelId]);
+  }, [selectedChannelId, channelAccessible]);
 
-  const selectedChannel = useMemo(() => channels.find((c) => c.id === selectedChannelId), [channels, selectedChannelId]);
+  const myGuildRole = useMemo(() => {
+    if (!me || !usingLiveCommunities) return null;
+    return members.find((m) => m.user_id === me.internal_id)?.role ?? null;
+  }, [me, members, usingLiveCommunities]);
+
+  const isGuildAdmin = myGuildRole === "owner" || myGuildRole === "admin";
+
   const textChannels = useMemo(() => channels.filter((c) => c.type === "text"), [channels]);
   const selectedDm = useMemo(() => dmConversations.find((c) => c.conversationId === selectedDmId), [dmConversations, selectedDmId]);
 
@@ -215,7 +238,27 @@ export default function ChatPage() {
   }
 
   function roleLabel(role: string) {
-    return role === "owner" ? "Owner" : role === "member" ? "Member" : role;
+    if (role === "owner") return "Owner";
+    if (role === "admin") return "Admin";
+    if (role === "member") return "Member";
+    return role;
+  }
+
+  async function handleJoinChannel(channelId: string) {
+    if (!selectedCommunityId) return;
+    const r = await joinChannel(selectedCommunityId, channelId);
+    if (r.ok) setGuildDataVersion((v) => v + 1);
+  }
+
+  async function handleDeleteChannel(channelId: string) {
+    if (!selectedCommunityId || !isGuildAdmin) return;
+    if (!window.confirm("Delete this channel? This cannot be undone.")) return;
+    const r = await deleteChannel(selectedCommunityId, channelId);
+    if (r.ok) {
+      setGuildDataVersion((v) => v + 1);
+      return;
+    }
+    window.alert(r.error);
   }
 
   function closeCommunityModals() {
@@ -288,6 +331,14 @@ export default function ChatPage() {
           setDmConversations((prev) => [conversation, ...prev]);
           setSelectedDmId(conversation.conversationId);
           setViewMode("dm");
+        }}
+      />
+      <CreateChannelModal
+        open={showCreateChannel}
+        onClose={() => setShowCreateChannel(false)}
+        communityId={selectedCommunityId}
+        onCreated={async () => {
+          setGuildDataVersion((v) => v + 1);
         }}
       />
 
@@ -391,25 +442,73 @@ export default function ChatPage() {
               )}
             </div>
             <div className="flex-1 overflow-y-auto py-2 px-2 flex flex-col gap-1">
-              <div className="flex items-center px-2 pt-4 pb-1 text-on-surface-variant uppercase text-[10px] font-bold tracking-widest">
-                <span className="material-symbols-outlined text-[14px] mr-1">expand_more</span>
-                Text Channels
+              <div className="flex items-center justify-between px-2 pt-4 pb-1 text-on-surface-variant uppercase text-[10px] font-bold tracking-widest">
+                <span className="flex items-center">
+                  <span className="material-symbols-outlined text-[14px] mr-1">expand_more</span>
+                  Text Channels
+                </span>
+                {usingLiveCommunities && isGuildAdmin && selectedCommunityId ? (
+                  <button
+                    type="button"
+                    title="Create channel"
+                    className="p-0.5 rounded hover:bg-surface-variant/50 text-on-surface-variant hover:text-on-surface"
+                    onClick={() => setShowCreateChannel(true)}
+                  >
+                    <span className="material-symbols-outlined text-[16px]">add</span>
+                  </button>
+                ) : null}
               </div>
               {textChannels.map((c) => {
                 const active = viewMode === "channel" && c.id === selectedChannelId;
+                const needsJoin = c.joined === false;
                 return (
-                  <button
-                    key={c.id}
-                    className={
-                      active
-                        ? "flex items-center gap-2 px-2 py-2 rounded-lg bg-surface-container-highest text-on-surface font-semibold group transition-all"
-                        : "flex items-center gap-2 px-2 py-2 rounded-lg text-on-surface-variant hover:bg-surface-variant/50 hover:text-on-surface group transition-all"
-                    }
-                    onClick={() => { setSelectedChannelId(c.id); setViewMode("channel"); setSelectedDmId(null); }}
-                  >
-                    <span className="material-symbols-outlined text-on-surface-variant group-hover:text-on-surface">tag</span>
-                    {c.name}
-                  </button>
+                  <div key={c.id} className="flex items-center gap-0.5 group/ch">
+                    <button
+                      type="button"
+                      className={
+                        active
+                          ? "flex-1 min-w-0 flex items-center gap-2 px-2 py-2 rounded-lg bg-surface-container-highest text-on-surface font-semibold transition-all text-left"
+                          : "flex-1 min-w-0 flex items-center gap-2 px-2 py-2 rounded-lg text-on-surface-variant hover:bg-surface-variant/50 hover:text-on-surface transition-all text-left"
+                      }
+                      onClick={() => {
+                        setSelectedChannelId(c.id);
+                        setViewMode("channel");
+                        setSelectedDmId(null);
+                      }}
+                    >
+                      <span className="material-symbols-outlined text-[18px] shrink-0 text-on-surface-variant">
+                        {c.is_private ? "lock" : "tag"}
+                      </span>
+                      <span className="truncate">{c.name}</span>
+                      {needsJoin ? (
+                        <span className="ml-auto text-[9px] font-bold uppercase text-amber-400 shrink-0">Join</span>
+                      ) : null}
+                    </button>
+                    {needsJoin ? (
+                      <button
+                        type="button"
+                        title="Join channel"
+                        className="shrink-0 px-1.5 py-1 rounded text-[10px] font-semibold bg-[#5865F2]/90 text-white hover:bg-[#4752c4]"
+                        onClick={() => void handleJoinChannel(c.id)}
+                      >
+                        Join
+                      </button>
+                    ) : null}
+                    {isGuildAdmin && usingLiveCommunities ? (
+                      <button
+                        type="button"
+                        title="Delete channel"
+                        className="shrink-0 p-1 rounded opacity-0 group-hover/ch:opacity-100 hover:bg-red-500/20 text-red-400"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          void handleDeleteChannel(c.id);
+                        }}
+                      >
+                        <span className="material-symbols-outlined text-[16px]">delete</span>
+                      </button>
+                    ) : null}
+                  </div>
                 );
               })}
 
@@ -475,11 +574,16 @@ export default function ChatPage() {
         <section className="flex-1 bg-surface-container flex flex-col relative min-w-0">
           {/* TopNavBar */}
           <header className="h-16 flex items-center justify-between px-6 w-full bg-[#171a1f]/60 backdrop-blur-xl shadow-sm z-10">
-            <div className="flex items-center gap-3">
-              <span className="material-symbols-outlined text-on-surface-variant">tag</span>
-              <h1 className="text-[#f6f6fc] font-headline font-bold text-lg tracking-tight">
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="material-symbols-outlined text-on-surface-variant shrink-0">
+                {selectedChannel?.is_private ? "lock" : "tag"}
+              </span>
+              <h1 className="text-[#f6f6fc] font-headline font-bold text-lg tracking-tight truncate">
                 {selectedChannel?.name ?? "general-chat"}
               </h1>
+              {selectedChannel?.is_private ? (
+                <span className="text-[10px] font-bold uppercase text-on-surface-variant shrink-0">Private</span>
+              ) : null}
             </div>
 
             <div className="flex items-center gap-5">
@@ -509,19 +613,40 @@ export default function ChatPage() {
             </div>
           </header>
 
+          {!channelAccessible && selectedChannel && usingLiveCommunities ? (
+            <div className="border-b border-amber-500/25 bg-amber-500/10 px-6 py-4 flex flex-col gap-2">
+              <p className="text-sm text-on-surface">
+                You are not a member of this channel yet. Join to read and send messages.
+              </p>
+              <button
+                type="button"
+                className="self-start rounded-lg bg-[#5865F2] hover:bg-[#4752c4] text-white text-sm font-semibold px-4 py-2"
+                onClick={() => void handleJoinChannel(selectedChannel.id)}
+              >
+                Join channel
+              </button>
+            </div>
+          ) : null}
+
           {/* Chat History */}
           <div className="flex-1 overflow-y-auto px-6 py-4 flex flex-col gap-6 scroll-smooth">
-            {messages.length === 0 ? (
+            {!channelAccessible && usingLiveCommunities ? (
+              <div className="py-10 text-on-surface-variant text-sm">Message history is hidden until you join.</div>
+            ) : null}
+
+            {channelAccessible && messages.length === 0 ? (
               <div className="py-10 text-on-surface-variant">No messages yet.</div>
             ) : null}
 
+            {channelAccessible ? (
             <div className="py-10">
               <p className="text-on-surface-variant text-sm">
                 Welcome to the {selectedChannel?.name ?? "general-chat"} channel.
               </p>
             </div>
+            ) : null}
 
-            {messages.map((m) => (
+            {channelAccessible ? messages.map((m) => (
               <div key={m.id} className="flex gap-3 items-start">
                 <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant text-xs">
                   {m.author.slice(0, 1).toUpperCase()}
@@ -536,7 +661,7 @@ export default function ChatPage() {
                   <p className="text-sm text-on-surface mt-1">{m.content}</p>
                 </div>
               </div>
-            ))}
+            )) : null}
 
             {searchResults.length > 0 ? (
               <div className="mt-4 p-3 rounded-lg bg-surface-container-highest">
@@ -559,13 +684,22 @@ export default function ChatPage() {
           <div className="p-4 border-t border-outline-variant/20">
             <div className="flex items-center gap-3">
               <input
-                className="flex-1 bg-surface-container-lowest border-none rounded-lg px-4 py-2 text-sm text-on-surface placeholder:text-on-surface-variant focus:ring-1 focus:ring-primary"
-                placeholder={`Message #${selectedChannel?.name ?? "general-chat"}`}
+                className="flex-1 bg-surface-container-lowest border-none rounded-lg px-4 py-2 text-sm text-on-surface placeholder:text-on-surface-variant focus:ring-1 focus:ring-primary disabled:opacity-50"
+                placeholder={
+                  !channelAccessible && usingLiveCommunities
+                    ? "Join the channel to send messages"
+                    : `Message #${selectedChannel?.name ?? "general-chat"}`
+                }
+                disabled={!channelAccessible && usingLiveCommunities}
                 onChange={() => {
                   // Placeholder composer
                 }}
               />
-              <button className="material-symbols-outlined text-on-surface-variant hover:text-on-surface cursor-pointer">
+              <button
+                type="button"
+                className="material-symbols-outlined text-on-surface-variant hover:text-on-surface cursor-pointer disabled:opacity-40"
+                disabled={!channelAccessible && usingLiveCommunities}
+              >
                 send
               </button>
             </div>

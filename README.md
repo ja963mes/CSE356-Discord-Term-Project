@@ -98,7 +98,7 @@ Users can **create** and **join** communities. A **community** is a named space 
 | Method | Path | Service | Purpose |
 |--------|------|---------|---------|
 | `POST` | `/create-community` | create-community (3006) | Create a community (body: `{ "name": "..." }`) |
-| `GET` | `/communities` | communities (3002) | List communities the current user is in |
+| `GET` | `/communities` | communities (3002) | List communities the current user is in (each includes `role`: owner / admin / member) |
 | `POST` | `/communities/:communityId/join` | communities (3002) | Join a community |
 | `POST` | `/communities/:communityId/leave` | communities (3002) | Leave a community (removes membership) |
 | `GET` | `/search-communities?q=...` | communities (3002) | Search public communities by name |
@@ -108,6 +108,7 @@ Users can **create** and **join** communities. A **community** is a named space 
 | `POST` | `/communities/:communityId/channels/:channelId/join` | communities (3002) | Join a **public** channel |
 | `POST` | `/communities/:communityId/channels/:channelId/leave` | communities (3002) | Leave channel (drops `channel_members`) |
 | `POST` | `/communities/:communityId/channels/:channelId/members` | communities (3002) | Add user to channel — body `{ "user_id" }` (owner/admin; for private channels) |
+| `DELETE` | `/communities/:communityId/channels/:channelId` | communities (3002) | Delete channel (owner/admin; cannot delete the last channel in a guild) |
 | `GET` | `/communities/:communityId/members` | communities (3002) | Members with display names and roles |
 
 The Vite dev server proxies `/create-community` to port **3006**, `/communities` and `/search-communities` to port **3002** (see `frontend/vite.config.ts`).
