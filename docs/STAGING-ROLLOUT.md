@@ -20,6 +20,7 @@ Services covered:
 - You can set environment variables per service.
 
 Keep this as staging-only. Do not reuse production secrets.
+When DNS is available, replace `130.245.136.72` with your staging domain in all URL variables.
 
 ## 2) Required environment variables
 
@@ -29,6 +30,12 @@ At minimum, verify:
   - `DATABASE_URL`
   - `REDIS_URL`
   - `SESSION_SECRET`
+  - `STAGING_HOST=130.245.136.72`
+  - `FRONTEND_URL=http://130.245.136.72`
+- **OAuth callback URLs (auth service)**
+  - `GOOGLE_CALLBACK_URL=http://130.245.136.72/auth/google/callback`
+  - `GITHUB_CALLBACK_URL=http://130.245.136.72/auth/github/callback`
+  - `OIDC_CALLBACK_URL=http://130.245.136.72/auth/oidc/callback`
 - **Messages/realtime (Cassandra connectivity)**
   - `CASSANDRA_CONTACT_POINTS`
   - `CASSANDRA_PORT`
