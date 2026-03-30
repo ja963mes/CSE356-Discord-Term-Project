@@ -1,23 +1,20 @@
-import React, { useEffect, useState } from "react";
-import { Conversation, listConversations } from "../api/dms";
+import { DmUser } from "../api/auth";
+import { Conversation } from "../api/dms";
+import { PresenceState } from "../hooks/usePresence";
+import UserPresence from "./UserPresence";
 
 interface Props {
   selectedId: string | null;
   onSelect: (conversation: Conversation) => void;
   onNewDm: () => void;
   conversations: Conversation[];
-  setConversations: React.Dispatch<React.SetStateAction<Conversation[]>>;
+  currentUserId: string | null;
+  dmUsers: DmUser[];
+  getPresence: (userId: string) => PresenceState;
 }
 
-export default function DmList({ selectedId, onSelect, onNewDm, conversations, setConversations }: Props) {
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    listConversations()
-      .then(setConversations)
-      .catch(() => setConversations([]))
-      .finally(() => setLoading(false));
-  }, [setConversations]);
+export default function DmList({ selectedId, onSelect, onNewDm, conversations, currentUserId, dmUsers, getPresence }: Props) {
+  const userMap = new Map(dmUsers.map((u) => [u.internal_id, u]));
 
   return (
     <>
@@ -36,18 +33,27 @@ export default function DmList({ selectedId, onSelect, onNewDm, conversations, s
         </button>
       </div>
 
-      {loading && (
-        <p className="px-4 py-2 text-xs text-on-surface-variant">Loading...</p>
-      )}
-
-      {!loading && conversations.length === 0 && (
+      {conversations.length === 0 && (
         <p className="px-4 py-2 text-xs text-on-surface-variant">No conversations yet.</p>
       )}
 
       {conversations.map((c) => {
         const active = c.conversationId === selectedId;
-        const label = c.name ?? (c.conversationType === "one_to_one" ? "Direct Message" : "Group DM");
-        const icon = c.conversationType === "one_to_one" ? "person" : "group";
+
+        // For 1-to-1: show the other user. For group: show a generic entry.
+        const otherId = c.conversationType === "one_to_one" && currentUserId
+          ? ((c.participantIds ?? []).find((id) => id !== currentUserId)
+            // Other user may have left — fall back to any participant in dmUsers
+            ?? (c.participantIds ?? []).find((id) => userMap.has(id)))
+          : undefined;
+        const otherUser = otherId ? userMap.get(otherId) : undefined;
+
+        const displayName = otherUser?.profile.displayName
+          ?? otherUser?.username
+          ?? (c.name ?? (c.conversationType === "one_to_one" ? "Direct Message" : "Group DM"));
+
+        const avatarUrl = otherUser?.profile.avatar ?? undefined;
+        const presence = otherId ? getPresence(otherId) : { status: "offline" as const };
 
         return (
           <button
@@ -56,12 +62,24 @@ export default function DmList({ selectedId, onSelect, onNewDm, conversations, s
             onClick={() => onSelect(c)}
             className={
               active
-                ? "flex items-center gap-2 w-full px-2 py-1.5 rounded-lg bg-surface-container-highest text-on-surface font-semibold transition-all"
-                : "flex items-center gap-2 w-full px-2 py-1.5 rounded-lg text-on-surface-variant hover:bg-surface-variant/50 hover:text-on-surface transition-all"
+                ? "flex items-center w-full px-2 py-1.5 rounded-lg bg-surface-container-highest text-on-surface transition-all"
+                : "flex items-center w-full px-2 py-1.5 rounded-lg text-on-surface-variant hover:bg-surface-variant/50 hover:text-on-surface transition-all"
             }
           >
-            <span className="material-symbols-outlined text-[18px]">{icon}</span>
-            <span className="text-sm truncate">{label}</span>
+            {otherUser ? (
+              <UserPresence
+                userId={otherId!}
+                displayName={displayName}
+                avatarUrl={avatarUrl}
+                presence={presence}
+                size="sm"
+              />
+            ) : (
+              <>
+                <span className="material-symbols-outlined text-[18px] flex-shrink-0 mr-2">group</span>
+                <span className="text-sm truncate">{displayName}</span>
+              </>
+            )}
           </button>
         );
       })}

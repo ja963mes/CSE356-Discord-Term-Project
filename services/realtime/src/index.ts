@@ -5,6 +5,7 @@ import { parse as parseCookie } from "cookie";
 import Redis from "ioredis";
 import { randomUUID } from "crypto";
 import { env } from "./env";
+import { initDb } from "./db";
 import {
   registerConnection,
   removeConnection,
@@ -14,8 +15,8 @@ import {
   computePresence,
   PresenceStatus,
 } from "./presence";
-import { broadcastPresenceChange } from "./broadcast";
-import { getRelatedUserIds } from "./relationships";
+import { broadcastPresenceChange, PRESENCE_BROADCAST_CHANNEL, PresenceBroadcastMessage } from "./broadcast";
+import { subscribeUser, unsubscribeUser, subscribeDm, unsubscribeDm, subscribeCommunity, unsubscribeCommunity, getPresenceTargets } from "./subscriptions";
 
 const redis = new Redis(env.REDIS_URL);
 redis.on("connect", async () => {
@@ -55,7 +56,7 @@ async function updateAndBroadcast(userId: string, prevStatus: PresenceStatus): P
   const { status: newStatus, awayMessage } = await buildPresencePayload(userId);
   if (newStatus !== prevStatus) {
     console.log(`[presence] userId=${userId} ${prevStatus} → ${newStatus}`);
-    await broadcastPresenceChange(userId, newStatus, connections, awayMessage);
+    await broadcastPresenceChange(redis, userId, newStatus, awayMessage);
     lastKnownPresence.set(userId, newStatus);
   }
 }
@@ -100,7 +101,10 @@ wss.on("connection", async (ws, req) => {
   const prevStatus = await computePresence(redis, userId);
 
   connections.set(connId, { ws, userId });
-  await registerConnection(redis, userId, connId);
+  await Promise.all([
+    registerConnection(redis, userId, connId),
+    subscribeUser(redis, userId),
+  ]);
 
   console.log(`[connect] userId=${userId} connId=${connId} total=${connections.size}`);
   await updateAndBroadcast(userId, prevStatus);
@@ -109,17 +113,30 @@ wss.on("connection", async (ws, req) => {
 
   // Send current presence snapshot to the newly connected client
   setImmediate(async () => {
-    // If the connection has already closed by the time this runs, don't attempt to send
     if (ws.readyState !== WebSocket.OPEN) return;
 
-    // Send own presence to update the UI immediately, instead of waiting for the first 30s idle check to trigger a broadcast
+    // Send own presence immediately
     ws.send(JSON.stringify({ type: "presence_update", userId, status: currentStatus, awayMessage: currentAwayMessage }));
 
-    // For now, getRelatedUserIds returns all other connected users as a stub
-    const relatedUserIds = await getRelatedUserIds(userId, connections);
-    for (const relatedUserId of relatedUserIds) {
-      const { status, awayMessage } = await buildPresencePayload(relatedUserId);
-      ws.send(JSON.stringify({ type: "presence_update", userId: relatedUserId, status, awayMessage }));
+    // Get all related connected users from Redis and send their presence
+    const relatedUserIds = await getPresenceTargets(redis, userId);
+    const connectedRelated = relatedUserIds.filter((id) => {
+      if (id === userId) return false;
+      for (const { userId: uid } of connections.values()) {
+        if (uid === id) return true;
+      }
+      return false;
+    });
+
+    const presencePayloads = await Promise.all(
+      connectedRelated.map(async (relatedUserId) => {
+        const { status, awayMessage } = await buildPresencePayload(relatedUserId);
+        return { userId: relatedUserId, status, awayMessage };
+      })
+    );
+    if (ws.readyState !== WebSocket.OPEN) return;
+    for (const payload of presencePayloads) {
+      ws.send(JSON.stringify({ type: "presence_update", ...payload }));
     }
   });
 
@@ -143,7 +160,7 @@ wss.on("connection", async (ws, req) => {
       await setAway(redis, userId, (msg.message as string) ?? "");
       const { status: awayStatus, awayMessage: awayMsg } = await buildPresencePayload(userId);
       lastKnownPresence.set(userId, awayStatus);
-      await broadcastPresenceChange(userId, awayStatus, connections, awayMsg);
+      await broadcastPresenceChange(redis, userId, awayStatus, awayMsg);
       return;
     } else if (msg.type === "back") {
       // Manually remove the away status from the redis. Goes back to the previous status before away
@@ -161,6 +178,11 @@ wss.on("connection", async (ws, req) => {
     connections.delete(connId);
     await removeConnection(redis, userId, connId);
     console.log(`[disconnect] userId=${userId} connId=${connId} total=${connections.size}`);
+    // Only unsubscribe if user has no more connections
+    const stillConnected = [...connections.values()].some((c) => c.userId === userId);
+    if (!stillConnected) {
+      await unsubscribeUser(redis, userId);
+    }
     await updateAndBroadcast(userId, prev);
   });
 
@@ -182,18 +204,95 @@ setInterval(async () => {
     lastKnownPresence.set(userId, newStatus);
     if (newStatus !== prev) {
       console.log(`[presence] userId=${userId} ${prev} → ${newStatus}`);
-      await broadcastPresenceChange(userId, newStatus, connections, awayMessage);
+      await broadcastPresenceChange(redis, userId, newStatus, awayMessage);
     }
   }
 }, 30_000);
 
 // Subscribe to DM events from the DMS service and forward to relevant WebSocket clients
-redisSub.subscribe("dm:events", (err) => {
-  if (err) console.error("[dm:events] subscribe failed:", err);
-  else console.log("[dm:events] subscribed");
+redisSub.subscribe("dm:events", "community:events", PRESENCE_BROADCAST_CHANNEL, (err) => {
+  if (err) console.error("[pubsub] subscribe failed:", err);
+  else console.log("[pubsub] subscribed to dm:events + community:events + presence:broadcast");
 });
 
 redisSub.on("message", (channel, message) => {
+  if (channel === PRESENCE_BROADCAST_CHANNEL) {
+    let msg: PresenceBroadcastMessage;
+    try { msg = JSON.parse(message); } catch { return; }
+    const targetSet = new Set(msg.targets);
+    const payload = JSON.stringify({ type: "presence_update", userId: msg.userId, status: msg.status, awayMessage: msg.awayMessage });
+    for (const { ws, userId: connUserId } of connections.values()) {
+      if (targetSet.has(connUserId) && ws.readyState === WebSocket.OPEN) {
+        ws.send(payload);
+      }
+    }
+    return;
+  }
+  if (channel === "community:events") {
+    let event: { type: string; communityId?: string; userId?: string; [key: string]: unknown };
+    try { event = JSON.parse(message); } catch { return; }
+
+    if (event.type === "community:member:join") {
+      const communityId = event.communityId as string;
+      const userId = event.userId as string;
+      void (async () => {
+        // Update Redis subscription sets
+        await subscribeCommunity(redis, communityId, userId);
+        // Forward event to all connected members of this community
+        const payload = JSON.stringify(event);
+        for (const { ws, userId: connUserId } of connections.values()) {
+          // Send to all members of the community (those subscribed to it)
+          const contexts = await redis.smembers(`presence:contexts:${connUserId}`);
+          if (contexts.includes(`guild:${communityId}`) && ws.readyState === WebSocket.OPEN) {
+            ws.send(payload);
+          }
+        }
+        // Broadcast the new member's presence to all related users (shard-safe via Redis pub/sub)
+        const { status: newMemberStatus, awayMessage: newMemberAway } = await buildPresencePayload(userId);
+        await broadcastPresenceChange(redis, userId, newMemberStatus, newMemberAway);
+        // Send the new member their presence snapshot of existing connected members
+        for (const { ws, userId: connUserId } of connections.values()) {
+          if (connUserId !== userId) continue;
+          const relatedIds = await getPresenceTargets(redis, userId);
+          const connectedRelated = relatedIds.filter((id) => {
+            if (id === userId) return false;
+            for (const { userId: uid } of connections.values()) {
+              if (uid === id) return true;
+            }
+            return false;
+          });
+          const payloads = await Promise.all(
+            connectedRelated.map(async (rid) => {
+              const { status, awayMessage } = await buildPresencePayload(rid);
+              return { userId: rid, status, awayMessage };
+            })
+          );
+          for (const p of payloads) {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: "presence_update", ...p }));
+            }
+          }
+        }
+      })();
+    }
+
+    if (event.type === "community:member:leave") {
+      const communityId = event.communityId as string;
+      const userId = event.userId as string;
+      void (async () => {
+        await unsubscribeCommunity(redis, communityId, userId);
+        const payload = JSON.stringify(event);
+        for (const { ws, userId: connUserId } of connections.values()) {
+          const contexts = await redis.smembers(`presence:contexts:${connUserId}`);
+          if (contexts.includes(`guild:${communityId}`) && ws.readyState === WebSocket.OPEN) {
+            ws.send(payload);
+          }
+        }
+      })();
+    }
+    return;
+  }
+
   if (channel !== "dm:events") return;
 
   let event: { type: string; participantIds?: string[]; [key: string]: unknown };
@@ -211,8 +310,42 @@ redisSub.on("message", (channel, message) => {
       ws.send(payload);
     }
   }
+
+  if (event.type === "dm:conversation:create") {
+    const conversationId = event.conversationId as string;
+    const participants = event.participantIds ?? [];
+    void (async () => {
+      // Register the new DM in Redis subscription sets
+      await subscribeDm(redis, conversationId, participants);
+      // Exchange presence between all participants
+      await Promise.all(
+        participants.map(async (uid) => {
+          const { status, awayMessage } = await buildPresencePayload(uid);
+          const presencePayload = JSON.stringify({ type: "presence_update", userId: uid, status, awayMessage });
+          for (const { ws, userId: connUserId } of connections.values()) {
+            if (targetUserIds.has(connUserId) && connUserId !== uid && ws.readyState === WebSocket.OPEN) {
+              ws.send(presencePayload);
+            }
+          }
+        })
+      );
+    })();
+  }
+
+  if (event.type === "dm:participant:leave") {
+    const conversationId = event.conversationId as string;
+    const userId = event.userId as string;
+    void unsubscribeDm(redis, conversationId, userId);
+  }
 });
 
-server.listen(Number(env.PORT), () => {
-  console.log(`Realtime service running on port ${env.PORT}`);
-});
+initDb()
+  .then(() => {
+    server.listen(Number(env.PORT), () => {
+      console.log(`Realtime service running on port ${env.PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error("[realtime] failed to initialize DB", err);
+    process.exit(1);
+  });

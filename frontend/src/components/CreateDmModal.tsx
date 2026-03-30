@@ -6,9 +6,10 @@ interface Props {
   open: boolean;
   onClose: () => void;
   onCreated: (conversation: Conversation) => void;
+  existingOneToOneUserIds?: Set<string>;
 }
 
-export default function CreateDmModal({ open, onClose, onCreated }: Props) {
+export default function CreateDmModal({ open, onClose, onCreated, existingOneToOneUserIds }: Props) {
   const [type, setType] = useState<ConversationType>("one_to_one");
   const [users, setUsers] = useState<DmUser[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -137,7 +138,7 @@ export default function CreateDmModal({ open, onClose, onCreated }: Props) {
             {users.length === 0 && (
               <p className="px-3 py-4 text-sm text-[#6d737a] text-center">No users found.</p>
             )}
-            {users.map((u) => {
+            {users.filter((u) => type !== "one_to_one" || !existingOneToOneUserIds?.has(u.internal_id)).map((u) => {
               const selected = selectedIds.has(u.internal_id);
               return (
                 <button

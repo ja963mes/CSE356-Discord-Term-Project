@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import {
   Channel,
   Community,
-  CommunityMember,
   Message,
   SearchResult,
   deleteChannel,
@@ -18,10 +17,12 @@ import {
   search,
 } from "../api/discord";
 import { getMe, getDmUsers, logout, Me, DmUser } from "../api/auth";
-import { Conversation, listConversations } from "../api/dms";
+import { listConversations } from "../api/dms";
 import { IncomingMessage, useWebSocket } from "../hooks/useWebSocket";
 import { useActivityDetection } from "../hooks/useActivityDetection";
 import { usePresence } from "../hooks/usePresence";
+import { useDmEvents } from "../hooks/useDmEvents";
+import { useCommunityEvents } from "../hooks/useCommunityEvents";
 import UserPresence from "../components/UserPresence";
 import ProfileSettingsModal from "../components/ProfileSettingsModal";
 import DmList from "../components/DmList";
@@ -36,38 +37,55 @@ import {
 
 type CommunityModal = "none" | "menu" | "create" | "join";
 type ViewMode = "channel" | "dm";
+type ActivePanel = "home" | "server";
 
 export default function ChatPage() {
   const navigate = useNavigate();
   const [me, setMe] = useState<Me | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [dmUsers, setDmUsers] = useState<DmUser[]>([]);
-  const [dmConversations, setDmConversations] = useState<Conversation[]>([]);
-  const [selectedDmId, setSelectedDmId] = useState<string | null>(null);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [selectedCommunityId, setSelectedCommunityId] = useState<string | null>(null);
+  const selectedCommunityIdRef = useRef<string | null>(null);
+  useEffect(() => { selectedCommunityIdRef.current = selectedCommunityId; }, [selectedCommunityId]);
   const [guildName, setGuildName] = useState("The Obsidian Architect");
   const [usingLiveCommunities, setUsingLiveCommunities] = useState(false);
   const [communityModal, setCommunityModal] = useState<CommunityModal>("none");
   const [showCreateDm, setShowCreateDm] = useState(false);
-  const [viewMode, setViewMode] = useState<ViewMode>("channel");
-  const [latestDmEvent, setLatestDmEvent] = useState<IncomingMessage | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>("dm");
+  const [activePanel, setActivePanel] = useState<ActivePanel>("home");
 
   const { handleMessage: handlePresenceMessage, getPresence } = usePresence();
+  const {
+    dmConversations, setDmConversations,
+    selectedDmId, setSelectedDmId,
+    latestDmEvent,
+    handleDmMessage,
+    onConversationCreated,
+    onConversationLeft,
+  } = useDmEvents(me);
+  const { members, setMembers, handleCommunityMessage } = useCommunityEvents();
 
   const handleMessage = useCallback((msg: IncomingMessage) => {
     console.log("[ws] incoming:", msg);
     handlePresenceMessage(msg);
-    if (typeof msg.type === "string" && msg.type.startsWith("dm:")) {
-      setLatestDmEvent(msg);
-    }
-  }, [handlePresenceMessage]);
+    handleDmMessage(msg);
+    handleCommunityMessage(msg, selectedCommunityIdRef.current);
+  }, [handlePresenceMessage, handleDmMessage, handleCommunityMessage]);
 
   useEffect(() => {
-    getMe().then((data) => {
-      setMe(data);
-    }).catch(() => setMe(null));
-    getDmUsers().then(setDmUsers).catch(() => setDmUsers([]));
+    getMe()
+      .then((data) => {
+        setMe(data);
+        return Promise.all([
+          getDmUsers().then(setDmUsers).catch(() => setDmUsers([])),
+          listConversations().then((convs) => {
+            setDmConversations(convs);
+            if (convs.length > 0) setSelectedDmId(convs[0].conversationId);
+          }).catch(() => setDmConversations([])),
+        ]);
+      })
+      .catch(() => setMe(null));
   }, []);
 
   const { send } = useWebSocket(handleMessage);
@@ -76,7 +94,6 @@ export default function ChatPage() {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [selectedChannelId, setSelectedChannelId] = useState<string>("general-chat");
   const [messages, setMessages] = useState<Message[]>([]);
-  const [members, setMembers] = useState<CommunityMember[]>([]);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
@@ -188,25 +205,6 @@ export default function ChatPage() {
     return map;
   }, [me, dmUsers]);
 
-  useEffect(() => {
-    if (!latestDmEvent || !me) return;
-    const t = latestDmEvent.type;
-    if (t === "dm:conversation:create") {
-      const ids = latestDmEvent.participantIds as string[] | undefined;
-      const conv = latestDmEvent.conversation as Conversation | undefined;
-      if (!ids?.includes(me.internal_id) || !conv?.conversationId) return;
-      setDmConversations((prev) => {
-        if (prev.some((c) => c.conversationId === conv.conversationId)) return prev;
-        return [conv, ...prev];
-      });
-      return;
-    }
-    if (t === "dm:participant:join") {
-      const uid = latestDmEvent.userId as string | undefined;
-      if (uid !== me.internal_id) return;
-      listConversations().then(setDmConversations).catch(() => {});
-    }
-  }, [latestDmEvent, me]);
 
   async function onSearchSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -219,23 +217,6 @@ export default function ChatPage() {
     }
   }
 
-  function presenceDotClass(status: string) {
-    switch (status) {
-      case "online": return "bg-emerald-500";
-      case "idle": return "bg-amber-400";
-      case "away": return "bg-amber-400";
-      default: return "bg-zinc-500";
-    }
-  }
-
-  function presenceLabel(status: string) {
-    switch (status) {
-      case "online": return "Online";
-      case "idle": return "Idle";
-      case "away": return "Away";
-      default: return "Offline";
-    }
-  }
 
   function roleLabel(role: string) {
     if (role === "owner") return "Owner";
@@ -327,9 +308,13 @@ export default function ChatPage() {
       <CreateDmModal
         open={showCreateDm}
         onClose={() => setShowCreateDm(false)}
+        existingOneToOneUserIds={new Set(
+          dmConversations
+            .filter((c) => c.conversationType === "one_to_one")
+            .flatMap((c) => (c.participantIds ?? []).filter((id) => id !== me?.internal_id))
+        )}
         onCreated={(conversation) => {
-          setDmConversations((prev) => [conversation, ...prev]);
-          setSelectedDmId(conversation.conversationId);
+          onConversationCreated(conversation);
           setViewMode("dm");
         }}
       />
@@ -349,16 +334,24 @@ export default function ChatPage() {
           <aside className="bg-[#111318] w-20 flex flex-col items-center py-4 gap-4 flex-shrink-0">
             {/* Brand / Home */}
             <div className="group relative flex items-center justify-center w-full">
-              <div className="bg-[#5865F2] text-white rounded-2xl scale-110 w-12 h-12 flex items-center justify-center transition-all duration-300">
+              <button
+                type="button"
+                title="Home"
+                onClick={() => { setActivePanel("home"); setViewMode("dm"); }}
+                className={activePanel === "home"
+                  ? "bg-[#5865F2] text-white rounded-2xl w-12 h-12 flex items-center justify-center transition-all duration-300"
+                  : "bg-[#171a1f] text-gray-400 rounded-[2rem] hover:rounded-2xl hover:bg-[#5865F2] hover:text-white w-12 h-12 flex items-center justify-center transition-all duration-300 cursor-pointer"
+                }
+              >
                 <span className="material-symbols-outlined text-2xl" style={{ fontVariationSettings: "'FILL' 1" }}>
                   home
                 </span>
-              </div>
+              </button>
             </div>
 
             <div className="flex flex-col gap-4 items-center w-full overflow-y-auto pb-4">
               {communities.map((c) => {
-                const active = c.id === selectedCommunityId;
+                const active = activePanel === "server" && c.id === selectedCommunityId;
                 return (
                   <button
                     key={c.id}
@@ -367,6 +360,8 @@ export default function ChatPage() {
                     onClick={() => {
                       setSelectedCommunityId(c.id);
                       setGuildName(c.name);
+                      setActivePanel("server");
+                      setViewMode("channel");
                     }}
                     className={
                       active
@@ -389,11 +384,11 @@ export default function ChatPage() {
             </div>
           </aside>
 
-          {/* COLUMN 2: Channel List */}
+          {/* COLUMN 2: Home (DMs) or Server (Channels) */}
           <section className="flex-1 bg-surface-container-low flex flex-col overflow-hidden">
             <div className="h-16 flex items-center gap-2 px-4 font-headline font-bold text-lg text-on-surface flex-shrink-0 min-w-0">
-              <span className="truncate flex-1 min-w-0">{guildName}</span>
-              {usingLiveCommunities && selectedCommunityId ? (
+              <span className="truncate flex-1 min-w-0">{activePanel === "home" ? "Direct Messages" : guildName}</span>
+              {activePanel === "server" && usingLiveCommunities && selectedCommunityId ? (
                 <div className="relative ml-auto flex-shrink-0" ref={guildMenuRef}>
                   <button
                     type="button"
@@ -442,83 +437,89 @@ export default function ChatPage() {
               )}
             </div>
             <div className="flex-1 overflow-y-auto py-2 px-2 flex flex-col gap-1">
-              <div className="flex items-center justify-between px-2 pt-4 pb-1 text-on-surface-variant uppercase text-[10px] font-bold tracking-widest">
-                <span className="flex items-center">
-                  <span className="material-symbols-outlined text-[14px] mr-1">expand_more</span>
-                  Text Channels
-                </span>
-                {usingLiveCommunities && isGuildAdmin && selectedCommunityId ? (
-                  <button
-                    type="button"
-                    title="Create channel"
-                    className="p-0.5 rounded hover:bg-surface-variant/50 text-on-surface-variant hover:text-on-surface"
-                    onClick={() => setShowCreateChannel(true)}
-                  >
-                    <span className="material-symbols-outlined text-[16px]">add</span>
-                  </button>
-                ) : null}
-              </div>
-              {textChannels.map((c) => {
-                const active = viewMode === "channel" && c.id === selectedChannelId;
-                const needsJoin = c.joined === false;
-                return (
-                  <div key={c.id} className="flex items-center gap-0.5 group/ch">
-                    <button
-                      type="button"
-                      className={
-                        active
-                          ? "flex-1 min-w-0 flex items-center gap-2 px-2 py-2 rounded-lg bg-surface-container-highest text-on-surface font-semibold transition-all text-left"
-                          : "flex-1 min-w-0 flex items-center gap-2 px-2 py-2 rounded-lg text-on-surface-variant hover:bg-surface-variant/50 hover:text-on-surface transition-all text-left"
-                      }
-                      onClick={() => {
-                        setSelectedChannelId(c.id);
-                        setViewMode("channel");
-                        setSelectedDmId(null);
-                      }}
-                    >
-                      <span className="material-symbols-outlined text-[18px] shrink-0 text-on-surface-variant">
-                        {c.is_private ? "lock" : "tag"}
-                      </span>
-                      <span className="truncate">{c.name}</span>
-                      {needsJoin ? (
-                        <span className="ml-auto text-[9px] font-bold uppercase text-amber-400 shrink-0">Join</span>
-                      ) : null}
-                    </button>
-                    {needsJoin ? (
+              {activePanel === "home" ? (
+                <DmList
+                  selectedId={selectedDmId}
+                  onSelect={(c) => { setSelectedDmId(c.conversationId); setViewMode("dm"); }}
+                  onNewDm={() => setShowCreateDm(true)}
+                  conversations={dmConversations}
+                  currentUserId={me?.internal_id ?? null}
+                  dmUsers={dmUsers}
+                  getPresence={getPresence}
+                />
+              ) : (
+                <>
+                  <div className="flex items-center justify-between px-2 pt-4 pb-1 text-on-surface-variant uppercase text-[10px] font-bold tracking-widest">
+                    <span className="flex items-center">
+                      <span className="material-symbols-outlined text-[14px] mr-1">expand_more</span>
+                      Text Channels
+                    </span>
+                    {usingLiveCommunities && isGuildAdmin && selectedCommunityId ? (
                       <button
                         type="button"
-                        title="Join channel"
-                        className="shrink-0 px-1.5 py-1 rounded text-[10px] font-semibold bg-[#5865F2]/90 text-white hover:bg-[#4752c4]"
-                        onClick={() => void handleJoinChannel(c.id)}
+                        title="Create channel"
+                        className="p-0.5 rounded hover:bg-surface-variant/50 text-on-surface-variant hover:text-on-surface"
+                        onClick={() => setShowCreateChannel(true)}
                       >
-                        Join
-                      </button>
-                    ) : null}
-                    {isGuildAdmin && usingLiveCommunities ? (
-                      <button
-                        type="button"
-                        title="Delete channel"
-                        className="shrink-0 p-1 rounded opacity-0 group-hover/ch:opacity-100 hover:bg-red-500/20 text-red-400"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          void handleDeleteChannel(c.id);
-                        }}
-                      >
-                        <span className="material-symbols-outlined text-[16px]">delete</span>
+                        <span className="material-symbols-outlined text-[16px]">add</span>
                       </button>
                     ) : null}
                   </div>
-                );
-              })}
-
-              <DmList
-                selectedId={selectedDmId}
-                onSelect={(c) => { setSelectedDmId(c.conversationId); setViewMode("dm"); }}
-                onNewDm={() => setShowCreateDm(true)}
-                conversations={dmConversations}
-                setConversations={setDmConversations}
-              />
+                  {textChannels.map((c) => {
+                    const active = viewMode === "channel" && c.id === selectedChannelId;
+                    const needsJoin = c.joined === false;
+                    return (
+                      <div key={c.id} className="flex items-center gap-0.5 group/ch">
+                        <button
+                          type="button"
+                          className={
+                            active
+                              ? "flex-1 min-w-0 flex items-center gap-2 px-2 py-2 rounded-lg bg-surface-container-highest text-on-surface font-semibold transition-all text-left"
+                              : "flex-1 min-w-0 flex items-center gap-2 px-2 py-2 rounded-lg text-on-surface-variant hover:bg-surface-variant/50 hover:text-on-surface transition-all text-left"
+                          }
+                          onClick={() => {
+                            setSelectedChannelId(c.id);
+                            setViewMode("channel");
+                            setSelectedDmId(null);
+                          }}
+                        >
+                          <span className="material-symbols-outlined text-[18px] shrink-0 text-on-surface-variant">
+                            {c.is_private ? "lock" : "tag"}
+                          </span>
+                          <span className="truncate">{c.name}</span>
+                          {needsJoin ? (
+                            <span className="ml-auto text-[9px] font-bold uppercase text-amber-400 shrink-0">Join</span>
+                          ) : null}
+                        </button>
+                        {needsJoin ? (
+                          <button
+                            type="button"
+                            title="Join channel"
+                            className="shrink-0 px-1.5 py-1 rounded text-[10px] font-semibold bg-[#5865F2]/90 text-white hover:bg-[#4752c4]"
+                            onClick={() => void handleJoinChannel(c.id)}
+                          >
+                            Join
+                          </button>
+                        ) : null}
+                        {isGuildAdmin && usingLiveCommunities ? (
+                          <button
+                            type="button"
+                            title="Delete channel"
+                            className="shrink-0 p-1 rounded opacity-0 group-hover/ch:opacity-100 hover:bg-red-500/20 text-red-400"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              void handleDeleteChannel(c.id);
+                            }}
+                          >
+                            <span className="material-symbols-outlined text-[16px]">delete</span>
+                          </button>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </>
+              )}
             </div>
           </section>
         </div>
@@ -565,9 +566,7 @@ export default function ChatPage() {
             displayNameByUserId={dmDisplayNames}
             wsEvent={latestDmEvent}
             onLeave={(id) => {
-              setDmConversations((prev) => prev.filter((c) => c.conversationId !== id));
-              setSelectedDmId(null);
-              setViewMode("channel");
+              onConversationLeft(id);
             }}
           />
         ) : (
@@ -707,8 +706,8 @@ export default function ChatPage() {
         </section>
         )}
 
-        {/* COLUMN 4: Members + presence (only in channel view) */}
-        {viewMode === "channel" && (
+        {/* COLUMN 4: Members + presence (only in server/channel view) */}
+        {activePanel === "server" && viewMode === "channel" && (
         <aside className="w-56 bg-surface-container-low border-l border-outline-variant/20 flex flex-col flex-shrink-0">
           <div className="h-16 flex items-center px-4 text-on-surface-variant uppercase text-[10px] font-bold tracking-widest">
             Members — {members.length}

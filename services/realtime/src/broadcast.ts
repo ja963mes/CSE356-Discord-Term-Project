@@ -1,25 +1,33 @@
-import { WebSocket } from "ws";
+import Redis from "ioredis";
 import { PresenceStatus } from "./presence";
-import { getRelatedUserIds } from "./relationships";
+import { getPresenceTargets } from "./subscriptions";
 
-// Broadcasts a presence change to all related users to the current user (friends, guild members, etc.)
+const PRESENCE_BROADCAST_CHANNEL = "presence:broadcast";
+
+export type PresenceBroadcastMessage = {
+  type: "presence_update";
+  userId: string;
+  status: PresenceStatus;
+  awayMessage?: string;
+  targets: string[]; // pre-computed target set so each shard doesn't re-query
+};
+
+/**
+ * Publishes a presence change to the shared Redis channel.
+ * All realtime instances subscribe and deliver to their local connections.
+ */
 export async function broadcastPresenceChange(
+  redis: Redis,
   userId: string,
   status: PresenceStatus,
-  connections: Map<string, { ws: WebSocket; userId: string }>,
   awayMessage?: string
 ): Promise<void> {
-  // Currently gets all user ids, will get related user ids in the future to only send to relevant users
-  const relatedUserIds = await getRelatedUserIds(userId, connections);
-  // Always include the user themselves so their own UI updates
-  const relatedUserSet = new Set([...relatedUserIds, userId]);
+  const targets = await getPresenceTargets(redis, userId);
+  // Always include the user themselves
+  const targetSet = [...new Set([...targets, userId])];
 
-  const payload = JSON.stringify({ type: "presence_update", userId, status, awayMessage });
-
-  // Send the presence update to all related users who are currently connected via the websocket
-  for (const { ws, userId: connUserId } of connections.values()) {
-    if (relatedUserSet.has(connUserId) && ws.readyState === WebSocket.OPEN) {
-      ws.send(payload);
-    }
-  }
+  const message: PresenceBroadcastMessage = { type: "presence_update", userId, status, awayMessage, targets: targetSet };
+  await redis.publish(PRESENCE_BROADCAST_CHANNEL, JSON.stringify(message));
 }
+
+export { PRESENCE_BROADCAST_CHANNEL };

@@ -23,11 +23,12 @@ export const buildSchemaStatements = (keyspace: string): string[] => [
     conversation_id uuid,
     conversation_type text,
     name text,
+    participant_ids list<uuid>,
     created_at timestamp,
     updated_at timestamp,
     PRIMARY KEY ((user_id), conversation_id)
   );`,
-  `CREATE TABLE IF NOT EXISTS ${keyspace}.messages_by_conversation (
+`CREATE TABLE IF NOT EXISTS ${keyspace}.messages_by_conversation (
     conversation_id uuid,
     created_at timeuuid,
     message_id uuid,
