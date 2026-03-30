@@ -2,7 +2,69 @@
 
 Monorepo containing multiple backend services plus a React frontend. The primary backend service in this repo is the authentication service (Express) with session auth backed by Redis and PostgreSQL.
 
-Implementation scope and how this compares to the full architecture (nginx, Cassandra messages, Elasticsearch, DMs over WebSockets/SSE, etc.) is documented in **[IMPLEMENTATION.md](./IMPLEMENTATION.md)**.
+Implementation scope and how this compares to the full architecture (nginx, Cassandra messages, Elasticsearch, DMs over WebSockets/SSE, etc.) is documented in **[docs/IMPLEMENTATION.md](./docs/IMPLEMENTATION.md)**. An index of all project docs (including the Cursor-oriented guide and feature write-ups) is in **[docs/README.md](./docs/README.md)**.
+
+## Architecture
+
+The diagram below reflects **local development** (`npm run dev:all`): the browser loads the React app from the Vite dev server (**5173**), which **proxies** API paths to the matching backend port (see `frontend/vite.config.ts`). In production you would typically put a reverse proxy in front of the same routes.
+
+**Data:** Auth, communities, and create-community share **PostgreSQL** (Drizzle migrations live under `services/auth/drizzle/`). Session cookies are validated via **Redis** on those services. The **DM** service uses **Cassandra** for conversation data (see [DEV-27](./docs/DEV-27-Direct-conversations-dm-service-setup.md)). **Messages**, **search**, and **realtime** are still stubs with no durable backing store in this repo.
+
+```mermaid
+flowchart TB
+  subgraph dev [Client — dev]
+    Browser[Browser]
+    Vite[Vite dev server :5173]
+    Browser -->|loads SPA| Vite
+  end
+
+  subgraph backends [Node microservices]
+    Auth[auth :3001]
+    Comm[communities :3002]
+    Msg[messages :3003]
+    Srch[search :3004]
+    Rt[realtime :3005]
+    CC[create-community :3006]
+    Dms[dms :3007]
+  end
+
+  Vite --> Auth
+  Vite --> Comm
+  Vite --> Msg
+  Vite --> Srch
+  Vite --> Rt
+  Vite --> CC
+  Vite --> Dms
+
+  subgraph data [Data stores]
+    PG[(PostgreSQL)]
+    RD[(Redis)]
+    CAS[(Cassandra)]
+  end
+
+  Auth --> PG
+  Auth --> RD
+  Comm --> PG
+  Comm --> RD
+  CC --> PG
+  CC --> RD
+  Dms --> CAS
+  Dms --> RD
+```
+
+**Proxy map (same order as Vite config matters for overlapping prefixes):**
+
+| Browser path prefix | Target |
+|----------------------|--------|
+| `/auth` | :3001 |
+| `/create-community` | :3006 |
+| `/communities`, `/channels`, `/search-communities` | :3002 |
+| `/messages` | :3003 |
+| `/search` | :3004 |
+| `/ws` (WebSocket) | :3005 |
+| `/dms` | :3007 |
+
+**Future scaling:** Notes on sharding by community, replication, and routing are in **[docs/sharding-and-replication.md](./docs/sharding-and-replication.md)**.
 
 ## Prerequisites
 
@@ -113,7 +175,7 @@ Users can **create** and **join** communities. A **community** is a named space 
 
 The Vite dev server proxies `/create-community` to port **3006**, `/communities` and `/search-communities` to port **3002** (see `frontend/vite.config.ts`).
 
-**Channels (DEV-28):** Implementation notes, API summary, and follow-up work are in [DEV-28-Channels-scaffold-communities-service.md](./DEV-28-Channels-scaffold-communities-service.md).
+**Channels (DEV-28):** Implementation notes, API summary, and follow-up work are in [docs/DEV-28-Channels-scaffold-communities-service.md](./docs/DEV-28-Channels-scaffold-communities-service.md).
 
 ### Start everything at once (recommended for full-stack local dev)
 
@@ -149,6 +211,7 @@ chmod +x scripts/dev-all.sh   # once
 ## Project Structure
 
 ```
+docs/                 # Project documentation (see docs/README.md)
 services/
   auth/
     src/
