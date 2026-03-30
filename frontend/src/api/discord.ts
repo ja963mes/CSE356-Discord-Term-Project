@@ -12,7 +12,7 @@ export type Message = { id: string; author: string; content: string; ts: string 
 
 export type SearchResult = { id: string; type: string; title: string; snippet: string; score: number };
 
-export type Community = { id: string; name: string; created_at: string };
+export type Community = { id: string; name: string; created_at: string; role?: string };
 
 export type CommunityMember = {
   user_id: string;
@@ -99,6 +99,75 @@ export async function leaveCommunity(communityId: string): Promise<LeaveCommunit
     }
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     return { ok: false, error: body.error ?? "Could not leave this server." };
+  } catch {
+    return { ok: false, error: "Network error." };
+  }
+}
+
+export type ChannelMutationOk = { ok: true } | { ok: false; error: string };
+
+export type CreateChannelResult = { ok: true; channel: Channel } | { ok: false; error: string };
+
+/** Create a channel (owner/admin). */
+export async function createChannel(
+  communityId: string,
+  body: { name: string; type?: string; is_private?: boolean; position?: number }
+): Promise<CreateChannelResult> {
+  try {
+    const res = await fetch(`/communities/${encodeURIComponent(communityId)}/channels`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = (await res.json().catch(() => ({}))) as { channel?: Channel; error?: string };
+    if (res.status === 201 && data.channel) return { ok: true, channel: data.channel };
+    return { ok: false, error: data.error ?? "Could not create channel." };
+  } catch {
+    return { ok: false, error: "Network error." };
+  }
+}
+
+/** Delete a channel (owner/admin; cannot delete last channel). */
+export async function deleteChannel(communityId: string, channelId: string): Promise<ChannelMutationOk> {
+  try {
+    const res = await fetch(
+      `/communities/${encodeURIComponent(communityId)}/channels/${encodeURIComponent(channelId)}`,
+      { method: "DELETE", credentials: "include" }
+    );
+    if (res.status === 204) return { ok: true };
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    return { ok: false, error: data.error ?? "Could not delete channel." };
+  } catch {
+    return { ok: false, error: "Network error." };
+  }
+}
+
+/** Join a public channel (must be a guild member). */
+export async function joinChannel(communityId: string, channelId: string): Promise<ChannelMutationOk> {
+  try {
+    const res = await fetch(
+      `/communities/${encodeURIComponent(communityId)}/channels/${encodeURIComponent(channelId)}/join`,
+      { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" } }
+    );
+    if (res.status === 201) return { ok: true };
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    return { ok: false, error: data.error ?? "Could not join channel." };
+  } catch {
+    return { ok: false, error: "Network error." };
+  }
+}
+
+/** Leave a channel (drops channel_members). */
+export async function leaveChannel(communityId: string, channelId: string): Promise<ChannelMutationOk> {
+  try {
+    const res = await fetch(
+      `/communities/${encodeURIComponent(communityId)}/channels/${encodeURIComponent(channelId)}/leave`,
+      { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" } }
+    );
+    if (res.status === 200) return { ok: true };
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    return { ok: false, error: data.error ?? "Could not leave channel." };
   } catch {
     return { ok: false, error: "Network error." };
   }

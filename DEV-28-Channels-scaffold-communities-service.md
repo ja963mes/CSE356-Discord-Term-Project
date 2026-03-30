@@ -61,6 +61,9 @@ Schema copies stay aligned in:
 | `POST` | `/communities/:communityId/channels/:channelId/join` | **Public** channels only |
 | `POST` | `/communities/:communityId/channels/:channelId/leave` | Remove self from `channel_members` |
 | `POST` | `/communities/:communityId/channels/:channelId/members` | Admin; body `{ "user_id" }` — target must be a community member (used for **private** channels) |
+| `DELETE` | `/communities/:communityId/channels/:channelId` | Admin; cannot delete the last channel in the community |
+
+**Listing guilds:** `GET /communities` includes each row’s **`role`** (`owner` | `admin` | `member`) for the current user.
 
 ---
 
@@ -94,9 +97,9 @@ All completed successfully on the integration branch before push.
 ## Not in scope for this ticket (follow-up)
 
 1. **Messages service (§6):** Authorize `channel_id` using **`channel_members`** (and community membership where applicable) before read/write.
-2. **UI:** Admin flows — create channel, toggle private, add users to private channels; optional emphasis when `joined === false` on public channels.
+2. **UI (partially done):** Create channel modal, delete channel (admin), join gate when `joined === false`, lock/private affordances. **Still missing:** add member to private channel from UI (`POST .../members`), promote member to `admin`, private “request access”.
 3. **Optional:** `GET .../channels-overview?include=recent` once message history APIs exist.
-4. **Optional:** `DELETE` channel, promote member to `admin`, private-channel “request access”.
+4. **Optional:** promote member to `admin` via API, private-channel “request access”.
 
 ---
 

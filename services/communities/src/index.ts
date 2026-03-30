@@ -1,7 +1,7 @@
 /// <reference path="./types/express.d.ts" />
 import express, { Request, Response } from "express";
 import cookieParser from "cookie-parser";
-import { eq, and, asc, desc, sql, or, isNotNull, max, inArray } from "drizzle-orm";
+import { eq, and, asc, desc, sql, or, isNotNull, max, inArray, count } from "drizzle-orm";
 import { db } from "./db";
 import { env } from "./env";
 import { requireAuth } from "./middleware/session";
@@ -73,6 +73,7 @@ app.get("/communities", requireAuth, async (req: Request, res: Response) => {
         id: communities.id,
         name: communities.name,
         created_at: communities.created_at,
+        role: communityMembers.role,
       })
       .from(communities)
       .innerJoin(communityMembers, eq(communities.id, communityMembers.community_id))
@@ -531,6 +532,53 @@ app.post("/communities/:communityId/channels/:channelId/members", requireAuth, a
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Failed to add channel member" });
+  }
+});
+
+/** Delete a channel (owner/admin only). Cannot remove the last channel in a community. */
+app.delete("/communities/:communityId/channels/:channelId", requireAuth, async (req: Request, res: Response) => {
+  const userId = req.user!.internal_id;
+  const communityId = String(req.params.communityId);
+  const channelId = String(req.params.channelId);
+
+  try {
+    const [membership] = await db
+      .select()
+      .from(communityMembers)
+      .where(and(eq(communityMembers.community_id, communityId), eq(communityMembers.user_id, userId)))
+      .limit(1);
+
+    if (!membership || !isCommunityAdminRole(membership.role)) {
+      res.status(403).json({ error: "Only community administrators can delete channels" });
+      return;
+    }
+
+    const [ch] = await db
+      .select()
+      .from(channels)
+      .where(and(eq(channels.id, channelId), eq(channels.community_id, communityId)))
+      .limit(1);
+
+    if (!ch) {
+      res.status(404).json({ error: "Channel not found" });
+      return;
+    }
+
+    const [cnt] = await db
+      .select({ c: count() })
+      .from(channels)
+      .where(eq(channels.community_id, communityId));
+
+    if (Number(cnt?.c ?? 0) <= 1) {
+      res.status(400).json({ error: "Cannot delete the last channel in a community" });
+      return;
+    }
+
+    await db.delete(channels).where(eq(channels.id, channelId));
+    res.status(204).send();
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to delete channel" });
   }
 });
 
