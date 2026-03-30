@@ -1,4 +1,12 @@
-export type Channel = { id: string; name: string; type: "text" | "voice" };
+export type Channel = {
+  id: string;
+  name: string;
+  type: "text" | "voice" | string;
+  position?: number;
+  is_private?: boolean;
+  /** Present when listing from API: user has channel_members row (can read history). */
+  joined?: boolean;
+};
 
 export type Message = { id: string; author: string; content: string; ts: string };
 

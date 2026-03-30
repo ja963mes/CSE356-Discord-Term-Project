@@ -43,6 +43,13 @@
       "when": 1774621037518,
       "tag": "0005_hesitant_havok",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1774833668477,
+      "tag": "0006_wealthy_thundra",
+      "breakpoints": true
     }
   ]
 }

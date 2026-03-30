@@ -5,7 +5,7 @@ import { eq, count } from "drizzle-orm";
 import { db } from "./db";
 import { env } from "./env";
 import { requireAuth } from "./middleware/session";
-import { communities, communityMembers, channels } from "./db/schema";
+import { communities, communityMembers, channels, channelMembers } from "./db/schema";
 
 const MAX_COMMUNITIES_PER_USER = 100;
 
@@ -53,11 +53,20 @@ app.post("/create-community", requireAuth, async (req: Request, res: Response) =
         role: "owner",
       });
 
-      await tx.insert(channels).values({
-        community_id: c.id,
-        name: "general",
-        type: "text",
-        position: 0,
+      const [general] = await tx
+        .insert(channels)
+        .values({
+          community_id: c.id,
+          name: "general",
+          type: "text",
+          position: 0,
+          is_private: false,
+        })
+        .returning({ id: channels.id });
+
+      await tx.insert(channelMembers).values({
+        channel_id: general.id,
+        user_id: userId,
       });
 
       return c;

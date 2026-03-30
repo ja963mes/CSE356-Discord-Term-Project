@@ -91,7 +91,7 @@ Users can **create** and **join** communities. A **community** is a named space 
 
 **Create-community** (port **3006**, `services/create-community/`) is a separate service for **creating** communities: it enforces the **100 communities per user** limit, inserts the community row, adds the creator as **owner**, and seeds a default **#general** text channel.
 
-**Communities** (port **3002**, `services/communities/`) handles listing, joining, leaving, channels, members, and **public directory search** (`GET /search-communities`) for the “Join a server” modal. It uses the same PostgreSQL database as auth (see migrations under `services/auth/drizzle/`). Authenticated routes validate the **session cookie** (`session_token`) against Redis; directory search is public (no membership filter).
+**Communities** (port **3002**, `services/communities/`) handles listing, joining, leaving, **channels** (public/private, `channel_members`, admin-only create/update), members, and **public directory search** (`GET /search-communities`) for the “Join a server” modal. It uses the same PostgreSQL database as auth (see migrations under `services/auth/drizzle/`). Authenticated routes validate the **session cookie** (`session_token`) against Redis; directory search is public (no membership filter). New channel columns and `channel_members` ship with migration **`0006_*`** — run `npm run db:migrate` after pulling.
 
 **Joining from search** uses **`POST /communities/:communityId/join`** (same service). Optional future work (invites, deep links) can live under `services/join/` without changing this path.
 
@@ -102,10 +102,17 @@ Users can **create** and **join** communities. A **community** is a named space 
 | `POST` | `/communities/:communityId/join` | communities (3002) | Join a community |
 | `POST` | `/communities/:communityId/leave` | communities (3002) | Leave a community (removes membership) |
 | `GET` | `/search-communities?q=...` | communities (3002) | Search public communities by name |
-| `GET` | `/communities/:communityId/channels` | communities (3002) | List channels (members only) |
+| `GET` | `/communities/:communityId/channels` | communities (3002) | List channels visible to caller (`is_private`, `joined`) |
+| `POST` | `/communities/:communityId/channels` | communities (3002) | Create channel — body `{ "name", "type?", "is_private?", "position?" }` (owner/admin) |
+| `PATCH` | `/communities/:communityId/channels/:channelId` | communities (3002) | Update `name` / `is_private` / `position` (owner/admin) |
+| `POST` | `/communities/:communityId/channels/:channelId/join` | communities (3002) | Join a **public** channel |
+| `POST` | `/communities/:communityId/channels/:channelId/leave` | communities (3002) | Leave channel (drops `channel_members`) |
+| `POST` | `/communities/:communityId/channels/:channelId/members` | communities (3002) | Add user to channel — body `{ "user_id" }` (owner/admin; for private channels) |
 | `GET` | `/communities/:communityId/members` | communities (3002) | Members with display names and roles |
 
 The Vite dev server proxies `/create-community` to port **3006**, `/communities` and `/search-communities` to port **3002** (see `frontend/vite.config.ts`).
+
+**Channels (DEV-28):** Implementation notes, API summary, and follow-up work are in [DEV-28-Channels-scaffold-communities-service.md](./DEV-28-Channels-scaffold-communities-service.md).
 
 ### Start everything at once (recommended for full-stack local dev)
 

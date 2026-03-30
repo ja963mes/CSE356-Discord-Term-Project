@@ -1,7 +1,7 @@
 /**
  * Must stay aligned with `services/auth/src/db/schema.ts` (same Postgres tables).
  */
-import { pgTable, uuid, text, jsonb, timestamp, unique, integer, primaryKey } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, jsonb, timestamp, unique, integer, primaryKey, boolean } from "drizzle-orm/pg-core";
 
 export const users = pgTable("users", {
   internal_id: uuid("internal_id").primaryKey().defaultRandom(),
@@ -58,5 +58,22 @@ export const channels = pgTable("channels", {
   name: text("name").notNull(),
   type: text("type").notNull(),
   position: integer("position").notNull().default(0),
+  is_private: boolean("is_private").notNull().default(false),
   created_at: timestamp("created_at").notNull().defaultNow(),
 });
+
+export const channelMembers = pgTable(
+  "channel_members",
+  {
+    channel_id: uuid("channel_id")
+      .notNull()
+      .references(() => channels.id, { onDelete: "cascade" }),
+    user_id: uuid("user_id")
+      .notNull()
+      .references(() => users.internal_id, { onDelete: "cascade" }),
+    joined_at: timestamp("joined_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.channel_id, table.user_id] }),
+  })
+);
