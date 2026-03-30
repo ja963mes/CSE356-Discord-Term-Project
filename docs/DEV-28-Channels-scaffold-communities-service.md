@@ -12,7 +12,7 @@ Channel **metadata**, **public/private visibility**, and **`channel_members`** a
 ## Architecture decision
 
 - **Rationale:** `community_id` on `channels` is a data dependency, not a requirement for an extra process. Keeping channel APIs on **communities** reduces operational surface area while the messages and realtime layers are still stubs.
-- **Future:** A dedicated channels service can be split out later if scaling or ownership boundaries require it; `CLAUDE.md` §4 records product rules and remaining cross-cutting work.
+- **Future:** A dedicated channels service can be split out later if scaling or ownership boundaries require it; [CLAUDE.md](./CLAUDE.md) §4 records product rules and remaining cross-cutting work.
 
 ---
 
@@ -76,7 +76,7 @@ Schema copies stay aligned in:
 ## Documentation updated
 
 - `README.md` — Communities API table and migration note.
-- `CLAUDE.md` — §4 status: done vs remaining (messages enforcement, optional UI, optional aggregate endpoint).
+- [CLAUDE.md](./CLAUDE.md) — §4 status: done vs remaining (messages enforcement, optional UI, optional aggregate endpoint).
 
 ---
 
@@ -105,4 +105,4 @@ All completed successfully on the integration branch before push.
 
 ## Related
 
-- **DEV-27:** `DEV-27-Direct-conversations-dm-service-setup.md` (DMs on Cassandra, port 3007).
+- **DEV-27:** [DEV-27-Direct-conversations-dm-service-setup.md](./DEV-27-Direct-conversations-dm-service-setup.md) (DMs on Cassandra, port 3007).
