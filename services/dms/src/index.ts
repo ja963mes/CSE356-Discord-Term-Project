@@ -194,7 +194,7 @@ initializeCassandra()
     });
   })
   .catch((error) => {
-    console.error("[dms] failed to initialize Cassandra", error);
+    console.error("[dms] failed to initialize", error);
     process.exit(1);
   });
 
