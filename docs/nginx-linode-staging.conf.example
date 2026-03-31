@@ -20,7 +20,7 @@ upstream vite_dev {
 
 server {
     listen 80;
-    server_name 130.245.136.72;
+    server_name 130.245.136.45;
     # For HTTPS, add a second server block or use certbot --nginx.
 
     # Shared proxy headers (OAuth callbacks need correct Host / forwarded proto)

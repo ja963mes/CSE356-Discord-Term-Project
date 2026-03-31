@@ -10,6 +10,8 @@
   "scripts": {
     "dev": "npm run dev:frontend",
     "dev:all": "concurrently -n auth,create-community,communities,messages,search,realtime,dms,frontend -c auto \"npm run dev:auth\" \"npm run dev:create-community\" \"npm run dev:communities\" \"npm run dev:messages\" \"npm run dev:search\" \"npm run dev:realtime\" \"npm run dev:dms\" \"npm run dev:frontend\"",
+    "dev:frontend:staging": "VITE_API_ORIGIN=http://130.245.136.45 npm run dev:frontend",
+    "dev:frontend:staging-lite": "VITE_API_ORIGIN=http://130.245.136.45 VITE_MESSAGES_ORIGIN=http://localhost:3003 VITE_SEARCH_ORIGIN=http://localhost:3004 VITE_DMS_ORIGIN=http://localhost:3007 npm run dev:frontend",
     "dev:auth": "npm run dev --workspace auth-service",
     "dev:create-community": "npm run dev --workspace create-community-service",
     "dev:communities": "npm run dev --workspace communities-service",
