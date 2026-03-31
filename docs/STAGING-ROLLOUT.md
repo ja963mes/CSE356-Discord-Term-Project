@@ -1,0 +1,375 @@
+# Staging rollout runbook (auth + communities + messages + realtime)
+
+Use this runbook to deploy and validate the core chat path in a staging environment before production.
+
+## Scope
+
+Services covered:
+- `auth` (session + identity)
+- `communities` (guild/channels/ACL)
+- `messages` (channel history in Cassandra + ACL checks)
+- `realtime` (WebSocket fan-out/presence plumbing)
+- optional but recommended: `frontend` pointed at staging APIs
+
+## 1) Preconditions
+
+- A staging Postgres instance is reachable.
+- A staging Redis instance is reachable.
+- A staging Cassandra cluster/node is reachable.
+- DNS/TLS route users to one staging host/domain (temporary IP is acceptable).
+- You can set environment variables per service.
+- Node.js 18+ and npm are installed on the staging host.
+
+Keep this as staging-only. Do not reuse production secrets.
+When DNS is available, replace `130.245.136.72` with your staging domain in all URL variables.
+
+## 2) Required environment variables
+
+At minimum, verify:
+
+- **Auth/communities/messages/realtime**
+  - `DATABASE_URL`
+  - `REDIS_URL`
+  - `SESSION_SECRET`
+  - `STAGING_HOST=130.245.136.72`
+  - `FRONTEND_URL=http://130.245.136.72`
+- **OAuth callback URLs (auth service)**
+  - `GOOGLE_CALLBACK_URL=http://130.245.136.72/auth/google/callback`
+  - `GITHUB_CALLBACK_URL=http://130.245.136.72/auth/github/callback`
+  - `OIDC_CALLBACK_URL=http://130.245.136.72/auth/oidc/callback`
+- **Messages/realtime (Cassandra connectivity)**
+  - `CASSANDRA_CONTACT_POINTS`
+  - `CASSANDRA_PORT`
+  - `CASSANDRA_LOCAL_DATACENTER`
+- **Messages keyspace separation**
+  - `MESSAGES_CASSANDRA_KEYSPACE=messaging` (or your staging name)
+- **DM service compatibility (if deployed)**
+  - keep `CASSANDRA_KEYSPACE=dms` for the DMs service
+
+Replication/consistency knobs for messages:
+- `CASSANDRA_TOPOLOGY` (`simple` or `network`)
+- `CASSANDRA_REPLICATION_FACTOR`
+- `CASSANDRA_READ_CONSISTENCY`
+- `CASSANDRA_WRITE_CONSISTENCY`
+
+## 3) Bootstrap on staging host
+
+From the repository root on the server:
+
+```bash
+git pull
+npm install
+npm run build --workspace auth-service
+npm run build --workspace communities-service
+npm run build --workspace messages-service
+npm run build --workspace realtime-service
+# optional
+npm run build --workspace frontend
+```
+
+One-time migration (shared Postgres schema):
+
+```bash
+npm run db:migrate
+```
+
+Important for this branch:
+- migration `0008_*` drops Postgres `channel_messages`
+- channel history is now Cassandra-backed via the messages service
+
+If staging still has legacy `channel_messages` data you care about, export/backfill before applying `0008_*`.
+
+## 4) Keep services always-on (systemd, recommended)
+
+Do not rely on `npm run dev:*` in an SSH shell for staging uptime.
+Use `systemd` units with restart policies so services survive SSH disconnects and host reboots.
+
+### A. Create a shared environment file
+
+Create `/etc/discord-staging.env`:
+
+```bash
+sudo tee /etc/discord-staging.env >/dev/null <<'EOF'
+DATABASE_URL=...
+REDIS_URL=...
+SESSION_SECRET=...
+STAGING_HOST=130.245.136.72
+FRONTEND_URL=http://130.245.136.72
+GOOGLE_CALLBACK_URL=http://130.245.136.72/auth/google/callback
+GITHUB_CALLBACK_URL=http://130.245.136.72/auth/github/callback
+OIDC_CALLBACK_URL=http://130.245.136.72/auth/oidc/callback
+CASSANDRA_CONTACT_POINTS=127.0.0.1
+CASSANDRA_PORT=9042
+CASSANDRA_LOCAL_DATACENTER=datacenter1
+MESSAGES_CASSANDRA_KEYSPACE=messaging
+CASSANDRA_TOPOLOGY=simple
+CASSANDRA_REPLICATION_FACTOR=1
+CASSANDRA_READ_CONSISTENCY=localOne
+CASSANDRA_WRITE_CONSISTENCY=localQuorum
+PORT=3001
+COMMUNITIES_PORT=3002
+CREATE_COMMUNITY_PORT=3006
+REALTIME_PORT=3005
+EOF
+sudo chmod 600 /etc/discord-staging.env
+```
+
+### B. Add service units
+
+Create these files under `/etc/systemd/system/`.
+Set `WorkingDirectory` to your actual repo path.
+
+`discord-auth.service`
+
+```ini
+[Unit]
+Description=Discord staging auth service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/CSE356-Discord-Term-Project
+EnvironmentFile=/etc/discord-staging.env
+ExecStart=/usr/bin/npm run start --workspace auth-service
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`discord-communities.service`
+
+```ini
+[Unit]
+Description=Discord staging communities service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/CSE356-Discord-Term-Project
+EnvironmentFile=/etc/discord-staging.env
+ExecStart=/usr/bin/npm run start --workspace communities-service
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`discord-messages.service`
+
+```ini
+[Unit]
+Description=Discord staging messages service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/CSE356-Discord-Term-Project
+EnvironmentFile=/etc/discord-staging.env
+ExecStart=/usr/bin/npm run start --workspace messages-service
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`discord-realtime.service`
+
+```ini
+[Unit]
+Description=Discord staging realtime service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/CSE356-Discord-Term-Project
+EnvironmentFile=/etc/discord-staging.env
+ExecStart=/usr/bin/npm run start --workspace realtime-service
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### C. Enable + verify
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now discord-auth discord-communities discord-messages discord-realtime
+sudo systemctl status discord-auth discord-communities discord-messages discord-realtime
+```
+
+Follow logs:
+
+```bash
+sudo journalctl -u discord-auth -f
+sudo journalctl -u discord-communities -f
+sudo journalctl -u discord-messages -f
+sudo journalctl -u discord-realtime -f
+```
+
+## 5) Nginx reverse proxy
+
+In staging, avoid binding raw service ports publicly; prefer one ingress host with path routing.
+
+An example site config that mirrors `frontend/vite.config.ts` (including **`/search-communities` before `/search`**) and upgrades **`/ws`** to realtime is in **[`nginx-linode-staging.conf.example`](./nginx-linode-staging.conf.example)**.
+
+- API paths proxy to `127.0.0.1:3001`–`3007` as in the README proxy table.
+- `server_name` currently uses `130.245.136.72` and can be replaced with your domain later.
+- `/` defaults to the Vite dev server on `5173`; switch that block to `root` + `try_files` if you serve `frontend/dist` instead.
+- After TLS (certbot or another terminator), ensure `X-Forwarded-Proto` reflects HTTPS so OAuth redirects stay correct.
+
+Validate + reload:
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+## 6) Deployment order (for updates)
+
+Deploy in this order:
+
+1. Data dependencies (Postgres, Redis, Cassandra)
+2. `auth`
+3. `communities`
+4. `messages`
+5. `realtime`
+6. `frontend` (if you use one)
+
+Rationale: auth/session and ACL metadata should be healthy before messages/realtime start receiving traffic.
+
+## 7) Update procedure (safe rolling restart)
+
+On each deploy:
+
+```bash
+cd /opt/CSE356-Discord-Term-Project
+git pull
+npm install
+npm run build --workspace auth-service
+npm run build --workspace communities-service
+npm run build --workspace messages-service
+npm run build --workspace realtime-service
+npm run db:migrate
+sudo systemctl restart discord-auth
+sudo systemctl restart discord-communities
+sudo systemctl restart discord-messages
+sudo systemctl restart discord-realtime
+sudo systemctl status discord-auth discord-communities discord-messages discord-realtime --no-pager
+```
+
+If frontend is local Vite on the same host:
+- restart that process manager entry as well.
+If frontend is static files:
+- rebuild frontend and deploy `dist`, then reload nginx.
+
+## 8) Smoke test checklist (15-20 min)
+
+### A. Service health
+
+- `GET /auth/health` (or root health endpoint used by your deployment)
+- `GET /communities/health`
+- `GET /messages/health` (should report Cassandra reachable)
+- `GET /ws` handshake path is reachable (or realtime health endpoint)
+
+### B. Session/cookie path
+
+1. Log in on staging frontend.
+2. Confirm session cookie is set.
+3. Call an authenticated endpoint (for example `GET /communities`) and expect 200.
+
+If this fails, check cookie domain + `SameSite` + `Secure` and proxy forwarding headers.
+
+### C. Channel ACL + message write/read
+
+1. Join or open a community where user is a member.
+2. Open a channel where user has `channel_members` access.
+3. `POST /messages` with `{ channelId, content }` returns 201.
+4. `GET /messages?channelId=...` returns the new message.
+5. Response headers include routing hints:
+   - `X-Partition-Key`
+   - `X-Shard-Key-Community`
+   - `X-Storage-Keyspace`
+   - `X-Cassandra-Replication`
+
+### D. Realtime basic validation
+
+1. Open two browser sessions as two users.
+2. Both connect to realtime service.
+3. Send a channel message from user A.
+4. Verify user B sees it without refresh.
+
+## 9) Port/conflict sanity
+
+Default local ports are unique:
+- auth `3001`
+- communities `3002`
+- messages `3003`
+- search `3004`
+- realtime `3005`
+- create-community `3006`
+- dms `3007`
+- frontend `5173`
+
+In staging, only expose 80/443 publicly; keep service ports bound to localhost.
+
+## 10) Rollback plan
+
+If rollout is unstable:
+
+1. Roll back `frontend` first (fastest user-impact mitigation).
+2. Roll back `realtime` if message delivery is noisy but REST is healthy.
+3. Roll back `messages` if Cassandra path is failing.
+4. Keep `auth` and `communities` on last known good revisions.
+
+If schema migration `0008_*` is already applied, do not assume old Postgres message reads will work; use app rollback that still reads Cassandra.
+
+Quick rollback commands:
+
+```bash
+cd /opt/CSE356-Discord-Term-Project
+git checkout <last-known-good-commit>
+npm install
+npm run build --workspace auth-service
+npm run build --workspace communities-service
+npm run build --workspace messages-service
+npm run build --workspace realtime-service
+sudo systemctl restart discord-auth discord-communities discord-messages discord-realtime
+```
+
+## 11) Observability minimum
+
+Track these during rollout:
+
+- auth login success rate and 401/403 spikes
+- `/messages` 5xx rate and p95 latency
+- Cassandra client errors/timeouts
+- websocket connection count, disconnect rate, reconnect loops
+- proxy 4xx/5xx by route prefix (`/auth`, `/communities`, `/messages`, `/ws`)
+
+Useful checks:
+
+```bash
+sudo systemctl status discord-auth discord-communities discord-messages discord-realtime --no-pager
+sudo journalctl -u discord-messages -n 200 --no-pager
+sudo journalctl -u discord-realtime -n 200 --no-pager
+```
+
+## 12) Exit criteria
+
+Rollout is considered healthy when:
+
+- All four services are passing health checks.
+- Login + authenticated communities listing works.
+- Channel message write/read works across refresh.
+- Realtime fan-out works for at least two concurrent clients.
+- No sustained 5xx errors or reconnect storms for one observation window (for example 30-60 minutes).
