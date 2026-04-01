@@ -4,7 +4,8 @@
  * Redis keys:
  *   presence:guild:<communityId>   → Set of connected userIds in that community
  *   presence:dm:<conversationId>   → Set of connected userIds in that DM
- *   presence:contexts:<userId>     → Set of "guild:<id>" and "dm:<id>" context keys the user is subscribed to
+ *   presence:channel:<channelId>   → Set of connected userIds in that channel
+ *   presence:contexts:<userId>     → Set of "guild:<id>", "dm:<id>", "channel:<id>" context keys the user is subscribed to
  *
  * Shard-safe: all state lives in Redis, so multiple realtime instances can fan-out correctly.
  */
@@ -14,6 +15,7 @@ import { pg } from "./db";
 
 const GUILD_KEY = (id: string) => `presence:guild:${id}`;
 const DM_KEY = (id: string) => `presence:dm:${id}`;
+const CHANNEL_KEY = (id: string) => `presence:channel:${id}`;
 const CONTEXTS_KEY = (userId: string) => `presence:contexts:${userId}`;
 
 // TTL for context sets — safety net in case disconnect cleanup is missed (e.g. crash)
@@ -25,9 +27,10 @@ const CONTEXT_TTL_SEC = 60 * 60 * 24; // 24h
  * in each context set in Redis.
  */
 export async function subscribeUser(redis: Redis, userId: string): Promise<void> {
-  const [communityIds, conversationIds] = await Promise.all([
+  const [communityIds, conversationIds, channelIds] = await Promise.all([
     fetchCommunityIds(userId),
     fetchConversationIds(userId),
+    fetchChannelIds(userId),
   ]);
 
   const pipeline = redis.pipeline();
@@ -40,6 +43,11 @@ export async function subscribeUser(redis: Redis, userId: string): Promise<void>
   for (const id of conversationIds) {
     pipeline.sadd(DM_KEY(id), userId);
     pipeline.sadd(CONTEXTS_KEY(userId), `dm:${id}`);
+  }
+
+  for (const id of channelIds) {
+    pipeline.sadd(CHANNEL_KEY(id), userId);
+    pipeline.sadd(CONTEXTS_KEY(userId), `channel:${id}`);
   }
 
   pipeline.expire(CONTEXTS_KEY(userId), CONTEXT_TTL_SEC);
@@ -61,6 +69,7 @@ export async function unsubscribeUser(redis: Redis, userId: string): Promise<voi
     const [type, id] = ctx.split(":");
     if (type === "guild") pipeline.srem(GUILD_KEY(id), userId);
     else if (type === "dm") pipeline.srem(DM_KEY(id), userId);
+    else if (type === "channel") pipeline.srem(CHANNEL_KEY(id), userId);
   }
 
   pipeline.del(CONTEXTS_KEY(userId));
@@ -125,13 +134,36 @@ export async function getPresenceTargets(redis: Redis, userId: string): Promise<
 
   const keys = contexts.map((ctx) => {
     const [type, id] = ctx.split(":");
-    return type === "guild" ? GUILD_KEY(id) : DM_KEY(id);
+    if (type === "guild") return GUILD_KEY(id);
+    if (type === "dm") return DM_KEY(id);
+    return CHANNEL_KEY(id);
   });
 
   // SUNIONSTORE into a temp key, then read + delete
   // Or just SUNION directly (no temp key needed)
   const members = await redis.sunion(...keys);
   return members;
+}
+
+/**
+ * Called when a user joins a channel (or on connect for existing memberships).
+ */
+export async function subscribeChannel(redis: Redis, channelId: string, userId: string): Promise<void> {
+  const pipeline = redis.pipeline();
+  pipeline.sadd(CHANNEL_KEY(channelId), userId);
+  pipeline.sadd(CONTEXTS_KEY(userId), `channel:${channelId}`);
+  pipeline.expire(CONTEXTS_KEY(userId), CONTEXT_TTL_SEC);
+  await pipeline.exec();
+}
+
+/**
+ * Called when a user leaves a channel.
+ */
+export async function unsubscribeChannel(redis: Redis, channelId: string, userId: string): Promise<void> {
+  const pipeline = redis.pipeline();
+  pipeline.srem(CHANNEL_KEY(channelId), userId);
+  pipeline.srem(CONTEXTS_KEY(userId), `channel:${channelId}`);
+  await pipeline.exec();
 }
 
 // --- DB helpers (only called on connect) ---
@@ -145,6 +177,19 @@ async function fetchCommunityIds(userId: string): Promise<string[]> {
     return result.rows.map((r) => r.community_id);
   } catch (err) {
     console.error("[subscriptions] community fetch failed:", err);
+    return [];
+  }
+}
+
+async function fetchChannelIds(userId: string): Promise<string[]> {
+  try {
+    const result = await pg.query<{ channel_id: string }>(
+      `SELECT channel_id FROM channel_members WHERE user_id = $1`,
+      [userId]
+    );
+    return result.rows.map((r) => r.channel_id);
+  } catch (err) {
+    console.error("[subscriptions] channel fetch failed:", err);
     return [];
   }
 }

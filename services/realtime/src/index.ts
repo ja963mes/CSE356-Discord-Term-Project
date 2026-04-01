@@ -16,7 +16,7 @@ import {
   PresenceStatus,
 } from "./presence";
 import { broadcastPresenceChange, PRESENCE_BROADCAST_CHANNEL, PresenceBroadcastMessage } from "./broadcast";
-import { subscribeUser, unsubscribeUser, subscribeDm, unsubscribeDm, subscribeCommunity, unsubscribeCommunity, getPresenceTargets } from "./subscriptions";
+import { subscribeUser, unsubscribeUser, subscribeDm, unsubscribeDm, subscribeCommunity, unsubscribeCommunity, subscribeChannel, unsubscribeChannel, getPresenceTargets } from "./subscriptions";
 
 const redis = new Redis(env.REDIS_URL);
 redis.on("connect", async () => {
@@ -211,9 +211,9 @@ setInterval(async () => {
 }, 30_000);
 
 // Subscribe to DM events from the DMS service and forward to relevant WebSocket clients
-redisSub.subscribe("dm:events", "community:events", PRESENCE_BROADCAST_CHANNEL, (err) => {
+redisSub.subscribe("dm:events", "community:events", "channel:events", PRESENCE_BROADCAST_CHANNEL, (err) => {
   if (err) console.error("[pubsub] subscribe failed:", err);
-  else console.log("[pubsub] subscribed to dm:events + community:events + presence:broadcast");
+  else console.log("[pubsub] subscribed to dm:events + community:events + channel:events + presence:broadcast");
 });
 
 redisSub.on("message", (channel, message) => {
@@ -304,6 +304,37 @@ redisSub.on("message", (channel, message) => {
         }
       })();
     }
+
+    if (event.type === "community:channel:member:add") {
+      const channelId = event.channelId as string;
+      const userId = event.userId as string;
+      void subscribeChannel(redis, channelId, userId);
+    }
+
+    if (event.type === "community:channel:member:remove") {
+      const channelId = event.channelId as string;
+      const userId = event.userId as string;
+      void unsubscribeChannel(redis, channelId, userId);
+    }
+    return;
+  }
+
+  if (channel === "channel:events") {
+    let event: { type: string; channelId?: string; communityId?: string; [key: string]: unknown };
+    try { event = JSON.parse(message); } catch { return; }
+
+    const channelId = event.channelId as string;
+    if (!channelId) return;
+
+    const payload = JSON.stringify(event);
+    void (async () => {
+      for (const { ws, userId: connUserId } of connections.values()) {
+        const contexts = await redis.smembers(`presence:contexts:${connUserId}`);
+        if (contexts.includes(`channel:${channelId}`) && ws.readyState === WebSocket.OPEN) {
+          ws.send(payload);
+        }
+      }
+    })();
     return;
   }
 
