@@ -2,8 +2,10 @@
 
 import express from "express";
 import cookieParser from "cookie-parser";
+import { randomUUID } from "crypto";
 import { z } from "zod";
 import { requireAuth } from "./middleware/session";
+import { presignUpload } from "./minio";
 import {
   createConversation,
   createMessage,
@@ -24,6 +26,39 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "dms-service" });
 });
 
+app.post("/attachments/presign", requireAuth, async (req, res, next) => {
+  try {
+    const files: { filename: string; contentType: string }[] = Array.isArray(req.body?.files)
+      ? req.body.files
+      : [];
+
+    if (files.length === 0 || files.length > 4) {
+      res.status(400).json({ error: "Between 1 and 4 files required" });
+      return;
+    }
+
+    for (const f of files) {
+      if (!ALLOWED_CONTENT_TYPES.has(f.contentType)) {
+        res.status(400).json({ error: `Unsupported content type: ${f.contentType}. Allowed: jpeg, png, gif, webp` });
+        return;
+      }
+    }
+
+    const results = await Promise.all(
+      files.map(async ({ filename, contentType }) => {
+        const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+        const key = `${randomUUID()}-${safeName}`;
+        const uploadUrl = await presignUpload(key, contentType);
+        return { key, uploadUrl };
+      })
+    );
+
+    res.json({ files: results });
+  } catch (error) {
+    next(error);
+  }
+});
+
 const createConversationSchema = z.object({
   type: z.enum(["one_to_one", "group"]),
   participantIds: z.array(z.string().uuid()).default([]),
@@ -34,9 +69,11 @@ const inviteSchema = z.object({
   userId: z.string().uuid(),
 });
 
+const ALLOWED_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+
 const createMessageSchema = z.object({
   content: z.string().trim().min(1).max(4000),
-  attachments: z.array(z.string().url()).max(4).default([]),
+  attachmentKeys: z.array(z.string()).max(4).default([]),
 });
 
 const listMessagesSchema = z.object({
@@ -106,7 +143,7 @@ app.post("/dms/:id/messages", requireAuth, async (req, res, next) => {
       conversationId,
       authorId: req.user.internal_id,
       content: body.content,
-      attachments: body.attachments,
+      attachmentKeys: body.attachmentKeys,
     });
     res.status(201).json({ message });
   } catch (error) {

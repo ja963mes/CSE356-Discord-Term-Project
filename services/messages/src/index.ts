@@ -15,6 +15,8 @@ import {
   deleteChannelMessage,
 } from "./cassandraRepo";
 import { publishChannelEvent } from "./events";
+import { initializeBucket, presignUpload, keyToUrl } from "./minio";
+import { randomUUID } from "crypto";
 import { types } from "cassandra-driver";
 
 const app = express();
@@ -24,6 +26,8 @@ app.use(cookieParser());
 const MAX_CONTENT = 4000;
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
+const MAX_ATTACHMENTS = 4;
+const ALLOWED_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
 
 function isUuid(s: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
@@ -74,6 +78,39 @@ app.get("/health", async (_req, res) => {
   }
 });
 
+/**
+ * Generate presigned PUT URLs for direct browser-to-MinIO uploads.
+ * Client uploads the file, then includes the returned key(s) when posting a message.
+ */
+app.post("/attachments/presign", requireAuth, async (req: Request, res: Response) => {
+  const files: { filename: string; contentType: string }[] = Array.isArray(req.body?.files)
+    ? req.body.files
+    : [];
+
+  if (files.length === 0 || files.length > MAX_ATTACHMENTS) {
+    res.status(400).json({ error: `Between 1 and ${MAX_ATTACHMENTS} files required` });
+    return;
+  }
+
+  for (const f of files) {
+    if (!ALLOWED_CONTENT_TYPES.has(f.contentType)) {
+      res.status(400).json({ error: `Unsupported content type: ${f.contentType}. Allowed: jpeg, png, gif, webp` });
+      return;
+    }
+  }
+
+  const results = await Promise.all(
+    files.map(async ({ filename, contentType }) => {
+      const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const key = `${randomUUID()}-${safeName}`;
+      const uploadUrl = await presignUpload(key, contentType);
+      return { key, uploadUrl };
+    })
+  );
+
+  res.json({ files: results });
+});
+
 /** List messages for a channel — newest first in Cassandra, returned oldest-first to client. */
 app.get("/messages", requireAuth, async (req: Request, res: Response) => {
   const channelId = String(req.query.channelId ?? "");
@@ -104,6 +141,7 @@ app.get("/messages", requireAuth, async (req: Request, res: Response) => {
     createdAt: timeuuidToDate(r.createdAt),
     editedAt: r.editedAt ? r.editedAt.toISOString() : null,
     attachmentKeys: r.attachmentKeys,
+    attachmentUrls: r.attachmentKeys.map(keyToUrl),
   }));
 
   res.json({ channelId, messages });
@@ -157,6 +195,7 @@ app.post("/messages", requireAuth, async (req: Request, res: Response) => {
     authorUsername,
     content,
     attachmentKeys,
+    attachmentUrls: attachmentKeys.map(keyToUrl),
     createdAt: timeuuidToDate(createdAt),
   };
 
@@ -172,7 +211,8 @@ app.post("/messages", requireAuth, async (req: Request, res: Response) => {
 
 /** Edit a message. Only the author can edit. :timeuuid is the created_at timeuuid. */
 app.patch("/messages/:channelId/:timeuuid", requireAuth, async (req: Request, res: Response) => {
-  const { channelId, timeuuid: timeuuidParam } = req.params;
+  const channelId = String(req.params.channelId);
+  const timeuuidParam = String(req.params.timeuuid);
   const contentRaw = typeof req.body?.content === "string" ? req.body.content : "";
   const content = contentRaw.trim();
 
@@ -235,7 +275,8 @@ app.patch("/messages/:channelId/:timeuuid", requireAuth, async (req: Request, re
 
 /** Delete a message. Only the author can delete. :timeuuid is the created_at timeuuid. */
 app.delete("/messages/:channelId/:timeuuid", requireAuth, async (req: Request, res: Response) => {
-  const { channelId, timeuuid: timeuuidParam } = req.params;
+  const channelId = String(req.params.channelId);
+  const timeuuidParam = String(req.params.timeuuid);
 
   if (!isUuid(channelId)) {
     res.status(400).json({ error: "invalid channelId" });
@@ -284,7 +325,10 @@ app.delete("/messages/:channelId/:timeuuid", requireAuth, async (req: Request, r
 const port = Number(env.PORT);
 
 void (async () => {
-  await initializeCassandra();
+  await Promise.all([
+    initializeCassandra(),
+    initializeBucket(),
+  ]);
   app.listen(port, () => {
     console.log(`Messages service running on port ${port} (Cassandra keyspace=${env.MESSAGES_CASSANDRA_KEYSPACE})`);
   });

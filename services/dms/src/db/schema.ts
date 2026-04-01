@@ -10,6 +10,7 @@ export const buildSchemaStatements = (keyspace: string): string[] => [
     author_id uuid,
     content text,
     attachments text,
+    attachment_keys list<text>,
     updated_at timestamp,
     is_deleted boolean,
     PRIMARY KEY ((conversation_id), created_at, message_id)

@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS ${ks}.messages_by_channel (
 }
 
 /** ALTER TABLE statements to add new columns to existing tables — all idempotent (IF NOT EXISTS not supported for ALTER, so we swallow errors). */
-async function migrateTableCql(client: ReturnType<typeof import("cassandra-driver").Client>): Promise<void> {
+async function migrateTableCql(client: { execute: (cql: string) => Promise<unknown> }): Promise<void> {
   const ks = env.MESSAGES_CASSANDRA_KEYSPACE;
   const alters = [
     `ALTER TABLE ${ks}.messages_by_channel ADD is_deleted boolean`,

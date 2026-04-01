@@ -22,6 +22,13 @@ const envSchema = z.object({
   CASSANDRA_READ_CONSISTENCY: z.enum(["one", "localOne", "quorum", "localQuorum"]).default("localOne"),
   /** Write consistency: one | localOne | quorum | localQuorum | all */
   CASSANDRA_WRITE_CONSISTENCY: z.enum(["one", "localOne", "quorum", "localQuorum", "all"]).default("localQuorum"),
+  /** MinIO / S3-compatible object storage */
+  MINIO_ENDPOINT: z.string().default("http://localhost:9000"),
+  MINIO_ACCESS_KEY: z.string().default("minioadmin"),
+  MINIO_SECRET_KEY: z.string().default("minioadmin"),
+  MINIO_BUCKET: z.string().default("discord-attachments"),
+  /** Base URL for serving attachments. Override with nginx proxy URL in production. */
+  ATTACHMENT_BASE_URL: z.string().default("http://localhost:9000/discord-attachments"),
 });
 
 export const env = envSchema.parse(process.env);
