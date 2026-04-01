@@ -5,6 +5,10 @@ import path from "path";
 // Workspace scripts run with `cwd` set to the package directory, so we
 // explicitly load the repo-root `.env`.
 dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
+// Optional override for staging/local switching: ENV_FILE=/path/to/.env.staging
+if (process.env.ENV_FILE) {
+  dotenv.config({ path: process.env.ENV_FILE, override: true });
+}
 
 const envSchema = z.object({
   PORT: z.string().default("3001"),

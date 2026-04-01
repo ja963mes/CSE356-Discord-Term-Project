@@ -151,6 +151,65 @@ Optional stub services for the wireframes:
 
 Note: the frontend includes fallback sample data, so it can render even if some stub services are not running.
 
+## Using a shared staging backend (frontend local, services remote)
+
+If `auth`, `communities`, `create-community`, and `realtime` are already running on the staging box (**`130.245.136.45`**), you can run only the frontend locally and proxy API calls to staging.
+
+- **Frontend → staging (recommended)**:
+
+```bash
+npm run dev:frontend:staging
+```
+
+This routes `/auth`, `/communities`, `/create-community`, and `/ws` (WebSocket) to the staging host by default.
+
+If you prefer, you can run Vite with explicit env vars:
+
+```bash
+VITE_API_ORIGIN=http://130.245.136.45 npm run dev:frontend
+```
+
+### Default local dev behavior (important)
+
+- `npm run dev` proxies APIs to **staging** (`130.245.136.45`).
+- `npm run dev:all` is the exception: it is **local-only** and forces the frontend to proxy APIs to **localhost** so the full local stack works end-to-end.
+
+- **Frontend → staging, but keep some services local**:
+
+```bash
+npm run dev:frontend:staging-lite
+```
+
+This proxies most routes to staging but keeps `/messages`, `/search`, and `/dms` pointing at localhost (so you can run those locally if desired).
+
+- **Hybrid dev (recommended when staging already runs auth/communities/create-community/realtime)**:
+
+```bash
+npm run dev:hybrid
+```
+
+This starts local `messages` (3003), `search` (3004), and `dms` (3007), plus the frontend (5173) configured to proxy auth/communities/create-community/ws to staging at `130.245.136.45`.
+
+Note: `messages` and `dms` require Cassandra. `dev:hybrid` will start the Cassandra container via `docker compose up cassandra`.
+
+- **Hybrid dev without Cassandra (search-only local)**:
+
+```bash
+npm run dev:hybrid:no-cassandra
+```
+
+This starts only `search` locally and proxies the rest to staging. Use this when you don’t want to run Cassandra on your machine.
+
+## Local vs staging environments (`ENV_FILE`)
+
+Backend services load the repo-root `.env` by default, but you can override it with:
+
+```bash
+ENV_FILE=.env.staging npm run dev:staging:core
+```
+
+This repo includes a template at `docs/env.staging.example`.
+
 ### Communities (guilds / servers)
 
 Users can **create** and **join** communities. A **community** is a named space with a **membership list** and **channels** (text/voice rows in the DB). A user may belong to many communities but may **create at most 100**.
