@@ -185,6 +185,16 @@ npm run dev:hybrid
 
 This starts local `messages` (3003), `search` (3004), and `dms` (3007), plus the frontend (5173) configured to proxy auth/communities/create-community/ws to staging at `130.245.136.45`.
 
+Note: `messages` and `dms` require Cassandra. `dev:hybrid` will start the Cassandra container via `docker compose up cassandra`.
+
+- **Hybrid dev without Cassandra (search-only local)**:
+
+```bash
+npm run dev:hybrid:no-cassandra
+```
+
+This starts only `search` locally and proxies the rest to staging. Use this when you don’t want to run Cassandra on your machine.
+
 ### Communities (guilds / servers)
 
 Users can **create** and **join** communities. A **community** is a named space with a **membership list** and **channels** (text/voice rows in the DB). A user may belong to many communities but may **create at most 100**.
