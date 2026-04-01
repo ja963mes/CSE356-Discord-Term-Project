@@ -172,7 +172,8 @@ app.post("/messages", requireAuth, async (req: Request, res: Response) => {
 
 /** Edit a message. Only the author can edit. :timeuuid is the created_at timeuuid. */
 app.patch("/messages/:channelId/:timeuuid", requireAuth, async (req: Request, res: Response) => {
-  const { channelId, timeuuid: timeuuidParam } = req.params;
+  const channelId = String(req.params.channelId);
+  const timeuuidParam = String(req.params.timeuuid);
   const contentRaw = typeof req.body?.content === "string" ? req.body.content : "";
   const content = contentRaw.trim();
 
@@ -235,7 +236,8 @@ app.patch("/messages/:channelId/:timeuuid", requireAuth, async (req: Request, re
 
 /** Delete a message. Only the author can delete. :timeuuid is the created_at timeuuid. */
 app.delete("/messages/:channelId/:timeuuid", requireAuth, async (req: Request, res: Response) => {
-  const { channelId, timeuuid: timeuuidParam } = req.params;
+  const channelId = String(req.params.channelId);
+  const timeuuidParam = String(req.params.timeuuid);
 
   if (!isUuid(channelId)) {
     res.status(400).json({ error: "invalid channelId" });
