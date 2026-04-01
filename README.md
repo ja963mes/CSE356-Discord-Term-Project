@@ -169,6 +169,11 @@ If you prefer, you can run Vite with explicit env vars:
 VITE_API_ORIGIN=http://130.245.136.45 npm run dev:frontend
 ```
 
+### Default local dev behavior (important)
+
+- `npm run dev` proxies APIs to **staging** (`130.245.136.45`).
+- `npm run dev:all` is the exception: it is **local-only** and forces the frontend to proxy APIs to **localhost** so the full local stack works end-to-end.
+
 - **Frontend → staging, but keep some services local**:
 
 ```bash
