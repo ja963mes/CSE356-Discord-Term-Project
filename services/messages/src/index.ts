@@ -3,7 +3,7 @@ import { initializeCassandra } from "./cassandra";
 import { initializeBucket } from "./minio";
 import { app } from "./app";
 
-const port = Number(env.PORT);
+const port = Number(env.MESSAGES_PORT ?? env.PORT);
 
 void (async () => {
   await Promise.all([
