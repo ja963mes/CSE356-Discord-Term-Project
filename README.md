@@ -177,6 +177,14 @@ npm run dev:frontend:staging-lite
 
 This proxies most routes to staging but keeps `/messages`, `/search`, and `/dms` pointing at localhost (so you can run those locally if desired).
 
+- **Hybrid dev (recommended when staging already runs auth/communities/create-community/realtime)**:
+
+```bash
+npm run dev:hybrid
+```
+
+This starts local `messages` (3003), `search` (3004), and `dms` (3007), plus the frontend (5173) configured to proxy auth/communities/create-community/ws to staging at `130.245.136.45`.
+
 ### Communities (guilds / servers)
 
 Users can **create** and **join** communities. A **community** is a named space with a **membership list** and **channels** (text/voice rows in the DB). A user may belong to many communities but may **create at most 100**.
