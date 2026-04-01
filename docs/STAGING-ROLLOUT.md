@@ -11,6 +11,17 @@ Services covered:
 - `realtime` (WebSocket fan-out/presence plumbing)
 - optional but recommended: `frontend` pointed at staging APIs
 
+## Current staging reality (this repo)
+
+At the moment, the staging box at **`130.245.136.45`** is typically used to run:
+- `auth` (3001)
+- `communities` (3002)
+- `create-community` (3006)
+- optionally `realtime` (3005)
+- data deps via Docker: Postgres (5433), Redis (6379), Cassandra (9042)
+
+If you are not running `messages` or `dms` on staging (common on low-memory boxes), keep those local.
+
 ## 1) Preconditions
 
 - A staging Postgres instance is reachable.
@@ -21,7 +32,7 @@ Services covered:
 - Node.js 18+ and npm are installed on the staging host.
 
 Keep this as staging-only. Do not reuse production secrets.
-When DNS is available, replace `130.245.136.72` with your staging domain in all URL variables.
+When DNS is available, replace `130.245.136.45` with your staging domain in all URL variables.
 
 ## 2) Required environment variables
 
@@ -31,12 +42,12 @@ At minimum, verify:
   - `DATABASE_URL`
   - `REDIS_URL`
   - `SESSION_SECRET`
-  - `STAGING_HOST=130.245.136.72`
-  - `FRONTEND_URL=http://130.245.136.72`
+  - `STAGING_HOST=130.245.136.45`
+  - `FRONTEND_URL=http://130.245.136.45`
 - **OAuth callback URLs (auth service)**
-  - `GOOGLE_CALLBACK_URL=http://130.245.136.72/auth/google/callback`
-  - `GITHUB_CALLBACK_URL=http://130.245.136.72/auth/github/callback`
-  - `OIDC_CALLBACK_URL=http://130.245.136.72/auth/oidc/callback`
+  - `GOOGLE_CALLBACK_URL=http://130.245.136.45/auth/google/callback`
+  - `GITHUB_CALLBACK_URL=http://130.245.136.45/auth/github/callback`
+  - `OIDC_CALLBACK_URL=http://130.245.136.45/auth/oidc/callback`
 - **Messages/realtime (Cassandra connectivity)**
   - `CASSANDRA_CONTACT_POINTS`
   - `CASSANDRA_PORT`
@@ -52,6 +63,16 @@ Replication/consistency knobs for messages:
 - `CASSANDRA_READ_CONSISTENCY`
 - `CASSANDRA_WRITE_CONSISTENCY`
 
+### ENV_FILE switching (local vs staging)
+
+Backend services load the repo-root `.env` by default. You can override with `ENV_FILE`:
+
+```bash
+ENV_FILE=/path/to/.env.staging npm run dev:auth
+```
+
+A staging template lives at `docs/env.staging.example`.
+
 ## 3) Bootstrap on staging host
 
 From the repository root on the server:
@@ -61,6 +82,8 @@ git pull
 npm install
 npm run build --workspace auth-service
 npm run build --workspace communities-service
+npm run build --workspace create-community-service
+# optional (only if you run these on staging)
 npm run build --workspace messages-service
 npm run build --workspace realtime-service
 # optional
@@ -93,11 +116,11 @@ sudo tee /etc/discord-staging.env >/dev/null <<'EOF'
 DATABASE_URL=...
 REDIS_URL=...
 SESSION_SECRET=...
-STAGING_HOST=130.245.136.72
-FRONTEND_URL=http://130.245.136.72
-GOOGLE_CALLBACK_URL=http://130.245.136.72/auth/google/callback
-GITHUB_CALLBACK_URL=http://130.245.136.72/auth/github/callback
-OIDC_CALLBACK_URL=http://130.245.136.72/auth/oidc/callback
+STAGING_HOST=130.245.136.45
+FRONTEND_URL=http://130.245.136.45
+GOOGLE_CALLBACK_URL=http://130.245.136.45/auth/google/callback
+GITHUB_CALLBACK_URL=http://130.245.136.45/auth/github/callback
+OIDC_CALLBACK_URL=http://130.245.136.45/auth/oidc/callback
 CASSANDRA_CONTACT_POINTS=127.0.0.1
 CASSANDRA_PORT=9042
 CASSANDRA_LOCAL_DATACENTER=datacenter1
@@ -159,6 +182,26 @@ RestartSec=3
 WantedBy=multi-user.target
 ```
 
+`discord-create-community.service`
+
+```ini
+[Unit]
+Description=Discord staging create-community service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/CSE356-Discord-Term-Project
+EnvironmentFile=/etc/discord-staging.env
+ExecStart=/usr/bin/npm run start --workspace create-community-service
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
 `discord-messages.service`
 
 ```ini
@@ -203,8 +246,10 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now discord-auth discord-communities discord-messages discord-realtime
-sudo systemctl status discord-auth discord-communities discord-messages discord-realtime
+sudo systemctl enable --now discord-auth discord-communities discord-create-community
+# optional
+sudo systemctl enable --now discord-messages discord-realtime
+sudo systemctl status discord-auth discord-communities discord-create-community --no-pager
 ```
 
 Follow logs:
@@ -212,18 +257,35 @@ Follow logs:
 ```bash
 sudo journalctl -u discord-auth -f
 sudo journalctl -u discord-communities -f
+sudo journalctl -u discord-create-community -f
 sudo journalctl -u discord-messages -f
 sudo journalctl -u discord-realtime -f
 ```
+
+### Using tmux instead of systemd (quick dev-only)
+
+If you’re using `tmux` for “keep running after SSH disconnect”, create one window per service and run:
+
+```bash
+npm run dev --workspace auth-service
+npm run dev --workspace communities-service
+npm run dev --workspace create-community-service
+```
+
+This does **not** restart on reboot; prefer systemd for stability.
 
 ## 5) Nginx reverse proxy
 
 In staging, avoid binding raw service ports publicly; prefer one ingress host with path routing.
 
-An example site config that mirrors `frontend/vite.config.ts` (including **`/search-communities` before `/search`**) and upgrades **`/ws`** to realtime is in **[`nginx-linode-staging.conf.example`](./nginx-linode-staging.conf.example)**.
+There are two example configs:
+
+- **Services-only staging (recommended for low-memory boxes):** [`nginx-linode-services-only.conf.example`](./nginx-linode-services-only.conf.example)  
+  Proxies `auth`, `communities`, `create-community`, and `realtime` only.
+- **Full proxy (includes messages/dms/search and optional Vite on-box):** [`nginx-linode-staging.conf.example`](./nginx-linode-staging.conf.example)
 
 - API paths proxy to `127.0.0.1:3001`–`3007` as in the README proxy table.
-- `server_name` currently uses `130.245.136.72` and can be replaced with your domain later.
+- `server_name` should be `130.245.136.45` (or your domain).
 - `/` defaults to the Vite dev server on `5173`; switch that block to `root` + `try_files` if you serve `frontend/dist` instead.
 - After TLS (certbot or another terminator), ensure `X-Forwarded-Proto` reflects HTTPS so OAuth redirects stay correct.
 
@@ -257,14 +319,16 @@ git pull
 npm install
 npm run build --workspace auth-service
 npm run build --workspace communities-service
+npm run build --workspace create-community-service
 npm run build --workspace messages-service
 npm run build --workspace realtime-service
 npm run db:migrate
 sudo systemctl restart discord-auth
 sudo systemctl restart discord-communities
+sudo systemctl restart discord-create-community
 sudo systemctl restart discord-messages
 sudo systemctl restart discord-realtime
-sudo systemctl status discord-auth discord-communities discord-messages discord-realtime --no-pager
+sudo systemctl status discord-auth discord-communities discord-create-community --no-pager
 ```
 
 If frontend is local Vite on the same host:
