@@ -2,6 +2,10 @@ import dotenv from "dotenv";
 import path from "path";
 
 dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
+// Optional override for staging/local switching: ENV_FILE=/path/to/.env.staging
+if (process.env.ENV_FILE) {
+  dotenv.config({ path: process.env.ENV_FILE, override: true });
+}
 
 if (!process.env.REDIS_URL) throw new Error("REDIS_URL is required");
 if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");

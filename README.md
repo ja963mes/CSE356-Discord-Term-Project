@@ -195,6 +195,16 @@ npm run dev:hybrid:no-cassandra
 
 This starts only `search` locally and proxies the rest to staging. Use this when you don’t want to run Cassandra on your machine.
 
+## Local vs staging environments (`ENV_FILE`)
+
+Backend services load the repo-root `.env` by default, but you can override it with:
+
+```bash
+ENV_FILE=.env.staging npm run dev:staging:core
+```
+
+This repo includes a template at `docs/env.staging.example`.
+
 ### Communities (guilds / servers)
 
 Users can **create** and **join** communities. A **community** is a named space with a **membership list** and **channels** (text/voice rows in the DB). A user may belong to many communities but may **create at most 100**.
