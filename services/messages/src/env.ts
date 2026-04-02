@@ -9,7 +9,7 @@ if (process.env.ENV_FILE) {
 }
 
 const envSchema = z.object({
-  PORT: z.string().default("3003"),
+  MESSAGES_PORT: z.string().default("3003"),
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string(),
   CASSANDRA_CONTACT_POINTS: z.string().default("127.0.0.1"),

@@ -8,6 +8,7 @@ import { requireAuth } from "./middleware/session";
 import { channels, channelMembers, communityMembers, users } from "./db/schema";
 import { cassandra, initializeCassandra, parseBeforeCursor } from "./cassandra";
 import { insertChannelMessage, listChannelMessages } from "./cassandraRepo";
+import { publishChannelEvent } from "./events";
 
 const app = express();
 app.use(express.json());
@@ -141,18 +142,33 @@ app.post("/messages", requireAuth, async (req: Request, res: Response) => {
     content,
   });
 
+  const ts = createdAt.getDate().toISOString();
+
+  void publishChannelEvent({
+    type: "channel:message:create",
+    channelId,
+    communityId: access.channel.community_id,
+    message: {
+      messageId,
+      authorId: userId,
+      authorUsername: author?.username ?? "unknown",
+      content,
+      createdAt: ts,
+    },
+  });
+
   setRoutingHeaders(res, channelId, access.channel.community_id);
   res.status(201).json({
     message: {
       id: messageId,
       author: author?.username ?? "unknown",
       content,
-      ts: createdAt.getDate().toISOString(),
+      ts,
     },
   });
 });
 
-const port = Number(env.PORT);
+const port = Number(env.MESSAGES_PORT);
 
 void (async () => {
   await initializeCassandra();

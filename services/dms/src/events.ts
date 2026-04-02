@@ -23,6 +23,7 @@ export type DmEvent =
       message: {
         messageId: string;
         authorId: string;
+        authorUsername: string;
         content: string;
         attachments: string[];
         createdAt: string;
@@ -36,6 +37,7 @@ export type DmEvent =
       message: {
         messageId: string;
         authorId: string;
+        authorUsername: string;
         content: string;
         createdAt: string;
         updatedAt: string;

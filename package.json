@@ -30,7 +30,8 @@
     "build:frontend": "npm run build --workspace frontend",
     "db:generate": "npm run db:generate --workspace auth-service",
     "db:migrate": "npm run db:migrate --workspace auth-service",
-    "dev:dms": "npm run dev --workspace dms-service"
+    "dev:dms": "npm run dev --workspace dms-service",
+    "es:backfill": "tsx scripts/es-backfill.ts"
   },
   "keywords": [],
   "author": "",

@@ -3,7 +3,7 @@ import { uuidv4, uuidv5 } from "../uuid";
 import { and, eq, inArray } from "drizzle-orm";
 import { cassandra } from "../db";
 import { pg } from "../db/pg";
-import { directConversations, dmParticipants } from "../db/pgSchema";
+import { directConversations, dmParticipants, users } from "../db/pgSchema";
 import { publishDmEvent } from "../events";
 
 /** Derives a deterministic conversation ID from two user IDs. Always the same regardless of argument order. */
@@ -45,6 +45,15 @@ export class DmError extends Error {
 }
 
 const nowDate = () => new Date();
+
+const lookupUsername = async (userId: string): Promise<string> => {
+  const [row] = await pg
+    .select({ username: users.username })
+    .from(users)
+    .where(eq(users.internal_id, userId))
+    .limit(1);
+  return row?.username ?? "unknown";
+};
 
 const mapMessage = (row: cassandraTypes.Row): MessageRecord => {
   const createdAtCol = row.get("created_at") as cassandraTypes.TimeUuid;
@@ -363,6 +372,7 @@ export const createMessage = async (params: {
   };
 
   const participantIds = await listParticipantIds(params.conversationId);
+  const authorUsername = await lookupUsername(params.authorId);
   await publishDmEvent({
     type: "dm:message:create",
     conversationId: params.conversationId,
@@ -370,6 +380,7 @@ export const createMessage = async (params: {
     message: {
       messageId,
       authorId: params.authorId,
+      authorUsername,
       content,
       attachments: params.attachments,
       createdAt: messageRecord.createdAt,
@@ -461,6 +472,7 @@ export const editMessage = async (params: {
   };
 
   const participantIds = await listParticipantIds(params.conversationId);
+  const editAuthorUsername = await lookupUsername(params.authorId);
   await publishDmEvent({
     type: "dm:message:edit",
     conversationId: params.conversationId,
@@ -468,6 +480,7 @@ export const editMessage = async (params: {
     message: {
       messageId: params.messageId,
       authorId: params.authorId,
+      authorUsername: editAuthorUsername,
       content: params.content,
       createdAt: messageRecord.createdAt,
       updatedAt: messageRecord.updatedAt!,
