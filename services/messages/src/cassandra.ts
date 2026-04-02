@@ -63,15 +63,36 @@ CREATE TABLE IF NOT EXISTS ${ks}.messages_by_channel (
   author_id uuid,
   author_username text,
   content text,
+  is_deleted boolean,
+  edited_at timestamp,
+  attachment_keys list<text>,
   PRIMARY KEY ((channel_id), created_at, message_id)
 ) WITH CLUSTERING ORDER BY (created_at DESC, message_id ASC);
 `.trim();
+}
+
+/** ALTER TABLE statements to add new columns to existing tables — all idempotent (IF NOT EXISTS not supported for ALTER, so we swallow errors). */
+async function migrateTableCql(client: { execute: (cql: string) => Promise<unknown> }): Promise<void> {
+  const ks = env.MESSAGES_CASSANDRA_KEYSPACE;
+  const alters = [
+    `ALTER TABLE ${ks}.messages_by_channel ADD is_deleted boolean`,
+    `ALTER TABLE ${ks}.messages_by_channel ADD edited_at timestamp`,
+    `ALTER TABLE ${ks}.messages_by_channel ADD attachment_keys list<text>`,
+  ];
+  for (const cql of alters) {
+    try {
+      await client.execute(cql);
+    } catch {
+      // Column already exists — safe to ignore
+    }
+  }
 }
 
 export async function initializeCassandra(): Promise<void> {
   await bootstrapClient.connect();
   await bootstrapClient.execute(buildKeyspaceCql());
   await bootstrapClient.execute(buildTableCql());
+  await migrateTableCql(bootstrapClient);
   await bootstrapClient.shutdown();
   await cassandra.connect();
 }
