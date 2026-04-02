@@ -18,6 +18,13 @@ const envSchema = z.object({
   CASSANDRA_KEYSPACE: z.string().default("dms"),
   CASSANDRA_USERNAME: z.string().optional(),
   CASSANDRA_PASSWORD: z.string().optional(),
+  /** MinIO / S3-compatible object storage */
+  MINIO_ENDPOINT: z.string().default("http://localhost:9000"),
+  MINIO_ACCESS_KEY: z.string().default("minioadmin"),
+  MINIO_SECRET_KEY: z.string().default("minioadmin"),
+  MINIO_BUCKET: z.string().default("discord-attachments"),
+  /** Base URL for serving attachments. Override with nginx proxy URL in production. */
+  ATTACHMENT_BASE_URL: z.string().default("http://localhost:9000/discord-attachments"),
 });
 
 export const env = envSchema.parse(process.env);
