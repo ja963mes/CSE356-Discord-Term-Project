@@ -5,6 +5,7 @@ import { cassandra } from "../db";
 import { pg } from "../db/pg";
 import { directConversations, dmParticipants } from "../db/pgSchema";
 import { publishDmEvent } from "../events";
+import { keyToUrl } from "../minio";
 
 /** Derives a deterministic conversation ID from two user IDs. Always the same regardless of argument order. */
 const oneToOneConversationId = (a: string, b: string): string =>
@@ -26,7 +27,8 @@ export type MessageRecord = {
   conversationId: string;
   authorId: string;
   content: string;
-  attachments: string[];
+  attachmentKeys: string[];
+  attachmentUrls: string[];
   /** ISO timestamp for display */
   createdAt: string;
   /** Cassandra clustering key — required for edit/delete */
@@ -49,13 +51,15 @@ const nowDate = () => new Date();
 const mapMessage = (row: cassandraTypes.Row): MessageRecord => {
   const createdAtCol = row.get("created_at") as cassandraTypes.TimeUuid;
   const deleted = row.get("is_deleted") === true;
+  const attachmentKeys: string[] = deleted ? [] : ((row.get("attachment_keys") as string[] | null) ?? []);
   return {
     messageId: row.get("message_id").toString(),
     conversationId: row.get("conversation_id").toString(),
     authorId: row.get("author_id").toString(),
     content: deleted ? "" : row.get("content"),
-    attachments: deleted ? [] : JSON.parse(row.get("attachments") ?? "[]"),
-    createdAt: createdAtCol.getDate().toISOString(),
+    attachmentKeys,
+    attachmentUrls: attachmentKeys.map(keyToUrl),
+    createdAt: new Date(createdAtCol.getDate().getTime()).toISOString(),
     timeuuid: createdAtCol.toString(),
     updatedAt: (row.get("updated_at") as Date | null)?.toISOString() ?? null,
     deleted,
@@ -313,7 +317,7 @@ export const createMessage = async (params: {
   conversationId: string;
   authorId: string;
   content: string;
-  attachments: string[];
+  attachmentKeys: string[];
 }): Promise<MessageRecord> => {
   const conversation = await getConversation(params.conversationId);
   if (!conversation) {
@@ -329,12 +333,12 @@ export const createMessage = async (params: {
   if (!content) {
     throw new DmError(400, "Message content cannot be empty");
   }
-  if (params.attachments.length > 4) {
+  if (params.attachmentKeys.length > 4) {
     throw new DmError(400, "A message can have at most 4 attachments");
   }
 
   await cassandra.execute(
-    `INSERT INTO messages_by_conversation (conversation_id, created_at, message_id, author_id, content, attachments, is_deleted)
+    `INSERT INTO messages_by_conversation (conversation_id, created_at, message_id, author_id, content, attachment_keys, is_deleted)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
     [
       toUuid(params.conversationId),
@@ -342,7 +346,7 @@ export const createMessage = async (params: {
       toUuid(messageId),
       toUuid(params.authorId),
       content,
-      JSON.stringify(params.attachments),
+      params.attachmentKeys,
       false,
     ],
     { prepare: true }
@@ -350,13 +354,15 @@ export const createMessage = async (params: {
 
   await touchConversation(params.conversationId);
 
+  const attachmentUrls = params.attachmentKeys.map(keyToUrl);
   const messageRecord: MessageRecord = {
     messageId,
     conversationId: params.conversationId,
     authorId: params.authorId,
     content,
-    attachments: params.attachments,
-    createdAt: createdAt.getDate().toISOString(),
+    attachmentKeys: params.attachmentKeys,
+    attachmentUrls,
+    createdAt: new Date(createdAt.getDate().getTime()).toISOString(),
     timeuuid: createdAt.toString(),
     updatedAt: null,
     deleted: false,
@@ -371,7 +377,7 @@ export const createMessage = async (params: {
       messageId,
       authorId: params.authorId,
       content,
-      attachments: params.attachments,
+      attachments: attachmentUrls,
       createdAt: messageRecord.createdAt,
       timeuuid: messageRecord.timeuuid,
     },
@@ -391,7 +397,7 @@ export const listMessages = async (params: {
   }
 
   const queryParts = [
-    `SELECT conversation_id, created_at, message_id, author_id, content, attachments, updated_at, is_deleted`,
+    `SELECT conversation_id, created_at, message_id, author_id, content, attachment_keys, updated_at, is_deleted`,
     `FROM messages_by_conversation`,
     `WHERE conversation_id = ?`,
   ];
@@ -447,14 +453,15 @@ export const editMessage = async (params: {
     { prepare: true }
   );
 
-  const attachments = JSON.parse(result.first().get("attachments") ?? "[]");
+  const attachmentKeys: string[] = (result.first().get("attachment_keys") as string[] | null) ?? [];
   const messageRecord: MessageRecord = {
     messageId: params.messageId,
     conversationId: params.conversationId,
     authorId: params.authorId,
     content: params.content,
-    attachments,
-    createdAt: toTimeUuid(params.timeuuid).getDate().toISOString(),
+    attachmentKeys,
+    attachmentUrls: attachmentKeys.map(keyToUrl),
+    createdAt: new Date(toTimeUuid(params.timeuuid).getDate().getTime()).toISOString(),
     timeuuid: params.timeuuid,
     updatedAt: updatedAt.toISOString(),
     deleted: false,

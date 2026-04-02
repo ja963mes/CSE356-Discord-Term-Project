@@ -46,11 +46,15 @@ export const initializeCassandra = async (): Promise<void> => {
   for (const cql of schemaStatements) {
     await cassandra.execute(cql);
   }
-  try {
-    await cassandra.execute(
-      `ALTER TABLE ${env.CASSANDRA_KEYSPACE}.messages_by_conversation ADD is_deleted boolean`
-    );
-  } catch {
-    // Column already present on newer schemas
+  const migrations = [
+    `ALTER TABLE ${env.CASSANDRA_KEYSPACE}.messages_by_conversation ADD is_deleted boolean`,
+    `ALTER TABLE ${env.CASSANDRA_KEYSPACE}.messages_by_conversation ADD attachment_keys list<text>`,
+  ];
+  for (const cql of migrations) {
+    try {
+      await cassandra.execute(cql);
+    } catch {
+      // Column already present — safe to ignore
+    }
   }
 };
