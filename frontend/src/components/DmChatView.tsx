@@ -126,7 +126,7 @@ export default function DmChatView({ conversation, currentUserId, displayNameByU
       await deleteMessage(conversationId, msg.messageId, msg.timeuuid);
       setMessages((prev) =>
         prev.map((m) =>
-          m.messageId === msg.messageId ? { ...m, deleted: true, content: "", attachments: [] } : m
+          m.messageId === msg.messageId ? { ...m, deleted: true, content: "", attachmentKeys: [], attachmentUrls: [] } : m
         )
       );
     } catch {
@@ -147,7 +147,8 @@ export default function DmChatView({ conversation, currentUserId, displayNameByU
         conversationId: String(e.conversationId),
         authorId: String(raw.authorId),
         content: String(raw.content ?? ""),
-        attachments: Array.isArray(raw.attachments) ? (raw.attachments as string[]) : [],
+        attachmentKeys: Array.isArray(raw.attachmentKeys) ? (raw.attachmentKeys as string[]) : [],
+        attachmentUrls: Array.isArray(raw.attachmentUrls) ? (raw.attachmentUrls as string[]) : [],
         createdAt: String(raw.createdAt ?? ""),
         timeuuid: String(raw.timeuuid ?? ""),
         updatedAt: null,
@@ -179,7 +180,7 @@ export default function DmChatView({ conversation, currentUserId, displayNameByU
       const deletedId = String(e.messageId ?? "");
       setMessages((prev) =>
         prev.map((m) =>
-          m.messageId === deletedId ? { ...m, deleted: true, content: "", attachments: [] } : m
+          m.messageId === deletedId ? { ...m, deleted: true, content: "", attachmentKeys: [], attachmentUrls: [] } : m
         )
       );
     }
@@ -401,6 +402,19 @@ export default function DmChatView({ conversation, currentUserId, displayNameByU
                     <p className="text-sm text-on-surface mt-1 whitespace-pre-wrap break-words">{m.content}</p>
                     {m.updatedAt && (
                       <p className="text-[10px] text-on-surface-variant italic mt-1">edited</p>
+                    )}
+                    {m.attachmentUrls && m.attachmentUrls.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {m.attachmentUrls.map((url, i) => (
+                          <a key={i} href={url} target="_blank" rel="noopener noreferrer">
+                            <img
+                              src={url}
+                              alt={`attachment ${i + 1}`}
+                              className="max-h-48 max-w-xs rounded-lg object-cover cursor-pointer hover:opacity-90"
+                            />
+                          </a>
+                        ))}
+                      </div>
                     )}
                   </>
                 )}
