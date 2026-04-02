@@ -8,7 +8,18 @@ export type Channel = {
   joined?: boolean;
 };
 
-export type Message = { id: string; author: string; content: string; ts: string };
+export type Message = {
+  id: string;           // messageId from backend
+  timeuuid: string;
+  authorId: string;
+  author: string;       // authorUsername
+  content: string;
+  createdAt: string;
+  editedAt: string | null;
+  attachmentKeys: string[];
+  attachmentUrls: string[];
+  deleted?: boolean;
+};
 
 export type SearchResult = { id: string; type: string; title: string; snippet: string; score: number };
 
@@ -212,42 +223,24 @@ const sampleMembers: CommunityMember[] = [
   },
 ];
 
+function makeSample(id: string, author: string, content: string): Message {
+  return { id, timeuuid: id, authorId: "sample", author, content, createdAt: new Date().toISOString(), editedAt: null, attachmentKeys: [], attachmentUrls: [] };
+}
+
 const sampleMessagesByChannel: Record<string, Message[]> = {
   "general-chat": [
-    {
-      id: "m1",
-      author: "Neo_Architect",
-      content: "Welcome to the sanctuary. Wireframes are live.",
-      ts: new Date().toISOString(),
-    },
-    {
-      id: "m2",
-      author: "Guest",
-      content: "If the stub services aren't running, the UI should still look right.",
-      ts: new Date().toISOString(),
-    },
+    makeSample("m1", "Neo_Architect", "Welcome to the sanctuary. Wireframes are live."),
+    makeSample("m2", "Guest", "If the stub services aren't running, the UI should still look right."),
   ],
   "design-critique": [
-    {
-      id: "m3",
-      author: "Neo_Architect",
-      content: "Next: refine spacing scale and typography hierarchy.",
-      ts: new Date().toISOString(),
-    },
+    makeSample("m3", "Neo_Architect", "Next: refine spacing scale and typography hierarchy."),
   ],
 };
 
 function fallbackMessages(channelId: string): Message[] {
-  return (
-    sampleMessagesByChannel[channelId] ?? [
-      {
-        id: "m-fallback-1",
-        author: "Neo_Architect",
-        content: "Sample message data (stub unavailable).",
-        ts: new Date().toISOString(),
-      },
-    ]
-  );
+  return sampleMessagesByChannel[channelId] ?? [
+    makeSample("m-fallback-1", "Neo_Architect", "Sample message data (stub unavailable)."),
+  ];
 }
 
 /**
@@ -270,27 +263,28 @@ function looksLikeChannelUuid(channelId: string): boolean {
 }
 
 /** Load channel messages (session required for real channel UUIDs). */
-export async function getMessages(channelId: string): Promise<Message[]> {
+export async function getMessages(channelId: string, params?: { before?: string; limit?: number }): Promise<Message[]> {
   try {
-    const res = await fetch(`/messages?channelId=${encodeURIComponent(channelId)}`, {
-      credentials: "include",
-    });
-    if (res.status === 401 || res.status === 403) {
-      return [];
-    }
+    const query = new URLSearchParams({ channelId });
+    if (params?.before) query.set("before", params.before);
+    if (params?.limit) query.set("limit", String(params.limit));
+    const res = await fetch(`/messages?${query.toString()}`, { credentials: "include" });
+    if (res.status === 401 || res.status === 403) return [];
     if (!res.ok) throw new Error("Failed to load messages");
     const body = (await res.json()) as { messages: Message[] };
     return body.messages;
   } catch {
-    if (!looksLikeChannelUuid(channelId)) {
-      return fallbackMessages(channelId);
-    }
+    if (!looksLikeChannelUuid(channelId)) return fallbackMessages(channelId);
     return [];
   }
 }
 
 /** Post to a guild text channel (session + channel_members required). */
-export async function postChannelMessage(channelId: string, content: string): Promise<Message | null> {
+export async function postChannelMessage(
+  channelId: string,
+  content: string,
+  attachmentKeys: string[] = []
+): Promise<Message | null> {
   const text = content.trim();
   if (!text) return null;
   try {
@@ -298,7 +292,7 @@ export async function postChannelMessage(channelId: string, content: string): Pr
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ channelId, content: text }),
+      body: JSON.stringify({ channelId, content: text, attachmentKeys }),
     });
     if (res.status === 201) {
       const data = (await res.json()) as { message: Message };
@@ -308,6 +302,67 @@ export async function postChannelMessage(channelId: string, content: string): Pr
   } catch {
     return null;
   }
+}
+
+/** Edit own channel message. */
+export async function editChannelMessage(
+  channelId: string,
+  timeuuid: string,
+  content: string
+): Promise<Message | null> {
+  try {
+    const res = await fetch(`/messages/${encodeURIComponent(channelId)}/${encodeURIComponent(timeuuid)}`, {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { messageId: string; timeuuid: string; content: string; editedAt: string };
+    return { id: data.messageId, timeuuid: data.timeuuid, authorId: "", author: "", content: data.content, createdAt: "", editedAt: data.editedAt, attachmentKeys: [], attachmentUrls: [] };
+  } catch {
+    return null;
+  }
+}
+
+/** Delete own channel message. */
+export async function deleteChannelMessage(channelId: string, timeuuid: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/messages/${encodeURIComponent(channelId)}/${encodeURIComponent(timeuuid)}`, {
+      method: "DELETE",
+      credentials: "include",
+    });
+    return res.status === 204;
+  } catch {
+    return false;
+  }
+}
+
+export type PresignedFile = { key: string; uploadUrl: string };
+
+/** Get presigned PUT URLs for direct MinIO uploads. */
+export async function presignAttachments(
+  files: { filename: string; contentType: string }[]
+): Promise<PresignedFile[]> {
+  const res = await fetch("/attachments/presign", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ files }),
+  });
+  if (!res.ok) throw new Error("Failed to get presigned URLs");
+  const data = (await res.json()) as { files: PresignedFile[] };
+  return data.files;
+}
+
+/** Upload a file directly to MinIO using a presigned PUT URL. */
+export async function uploadToMinIO(uploadUrl: string, file: File): Promise<void> {
+  const res = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: { "Content-Type": file.type },
+    body: file,
+  });
+  if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
 }
 
 export function getSampleChannels(): Channel[] {

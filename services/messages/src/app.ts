@@ -182,14 +182,17 @@ app.post("/messages", requireAuth, async (req: Request, res: Response) => {
   });
 
   const message = {
+    id: messageId,
     messageId,
     timeuuid: createdAt.toString(),
     authorId: userId,
+    author: authorUsername,
     authorUsername,
     content,
     attachmentKeys,
     attachmentUrls: attachmentKeys.map(keyToUrl),
     createdAt: timeuuidToDate(createdAt),
+    editedAt: null,
   };
 
   await publishChannelEvent({
