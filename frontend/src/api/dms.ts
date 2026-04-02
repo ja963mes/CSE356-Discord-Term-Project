@@ -14,7 +14,8 @@ export type DmMessage = {
   conversationId: string;
   authorId: string;
   content: string;
-  attachments: string[];
+  attachmentKeys: string[];
+  attachmentUrls: string[];
   createdAt: string;
   /** Cassandra clustering key — required for edit/delete */
   timeuuid: string;
@@ -67,12 +68,12 @@ export async function leaveConversation(conversationId: string): Promise<{ delet
 export async function sendMessage(
   conversationId: string,
   content: string,
-  attachments: string[] = []
+  attachmentKeys: string[] = []
 ): Promise<DmMessage> {
   const data = await fetchApi<{ message: DmMessage }>(`/dms/${conversationId}/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content, attachments }),
+    body: JSON.stringify({ content, attachmentKeys }),
   });
   return data.message;
 }

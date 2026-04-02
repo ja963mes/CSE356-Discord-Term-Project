@@ -3,19 +3,14 @@ import { useNavigate } from "react-router-dom";
 import {
   Channel,
   Community,
-  Message,
-  SearchResult,
   deleteChannel,
   getCommunityChannels,
   getCommunityMembers,
-  getMessages,
-  postChannelMessage,
   getSampleChannels,
   getSampleMembers,
   joinChannel,
   leaveCommunity,
   listCommunities,
-  search,
 } from "../api/discord";
 import { getMe, getDmUsers, logout, Me, DmUser } from "../api/auth";
 import { listConversations } from "../api/dms";
@@ -28,6 +23,7 @@ import UserPresence from "../components/UserPresence";
 import ProfileSettingsModal from "../components/ProfileSettingsModal";
 import DmList from "../components/DmList";
 import DmChatView from "../components/DmChatView";
+import ChannelChatView from "../components/ChannelChatView";
 import CreateDmModal from "../components/CreateDmModal";
 import {
   CreateChannelModal,
@@ -67,11 +63,16 @@ export default function ChatPage() {
   } = useDmEvents(me);
   const { members, setMembers, channels, setChannels, handleCommunityMessage } = useCommunityEvents();
 
+  const [latestChannelEvent, setLatestChannelEvent] = useState<IncomingMessage | null>(null);
+
   const handleMessage = useCallback((msg: IncomingMessage) => {
     console.log("[ws] incoming:", msg);
     handlePresenceMessage(msg);
     handleDmMessage(msg);
     handleCommunityMessage(msg, selectedCommunityIdRef.current);
+    if (typeof msg.type === "string" && msg.type.startsWith("channel:")) {
+      setLatestChannelEvent(msg);
+    }
   }, [handlePresenceMessage, handleDmMessage, handleCommunityMessage]);
 
   useEffect(() => {
@@ -93,12 +94,6 @@ export default function ChatPage() {
   useActivityDetection(send);
 
   const [selectedChannelId, setSelectedChannelId] = useState<string>("general-chat");
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [messageDraft, setMessageDraft] = useState("");
-  const [sendBusy, setSendBusy] = useState(false);
-
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
 
   const [guildMenuOpen, setGuildMenuOpen] = useState(false);
   const [leaveBusy, setLeaveBusy] = useState(false);
@@ -176,19 +171,6 @@ export default function ChatPage() {
     return selectedChannel.joined !== false;
   }, [usingLiveCommunities, selectedChannel]);
 
-  useEffect(() => {
-    setMessageDraft("");
-  }, [selectedChannelId]);
-
-  useEffect(() => {
-    if (!channelAccessible) {
-      setMessages([]);
-      return;
-    }
-    getMessages(selectedChannelId)
-      .then(setMessages)
-      .catch(() => setMessages([]));
-  }, [selectedChannelId, channelAccessible]);
 
   const myGuildRole = useMemo(() => {
     if (!me || !usingLiveCommunities) return null;
@@ -212,18 +194,6 @@ export default function ChatPage() {
   }, [me, dmUsers]);
 
 
-  async function onSearchSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!searchQuery.trim()) return;
-    try {
-      const results = await search(searchQuery.trim());
-      setSearchResults(results);
-    } catch {
-      setSearchResults([]);
-    }
-  }
-
-
   function roleLabel(role: string) {
     if (role === "owner") return "Owner";
     if (role === "admin") return "Admin";
@@ -235,23 +205,6 @@ export default function ChatPage() {
     if (!selectedCommunityId) return;
     const r = await joinChannel(selectedCommunityId, channelId);
     if (r.ok) setGuildDataVersion((v) => v + 1);
-  }
-
-  async function handleSendChannelMessage(e?: React.FormEvent) {
-    e?.preventDefault();
-    if (!usingLiveCommunities || !channelAccessible || !selectedChannelId || sendBusy) return;
-    const text = messageDraft.trim();
-    if (!text) return;
-    setSendBusy(true);
-    try {
-      const msg = await postChannelMessage(selectedChannelId, text);
-      if (msg) {
-        setMessages((prev) => [...prev, msg]);
-        setMessageDraft("");
-      }
-    } finally {
-      setSendBusy(false);
-    }
   }
 
   async function handleDeleteChannel(channelId: string) {
@@ -592,139 +545,43 @@ export default function ChatPage() {
               onConversationLeft(id);
             }}
           />
+        ) : channelAccessible && usingLiveCommunities && selectedChannel ? (
+          <ChannelChatView
+            channelId={selectedChannelId}
+            channelName={selectedChannel.name}
+            isPrivate={selectedChannel.is_private}
+            currentUserId={me?.internal_id ?? ""}
+            currentUsername={me?.username ?? ""}
+            wsEvent={latestChannelEvent}
+          />
         ) : (
-        <section className="flex-1 bg-surface-container flex flex-col relative min-w-0">
-          {/* TopNavBar */}
-          <header className="h-16 flex items-center justify-between px-6 w-full bg-[#171a1f]/60 backdrop-blur-xl shadow-sm z-10">
-            <div className="flex items-center gap-3 min-w-0">
+          <section className="flex-1 bg-surface-container flex flex-col relative min-w-0">
+            <header className="h-16 flex items-center px-6 gap-3 bg-[#171a1f]/60 backdrop-blur-xl shadow-sm z-10">
               <span className="material-symbols-outlined text-on-surface-variant shrink-0">
                 {selectedChannel?.is_private ? "lock" : "tag"}
               </span>
               <h1 className="text-[#f6f6fc] font-headline font-bold text-lg tracking-tight truncate">
                 {selectedChannel?.name ?? "general-chat"}
               </h1>
-              {selectedChannel?.is_private ? (
-                <span className="text-[10px] font-bold uppercase text-on-surface-variant shrink-0">Private</span>
-              ) : null}
-            </div>
-
-            <div className="flex items-center gap-5">
-              <nav className="hidden md:flex items-center gap-4 text-sm font-medium">
-                <a className="text-[#9fa7ff] font-bold" href="#">Threads</a>
-                <a className="text-gray-400 hover:text-[#f6f6fc] transition-colors" href="#">Pins</a>
-              </nav>
-
-              <div className="h-6 w-[1px] bg-outline-variant/20" />
-
-              <div className="flex items-center gap-3 text-on-surface-variant">
-                <span className="material-symbols-outlined hover:text-[#f6f6fc] cursor-pointer">notifications</span>
-                <span className="material-symbols-outlined hover:text-[#f6f6fc] cursor-pointer">push_pin</span>
-                <span className="material-symbols-outlined hover:text-[#f6f6fc] cursor-pointer">group</span>
-              </div>
-
-              <form className="relative ml-2" onSubmit={onSearchSubmit}>
-                <span className="material-symbols-outlined absolute left-2 top-1/2 -translate-y-1/2 text-sm">search</span>
-                <input
-                  className="bg-surface-container-lowest border-none text-xs rounded-lg pl-8 pr-4 py-1.5 w-36 focus:ring-1 focus:ring-primary focus:w-48 transition-all"
-                  placeholder="Search"
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
-              </form>
-            </div>
-          </header>
-
-          {!channelAccessible && selectedChannel && usingLiveCommunities ? (
-            <div className="border-b border-amber-500/25 bg-amber-500/10 px-6 py-4 flex flex-col gap-2">
-              <p className="text-sm text-on-surface">
-                You are not a member of this channel yet. Join to read and send messages.
-              </p>
-              <button
-                type="button"
-                className="self-start rounded-lg bg-[#5865F2] hover:bg-[#4752c4] text-white text-sm font-semibold px-4 py-2"
-                onClick={() => void handleJoinChannel(selectedChannel.id)}
-              >
-                Join channel
-              </button>
-            </div>
-          ) : null}
-
-          {/* Chat History */}
-          <div className="flex-1 overflow-y-auto px-6 py-4 flex flex-col gap-6 scroll-smooth">
-            {!channelAccessible && usingLiveCommunities ? (
-              <div className="py-10 text-on-surface-variant text-sm">Message history is hidden until you join.</div>
-            ) : null}
-
-            {channelAccessible && messages.length === 0 ? (
-              <div className="py-10">
-                <p className="text-on-surface-variant text-sm">
-                  Welcome to #{selectedChannel?.name ?? "channel"}. Send a message to start the conversation.
+            </header>
+            {!channelAccessible && selectedChannel && usingLiveCommunities ? (
+              <div className="border-b border-amber-500/25 bg-amber-500/10 px-6 py-4 flex flex-col gap-2">
+                <p className="text-sm text-on-surface">
+                  You are not a member of this channel yet. Join to read and send messages.
                 </p>
+                <button
+                  type="button"
+                  className="self-start rounded-lg bg-[#5865F2] hover:bg-[#4752c4] text-white text-sm font-semibold px-4 py-2"
+                  onClick={() => void handleJoinChannel(selectedChannel.id)}
+                >
+                  Join channel
+                </button>
               </div>
             ) : null}
-
-            {channelAccessible ? messages.map((m) => (
-              <div key={m.id} className="flex gap-3 items-start">
-                <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant text-xs">
-                  {m.author.slice(0, 1).toUpperCase()}
-                </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-bold text-on-surface">{m.author}</p>
-                    <span className="text-[10px] text-on-surface-variant">
-                      {new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                    </span>
-                  </div>
-                  <p className="text-sm text-on-surface mt-1">{m.content}</p>
-                </div>
-              </div>
-            )) : null}
-
-            {searchResults.length > 0 ? (
-              <div className="mt-4 p-3 rounded-lg bg-surface-container-highest">
-                <p className="text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-2">
-                  Search results
-                </p>
-                <div className="flex flex-col gap-2">
-                  {searchResults.map((r) => (
-                    <div key={r.id} className="text-sm text-on-surface">
-                      <p className="font-semibold">{r.title}</p>
-                      <p className="text-on-surface-variant">{r.snippet}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-          </div>
-
-          {/* Message Composer */}
-          <form className="p-4 border-t border-outline-variant/20" onSubmit={handleSendChannelMessage}>
-            <div className="flex items-center gap-3">
-              <input
-                className="flex-1 bg-surface-container-lowest border-none rounded-lg px-4 py-2 text-sm text-on-surface placeholder:text-on-surface-variant focus:ring-1 focus:ring-primary disabled:opacity-50"
-                placeholder={
-                  !usingLiveCommunities
-                    ? "Connect to a server to send messages"
-                    : !channelAccessible
-                      ? "Join the channel to send messages"
-                      : `Message #${selectedChannel?.name ?? "general-chat"}`
-                }
-                disabled={!usingLiveCommunities || (!channelAccessible && usingLiveCommunities)}
-                value={messageDraft}
-                onChange={(e) => setMessageDraft(e.target.value)}
-              />
-              <button
-                type="submit"
-                className="material-symbols-outlined text-on-surface-variant hover:text-on-surface cursor-pointer disabled:opacity-40"
-                disabled={sendBusy || !usingLiveCommunities || (!channelAccessible && usingLiveCommunities)}
-                aria-label="Send message"
-              >
-                send
-              </button>
+            <div className="flex-1 flex items-center justify-center text-on-surface-variant text-sm">
+              {!usingLiveCommunities ? "Select or join a community to start chatting." : "Select a channel."}
             </div>
-          </form>
-        </section>
+          </section>
         )}
 
         {/* COLUMN 4: Members + presence (only in server/channel view) */}
