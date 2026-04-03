@@ -59,6 +59,19 @@ export async function indexMessage(doc: MessageDoc): Promise<void> {
   });
 }
 
+export async function updateContent(messageId: string, content: string, editedAt: string): Promise<void> {
+  try {
+    await esClient.update({
+      index: INDEX,
+      id: messageId,
+      doc: { content, updated_at: editedAt },
+    });
+  } catch (err: any) {
+    if (err?.meta?.statusCode === 404) return;
+    throw err;
+  }
+}
+
 export async function markDeleted(messageId: string): Promise<void> {
   try {
     await esClient.update({

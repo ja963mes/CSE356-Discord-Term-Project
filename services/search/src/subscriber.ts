@@ -1,6 +1,6 @@
 import Redis from "ioredis";
 import { env } from "./env";
-import { indexMessage, markDeleted, deleteByScope } from "./elasticsearch";
+import { indexMessage, updateContent, markDeleted, deleteByScope } from "./elasticsearch";
 import { db } from "./db";
 import { users, channels } from "./db/schema";
 import { eq } from "drizzle-orm";
@@ -46,21 +46,33 @@ async function lookupChannelName(channelId: string): Promise<string> {
 }
 
 async function handleChannelEvent(data: any): Promise<void> {
-  if (data.type === "channel:message:create") {
-    const msg = data.message;
-    const channelName = await lookupChannelName(data.channelId);
-    await indexMessage({
-      message_id: msg.messageId,
-      scope_type: "channel",
-      scope_id: data.channelId,
-      community_id: data.communityId,
-      channel_name: channelName,
-      author_id: msg.authorId,
-      author_username: msg.authorUsername,
-      content: msg.content,
-      created_at: msg.createdAt,
-      is_deleted: false,
-    });
+  switch (data.type) {
+    case "channel:message:create": {
+      const msg = data.message;
+      const channelName = await lookupChannelName(data.channelId);
+      await indexMessage({
+        message_id: msg.messageId,
+        scope_type: "channel",
+        scope_id: data.channelId,
+        community_id: data.communityId,
+        channel_name: channelName,
+        author_id: msg.authorId,
+        author_username: msg.authorUsername,
+        content: msg.content,
+        created_at: msg.createdAt,
+        is_deleted: false,
+      });
+      break;
+    }
+    case "channel:message:edit": {
+      const msg = data.message;
+      await updateContent(msg.messageId, msg.content, msg.editedAt);
+      break;
+    }
+    case "channel:message:delete": {
+      await markDeleted(data.messageId);
+      break;
+    }
   }
 }
 
