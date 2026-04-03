@@ -550,6 +550,7 @@ export default function ChatPage() {
             channelId={selectedChannelId}
             channelName={selectedChannel.name}
             isPrivate={selectedChannel.is_private}
+            communityId={selectedCommunityId ?? undefined}
             currentUserId={me?.internal_id ?? ""}
             currentUsername={me?.username ?? ""}
             wsEvent={latestChannelEvent}

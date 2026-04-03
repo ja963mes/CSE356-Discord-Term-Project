@@ -10,6 +10,7 @@ import {
   leaveConversation,
 } from "../api/dms";
 import { DmUser, getDmUsers } from "../api/auth";
+import SearchPanel from "./SearchPanel";
 
 import { IncomingMessage } from "../hooks/useWebSocket";
 
@@ -40,6 +41,7 @@ export default function DmChatView({ conversation, currentUserId, displayNameByU
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviting, setInviting] = useState(false);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -237,6 +239,19 @@ export default function DmChatView({ conversation, currentUserId, displayNameByU
           </h1>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowSearch((v) => !v)}
+            className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors ${
+              showSearch
+                ? "text-primary bg-primary/10"
+                : "text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high"
+            }`}
+            title="Search messages"
+          >
+            <span className="material-symbols-outlined text-[18px]">search</span>
+            <span className="hidden sm:inline">Search</span>
+          </button>
           {conversation.conversationType === "group" && (
             <button
               type="button"
@@ -259,6 +274,26 @@ export default function DmChatView({ conversation, currentUserId, displayNameByU
           </button>
         </div>
       </header>
+
+      {/* Search overlay */}
+      {showSearch && (
+        <SearchPanel
+          scope="dm"
+          conversationId={conversationId}
+          displayNames={displayNameByUserId}
+          onJump={(result) => {
+            setShowSearch(false);
+            // Scroll to message if it's already loaded
+            const el = document.getElementById(`msg-${result.message_id}`);
+            if (el) {
+              el.scrollIntoView({ behavior: "smooth", block: "center" });
+              el.classList.add("ring-1", "ring-primary/50");
+              setTimeout(() => el.classList.remove("ring-1", "ring-primary/50"), 2000);
+            }
+          }}
+          onClose={() => setShowSearch(false)}
+        />
+      )}
 
       {/* Invite panel */}
       {showInvite && (
@@ -368,7 +403,7 @@ export default function DmChatView({ conversation, currentUserId, displayNameByU
           const authorName = authorLabel(m.authorId, displayNameByUserId);
 
           return (
-            <div key={m.messageId} className="flex gap-3 items-start group">
+            <div key={m.messageId} id={`msg-${m.messageId}`} className="flex gap-3 items-start group rounded-lg transition-all">
               <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant text-xs flex-shrink-0">
                 {authorName.slice(0, 2).toUpperCase()}
               </div>

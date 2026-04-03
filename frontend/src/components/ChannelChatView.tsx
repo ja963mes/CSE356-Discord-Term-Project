@@ -9,11 +9,13 @@ import {
   uploadToMinIO,
 } from "../api/discord";
 import { IncomingMessage } from "../hooks/useWebSocket";
+import SearchPanel from "./SearchPanel";
 
 interface Props {
   channelId: string;
   channelName: string;
   isPrivate?: boolean;
+  communityId?: string;
   currentUserId: string;
   currentUsername: string;
   wsEvent?: IncomingMessage | null;
@@ -26,6 +28,7 @@ export default function ChannelChatView({
   channelId,
   channelName,
   isPrivate,
+  communityId,
   currentUserId,
   currentUsername,
   wsEvent,
@@ -38,6 +41,7 @@ export default function ChannelChatView({
   const [sending, setSending] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
+  const [showSearch, setShowSearch] = useState(false);
 
   // Attachment state
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
@@ -218,7 +222,40 @@ export default function ChannelChatView({
         {isPrivate && (
           <span className="text-[10px] font-bold uppercase text-on-surface-variant shrink-0">Private</span>
         )}
+        <div className="ml-auto">
+          <button
+            type="button"
+            onClick={() => setShowSearch((v) => !v)}
+            className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors ${
+              showSearch
+                ? "text-primary bg-primary/10"
+                : "text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high"
+            }`}
+            title="Search messages"
+          >
+            <span className="material-symbols-outlined text-[18px]">search</span>
+            <span className="hidden sm:inline">Search</span>
+          </button>
+        </div>
       </header>
+
+      {/* Search overlay */}
+      {showSearch && (
+        <SearchPanel
+          scope="community"
+          communityId={communityId}
+          onJump={(result) => {
+            setShowSearch(false);
+            const el = document.getElementById(`msg-${result.message_id}`);
+            if (el) {
+              el.scrollIntoView({ behavior: "smooth", block: "center" });
+              el.classList.add("ring-1", "ring-primary/50");
+              setTimeout(() => el.classList.remove("ring-1", "ring-primary/50"), 2000);
+            }
+          }}
+          onClose={() => setShowSearch(false)}
+        />
+      )}
 
       {/* Messages */}
       <div
@@ -243,7 +280,7 @@ export default function ChannelChatView({
           const isEditing = editingId === m.id;
 
           return (
-            <div key={m.id} className="flex gap-3 items-start group">
+            <div key={m.id} id={`msg-${m.id}`} className="flex gap-3 items-start group rounded-lg transition-all">
               <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant text-xs flex-shrink-0">
                 {(m.author ?? "?").slice(0, 1).toUpperCase()}
               </div>
