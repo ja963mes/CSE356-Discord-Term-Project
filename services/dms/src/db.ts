@@ -49,6 +49,7 @@ export const initializeCassandra = async (): Promise<void> => {
   const migrations = [
     `ALTER TABLE ${env.CASSANDRA_KEYSPACE}.messages_by_conversation ADD is_deleted boolean`,
     `ALTER TABLE ${env.CASSANDRA_KEYSPACE}.messages_by_conversation ADD attachment_keys list<text>`,
+    `ALTER TABLE ${env.CASSANDRA_KEYSPACE}.messages_by_conversation ADD updated_at timestamp`,
   ];
   for (const cql of migrations) {
     try {
