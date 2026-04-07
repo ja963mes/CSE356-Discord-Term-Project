@@ -15,6 +15,8 @@ Services to run on staging (Node processes):
 
 **Intentionally omitted on staging:** **`search` (3004)**. The search stub is small, but **Elasticsearch** (see `docker-compose.yml`) is heavy on RAM/CPU; we do not run ES or `search-service` on the staging VM. The UI falls back when `/search` is unavailable. Nginx: comment out the `/search` `location` in [`nginx-linode-staging.conf.example`](./nginx-linode-staging.conf.example) if nothing listens on `3004`.
 
+Longer-term, full-text search is expected to **splinter per domain** (messages, DMs, directory, etc.) along microservice boundaries rather than one central search service—see [Search (today vs eventual splintering)](./sharding-and-replication.md#search-today-vs-eventual-splintering) in `docs/sharding-and-replication.md`.
+
 ## Current staging reality (this repo)
 
 The staging box at **`130.245.136.45`** is expected to run the services above, plus data deps via Docker: Postgres (5433), Redis (6379), Cassandra (9042)[^cassandra-vm], and **MinIO** (9000) if you use attachments. **Do not** start the Elasticsearch container on staging unless you explicitly need it for search development.

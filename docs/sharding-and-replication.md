@@ -78,6 +78,28 @@ Session cookies can stay **global** (e.g. Redis cluster); after auth, resolve **
 
 Direct messages are **not** community-sharded; they use a **separate** partitioning model (e.g. by conversation id). Keep that boundary clear so community sharding does not pull DM data into Postgres shards.
 
+## Search (today vs eventual splintering)
+
+**What exists now**
+
+- **`search-service` (port 3004)** exposes `GET /search` as a **stub** (hardcoded placeholder results). The wireframe UI calls it via `search()` in `frontend/src/api/discord.ts` and **falls back** to sample text if the service is down.
+- **Public guild directory search** is **not** implemented in `search-service`. It lives on the **communities** microservice as **`GET /search-communities`** (PostgreSQL-backed), separate from the global `/search` route.
+- **Elasticsearch** appears in `docker-compose.yml` for a future indexing path; it is **not** wired into the Node search stub in this repo yet.
+
+**Direction if we need real search**
+
+Do **not** assume a single monolithic search service forever. At scale, retrieval is likely **splintered by domain** so each microservice that owns data also owns (or co-locates) **how that data is searched**:
+
+| Domain (examples) | Natural owner for search/read APIs |
+|-------------------|-------------------------------------|
+| Guild channel message bodies | Messages service (+ Cassandra / future index) |
+| DM message bodies | DMs service (+ Cassandra / future index) |
+| Public community directory | Communities (already separate path) or a small global index fed by events |
+
+That keeps **ACL, partitioning, and indexes** aligned with the same service boundary (e.g. DM search stays with DMs). If the product still wants **one unified search bar**, a thin **aggregator or BFF** can fan out to those domain endpoints—or the UX can offer **context-specific search** (search inside a guild, inside DMs, etc.) without a central search monolith.
+
+This complements the earlier note that **`/search-communities`** may evolve into a **global index** fed by events rather than scanning shards.
+
 ## Summary
 
 | Layer | Role |
