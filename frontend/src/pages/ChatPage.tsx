@@ -80,11 +80,11 @@ export default function ChatPage() {
       .then((data) => {
         setMe(data);
         return Promise.all([
-          getDmUsers().then(setDmUsers).catch(() => setDmUsers([])),
+          getDmUsers().then(setDmUsers).catch((err) => { console.error("[ChatPage] getDmUsers failed:", err); setDmUsers([]); }),
           listConversations().then((convs) => {
             setDmConversations(convs);
             if (convs.length > 0) setSelectedDmId(convs[0].conversationId);
-          }).catch(() => setDmConversations([])),
+          }).catch((err) => { console.error("[ChatPage] listConversations failed:", err); setDmConversations([]); }),
         ]);
       })
       .catch(() => setMe(null));
@@ -550,6 +550,7 @@ export default function ChatPage() {
             channelId={selectedChannelId}
             channelName={selectedChannel.name}
             isPrivate={selectedChannel.is_private}
+            communityId={selectedCommunityId ?? undefined}
             currentUserId={me?.internal_id ?? ""}
             currentUsername={me?.username ?? ""}
             wsEvent={latestChannelEvent}

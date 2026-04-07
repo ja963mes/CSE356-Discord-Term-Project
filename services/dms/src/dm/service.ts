@@ -185,10 +185,29 @@ export const createConversation = async (params: {
     .returning();
 
   if (inserted.length === 0) {
-    // Conversation already existed — return it without re-publishing
+    // Conversation already existed — re-add participants who may have left
+    await pg.insert(dmParticipants).values(
+      participants.map((pid) => ({
+        conversation_id: conversationId,
+        user_id: pid,
+        joined_at: createdAt,
+      }))
+    ).onConflictDoNothing();
+
+    await touchConversation(conversationId);
+
     const existing = await getConversation(conversationId);
     if (existing) {
       existing.participantIds = await listParticipantIds(conversationId);
+
+      // Publish so all participants' UIs update
+      await publishDmEvent({
+        type: "dm:conversation:create",
+        conversationId,
+        participantIds: existing.participantIds,
+        conversation: existing,
+      });
+
       return existing;
     }
   }
@@ -294,7 +313,7 @@ export const leaveConversation = async (conversationId: string, userId: string):
     );
 
   const remainingParticipants = await listParticipantIds(conversationId);
-  const shouldDelete = remainingParticipants.length === 0 || conversation.conversationType === "one_to_one";
+  const shouldDelete = remainingParticipants.length === 0 && conversation.conversationType === "group";
 
   await publishDmEvent({
     type: "dm:participant:leave",

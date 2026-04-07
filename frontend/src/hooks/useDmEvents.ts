@@ -31,7 +31,7 @@ export function useDmEvents(me: Me | null) {
     if (t === "dm:participant:join") {
       const uid = latestDmEvent.userId as string | undefined;
       if (uid !== me.internal_id) return;
-      listConversations().then(setDmConversations).catch(() => {});
+      listConversations().then(setDmConversations).catch((err) => { console.error("[useDmEvents] listConversations failed:", err); });
       return;
     }
 
@@ -58,7 +58,7 @@ export function useDmEvents(me: Me | null) {
         setDmConversations((prev) => prev.filter((c) => c.conversationId !== convId));
         setSelectedDmId((prev) => (prev === convId ? null : prev));
       } else {
-        listConversations().then(setDmConversations).catch(() => {});
+        listConversations().then(setDmConversations).catch((err) => { console.error("[useDmEvents] listConversations failed:", err); });
       }
     }
   }, [latestDmEvent, me]);
