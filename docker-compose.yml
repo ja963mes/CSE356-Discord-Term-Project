@@ -33,6 +33,12 @@ services:
     container_name: discord-clone-cassandra
     ports:
       - "${CASSANDRA_PORT:-9042}:9042"
+    # Cap JVM heap so staging fits on small VMs (heap is the main RSS driver; add ~300–500MB for off-heap).
+    # Override on the host: CASSANDRA_MAX_HEAP=768M docker compose up -d cassandra
+    environment:
+      MAX_HEAP_SIZE: ${CASSANDRA_MAX_HEAP:-512M}
+      HEAP_NEWSIZE: ${CASSANDRA_HEAP_NEW:-128M}
+    mem_limit: ${CASSANDRA_MEM_LIMIT:-1536m}
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
