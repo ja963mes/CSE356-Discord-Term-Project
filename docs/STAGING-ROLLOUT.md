@@ -18,9 +18,11 @@ At the moment, the staging box at **`130.245.136.45`** is typically used to run:
 - `communities` (3002)
 - `create-community` (3006)
 - optionally `realtime` (3005)
-- data deps via Docker: Postgres (5433), Redis (6379), Cassandra (9042)
+- data deps via Docker: Postgres (5433), Redis (6379), Cassandra (9042)[^cassandra-vm]
 
 If you are not running `messages` or `dms` on staging (common on low-memory boxes), keep those local.
+
+[^cassandra-vm]: **Future ops:** Cassandra is memory-capped on small staging hosts (see `docker-compose.yml` and optional `CASSANDRA_MAX_HEAP` / `CASSANDRA_MEM_LIMIT` in `.env.example`). Eventually Cassandra will run on its **own VM** and will be sized **without** those staging-only caps.
 
 ## 1) Preconditions
 
