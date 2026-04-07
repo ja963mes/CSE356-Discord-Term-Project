@@ -286,7 +286,7 @@ There are two example configs:
   Proxies `auth`, `communities`, `create-community`, and `realtime` only.
 - **Full proxy (includes messages/dms/search and optional Vite on-box):** [`nginx-linode-staging.conf.example`](./nginx-linode-staging.conf.example)
 
-- API paths proxy to `127.0.0.1:3001`–`3007` as in the README proxy table.
+- API paths proxy to `127.0.0.1:3001`–`3007` as in the README proxy table (including `/attachments` → messages on `3003`).
 - `server_name` should be `130.245.136.45` (or your domain).
 - `/` defaults to the Vite dev server on `5173`; switch that block to `root` + `try_files` if you serve `frontend/dist` instead.
 - After TLS (certbot or another terminator), ensure `X-Forwarded-Proto` reflects HTTPS so OAuth redirects stay correct.

@@ -8,7 +8,8 @@
 #
 # Notes:
 # - Order matters: /search-communities must be before /search.
-# - This file intentionally does NOT proxy /messages, /dms, /search unless you enable them.
+# - This file intentionally does NOT proxy /messages, /attachments, /dms, /search
+#   (run those services locally or switch to nginx-linode-staging.conf.example).
 
 map $http_upgrade $connection_upgrade {
     default upgrade;

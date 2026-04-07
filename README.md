@@ -62,7 +62,7 @@ flowchart TB
 | `/auth` | :3001 |
 | `/create-community` | :3006 |
 | `/communities`, `/channels`, `/search-communities` | :3002 |
-| `/messages` | :3003 |
+| `/messages`, `/attachments` | :3003 |
 | `/search` | :3004 |
 | `/ws` (WebSocket) | :3005 |
 | `/dms` | :3007 |
