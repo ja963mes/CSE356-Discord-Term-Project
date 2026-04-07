@@ -1,4 +1,4 @@
-# Local dev dependencies only: Postgres + Redis.
+# Local dev dependencies: Postgres + Redis + Cassandra.
 # Run apps on the host: `npm run dev:all` (or individual `npm run dev:*`).
 #
 # Usage:
@@ -28,5 +28,44 @@ services:
     ports:
       - "${REDIS_PORT:-6379}:6379"
 
+  cassandra:
+    image: cassandra:4.0
+    container_name: discord-clone-cassandra
+    ports:
+      - "${CASSANDRA_PORT:-9042}:9042"
+    # Cap JVM heap so staging fits on small VMs (heap is the main RSS driver; add ~300–500MB for off-heap).
+    # Override on the host: CASSANDRA_MAX_HEAP=768M docker compose up -d cassandra
+    environment:
+      MAX_HEAP_SIZE: ${CASSANDRA_MAX_HEAP:-512M}
+      HEAP_NEWSIZE: ${CASSANDRA_HEAP_NEW:-128M}
+    mem_limit: ${CASSANDRA_MEM_LIMIT:-1536m}
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+    container_name: discord-clone-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "${ELASTICSEARCH_PORT:-9200}:9200"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+
+  minio:
+    image: minio/minio:latest
+    container_name: discord-clone-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:-minioadmin}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-minioadmin}"
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+
 volumes:
   postgres_data:
+  elasticsearch_data:
+  minio_data:

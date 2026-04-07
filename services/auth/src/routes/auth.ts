@@ -2,10 +2,15 @@ import { Router, Request, Response } from "express";
 import bcrypt from "bcrypt";
 import crypto from "crypto";
 import { v4 as uuidv4 } from "uuid";
+import path from "path";
+import fs from "fs";
+import multer from "multer";
 import { db } from "../db";
 import { users, identities } from "../db/schema";
 import { redis } from "../db/redis";
 import { eq, and } from "drizzle-orm";
+import { requireAuth } from "../middleware/session";
+import { env } from "../config/env";
 import {
   googleConfig,
   githubConfig,
@@ -15,9 +20,35 @@ import {
   handleOidcCallback,
 } from "../config/oauth";
 
+
+const avatarStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    const dir = path.resolve(__dirname, "../../uploads/avatars");
+    fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    cb(null, `${uuidv4()}${ext}`);
+  },
+});
+
+const uploadAvatar = multer({
+  storage: avatarStorage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (_req, file, cb) => {
+    if (!file.mimetype.startsWith("image/")) {
+      cb(new Error("Only image files are allowed"));
+      return;
+    }
+    cb(null, true);
+  },
+});
+
 const router = Router();
 const SESSION_TTL = 60 * 60 * 24 * 7; // 7 days
 const OAUTH_TEMP_TTL = 600; // 10 minutes
+const FRONTEND_ROOT = `${env.FRONTEND_URL.replace(/\/$/, "")}/`;
 
 // ─── Helper: create session ───
 async function createSession(res: Response, internalId: string) {
@@ -47,7 +78,7 @@ async function handleOAuthResult(
   if (identity) {
     // Already linked — log them in
     await createSession(res, identity.internal_id);
-    return res.redirect("/");
+    return res.redirect(FRONTEND_ROOT);
   }
 
   // New OAuth identity — store temporarily so the user can create or link
@@ -444,6 +475,141 @@ router.post("/oauth/complete", async (req: Request, res: Response): Promise<void
     } else {
       res.status(400).json({ error: "action must be 'create' or 'link'" });
     }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ════════════════════════════════════════════
+//  Profile & Presence
+// ════════════════════════════════════════════
+
+// GET /auth/dm-users
+// TODO: replace with real DM participants endpoint once Direct Conversations service is built.
+// Should return only users that the current user has an active DM conversation with (1-to-1 or group).
+// For now returns all users except self so we can test presence display.
+router.get("/dm-users", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { internal_id } = req.user as { internal_id: string };
+  try {
+    const allUsers = await db
+      .select({
+        internal_id: users.internal_id,
+        username: users.username,
+        profile: users.profile,
+      })
+      .from(users);
+
+    res.json({ users: allUsers.filter((u) => u.internal_id !== internal_id) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// GET /auth/me
+router.get("/me", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { internal_id } = req.user as { internal_id: string };
+  try {
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.internal_id, internal_id))
+      .limit(1);
+
+    if (!user) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+
+    res.json({
+      internal_id: user.internal_id,
+      username: user.username,
+      email: user.email,
+      profile: user.profile,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// PATCH /auth/profile
+router.patch("/profile", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { internal_id } = req.user as { internal_id: string };
+  const { displayName } = req.body;
+
+  if (!displayName || typeof displayName !== "string" || !displayName.trim()) {
+    res.status(400).json({ error: "displayName is required" });
+    return;
+  }
+
+  try {
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.internal_id, internal_id))
+      .limit(1);
+
+    if (!user) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+
+    const updatedProfile = { ...(user.profile as object), displayName: displayName.trim() };
+
+    await db
+      .update(users)
+      .set({ profile: updatedProfile })
+      .where(eq(users.internal_id, internal_id));
+
+    res.json({ message: "Profile updated", profile: updatedProfile });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// POST /auth/profile/avatar
+router.post("/profile/avatar", requireAuth, uploadAvatar.single("avatar"), async (req: Request, res: Response): Promise<void> => {
+  const { internal_id } = req.user as { internal_id: string };
+
+  if (!req.file) {
+    res.status(400).json({ error: "No file uploaded" });
+    return;
+  }
+
+  try {
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.internal_id, internal_id))
+      .limit(1);
+
+    if (!user) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+
+    // Delete old avatar file if one exists
+    const oldProfile = user.profile as { avatar?: string | null };
+    if (oldProfile.avatar) {
+      const oldFilename = oldProfile.avatar.split("/").pop();
+      if (oldFilename) {
+        const oldPath = path.resolve(__dirname, "../../uploads/avatars", oldFilename);
+        fs.unlink(oldPath, () => {}); // best-effort, ignore errors
+      }
+    }
+
+    const avatarUrl = `/auth/avatars/${req.file.filename}`;
+    const updatedProfile = { ...(user.profile as object), avatar: avatarUrl };
+
+    await db
+      .update(users)
+      .set({ profile: updatedProfile })
+      .where(eq(users.internal_id, internal_id));
+
+    res.json({ message: "Avatar uploaded", avatarUrl });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Internal server error" });

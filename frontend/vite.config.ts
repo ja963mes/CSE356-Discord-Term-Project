@@ -1,43 +1,65 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), "");
+  const apiOrigin = (env.VITE_API_ORIGIN || "http://localhost").replace(/\/+$/, "");
+  const authTarget = env.VITE_AUTH_ORIGIN || `${apiOrigin}:3001`;
+  const communitiesTarget = env.VITE_COMMUNITIES_ORIGIN || `${apiOrigin}:3002`;
+  const messagesTarget = env.VITE_MESSAGES_ORIGIN || `${apiOrigin}:3003`;
+  const searchTarget = env.VITE_SEARCH_ORIGIN || `${apiOrigin}:3004`;
+  const realtimeTarget = env.VITE_REALTIME_ORIGIN || `${apiOrigin}:3005`;
+  const createCommunityTarget = env.VITE_CREATE_COMMUNITY_ORIGIN || `${apiOrigin}:3006`;
+  const dmsTarget = env.VITE_DMS_ORIGIN || `${apiOrigin}:3007`;
+
+  return {
   plugins: [react()],
   server: {
     proxy: {
       // Auth service session + OAuth redirects
       "/auth": {
-        target: "http://localhost:3001",
+        target: authTarget,
         changeOrigin: true,
       },
       // Create-community service (POST only; max 100 created per user)
       "/create-community": {
-        target: "http://localhost:3006",
+        target: createCommunityTarget,
         changeOrigin: true,
       },
       // Communities service (list, join, channels, members)
       "/communities": {
-        target: "http://localhost:3002",
+        target: communitiesTarget,
         changeOrigin: true,
       },
       // Optional legacy stub path (not implemented on communities service; client falls back)
       "/channels": {
-        target: "http://localhost:3002",
+        target: communitiesTarget,
         changeOrigin: true,
       },
       "/messages": {
-        target: "http://localhost:3003",
+        target: messagesTarget,
+        changeOrigin: true,
+      },
+      // Communities directory search (same service as /communities; match before /search)
+      "/search-communities": {
+        target: communitiesTarget,
         changeOrigin: true,
       },
       "/search": {
-        target: "http://localhost:3004",
+        target: searchTarget,
         changeOrigin: true,
       },
       "/dms": {
-        target: "http://localhost:3005",
+        target: dmsTarget,
         changeOrigin: true,
+      },
+      "/ws": {
+        target: realtimeTarget,
+        changeOrigin: true,
+        ws: true,
       },
     },
   },
+  };
 });
 

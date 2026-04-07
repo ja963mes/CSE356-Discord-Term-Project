@@ -1,3 +1,4 @@
+/// <reference path="./types/express.d.ts" />
 import express from "express";
 import cookieParser from "cookie-parser";
 import path from "path";
@@ -10,7 +11,14 @@ const app = express();
 app.use(express.json());
 app.use(cookieParser());
 
+app.use("/auth/avatars", express.static(path.join(__dirname, "../uploads/avatars")));
+
 app.use("/auth", authRouter);
+
+// Session probe for frontend route guards.
+app.get("/auth/me", requireAuth, (req, res) => {
+  res.json({ internal_id: req.user!.internal_id });
+});
 
 // Serve the OAuth pending page through the login page
 app.get("/auth/oauth/pending", (_req, res) => {

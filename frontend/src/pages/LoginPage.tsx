@@ -1,25 +1,36 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { login } from "../api/auth";
+import { login, register } from "../api/auth";
 
 export default function LoginPage() {
   const navigate = useNavigate();
 
+  const [mode, setMode] = useState<"login" | "register">("login");
   const [identifier, setIdentifier] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  function switchMode(m: "login" | "register") {
+    setMode(m);
+    setError(null);
+  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setIsSubmitting(true);
     try {
-      // The current auth service only supports username/password locally.
-      await login(identifier, password);
+      if (mode === "register") {
+        await register(identifier, password, displayName || undefined);
+        await login(identifier, password);
+      } else {
+        await login(identifier, password);
+      }
       navigate("/", { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed");
+      setError(err instanceof Error ? err.message : mode === "register" ? "Registration failed" : "Login failed");
     } finally {
       setIsSubmitting(false);
     }
@@ -38,20 +49,42 @@ export default function LoginPage() {
             </span>
           </div>
           <h1 className="font-headline font-extrabold text-3xl tracking-tight text-on-surface">
-            The Obsidian Architect
+            {mode === "login" ? "Welcome back" : "Create an account"}
           </h1>
-          <p className="text-on-surface-variant font-medium mt-2">Welcome back to the sanctuary.</p>
+          <p className="text-on-surface-variant font-medium mt-2">
+            {mode === "login" ? "Sign in to continue." : "Join the conversation."}
+          </p>
         </div>
 
         <div className="glass-panel border border-outline-variant/10 rounded-xl p-8 md:p-10 shadow-2xl">
           <form className="space-y-6" onSubmit={onSubmit}>
             <div className="space-y-5">
+              {mode === "register" && (
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-widest text-on-surface-variant ml-1" htmlFor="displayName">
+                    Display Name
+                  </label>
+                  <div className="relative group">
+                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                      <span className="material-symbols-outlined text-outline text-lg group-focus-within:text-primary transition-colors">badge</span>
+                    </div>
+                    <input
+                      className="w-full bg-surface-container-highest border-none rounded-lg py-3.5 pl-12 pr-4 text-on-surface placeholder:text-outline focus:ring-2 focus:ring-primary/20 focus:bg-surface-bright transition-all"
+                      id="displayName"
+                      placeholder="Your display name (optional)"
+                      type="text"
+                      value={displayName}
+                      onChange={(e) => setDisplayName(e.target.value)}
+                    />
+                  </div>
+                </div>
+              )}
               <div className="space-y-2">
                 <label
                   className="text-xs font-bold uppercase tracking-widest text-on-surface-variant ml-1"
                   htmlFor="identifier"
                 >
-                  Email or Username
+                  Username
                 </label>
                 <div className="relative group">
                   <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
@@ -121,7 +154,7 @@ export default function LoginPage() {
               type="submit"
               disabled={isSubmitting}
             >
-              {isSubmitting ? "Signing in..." : "Log In"}
+              {isSubmitting ? (mode === "register" ? "Creating account..." : "Signing in...") : (mode === "register" ? "Create Account" : "Log In")}
             </button>
 
             <div className="relative flex items-center py-2">
@@ -158,10 +191,14 @@ export default function LoginPage() {
             </div>
 
             <p className="text-center text-on-surface-variant text-sm pt-4">
-              Need an account?{" "}
-              <a className="text-primary font-bold hover:underline underline-offset-4 decoration-2" href="#">
-                Register
-              </a>
+              {mode === "login" ? "Need an account?" : "Already have an account?"}{" "}
+              <button
+                type="button"
+                className="text-primary font-bold hover:underline underline-offset-4 decoration-2"
+                onClick={() => switchMode(mode === "login" ? "register" : "login")}
+              >
+                {mode === "login" ? "Register" : "Log In"}
+              </button>
             </p>
 
             <footer className="mt-8 flex justify-center gap-6">
