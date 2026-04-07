@@ -19,9 +19,10 @@ Longer-term, full-text search is expected to **splinter per domain** (messages, 
 
 ## Current staging reality (this repo)
 
-The staging box at **`130.245.136.45`** is expected to run the services above, plus data deps via Docker: Postgres (5433), Redis (6379), Cassandra (9042)[^cassandra-vm], and **MinIO** (9000) if you use attachments. **Do not** start the Elasticsearch container on staging unless you explicitly need it for search development.
+The staging box at **`130.245.136.45`** is expected to run the services above, plus data deps via Docker: Postgres (5433), Redis (6379), Cassandra (9042)[^cassandra-vm], and **MinIO** (9000) if you use attachments. **Do not** start the Elasticsearch container on staging unless you explicitly need it for search development.[^es-cap]
 
 [^cassandra-vm]: **Future ops:** Cassandra is memory-capped on small staging hosts (see `docker-compose.yml` and optional `CASSANDRA_MAX_HEAP` / `CASSANDRA_MEM_LIMIT` in `.env.example`). Eventually Cassandra will run on its **own VM** and will be sized **without** those staging-only caps.
+[^es-cap]: **Future ops:** Elasticsearch memory limits in this repo (for example `ELASTICSEARCH_MEM_LIMIT` in `docker-compose.yml` / `.env.example`) are **staging/local safety caps**, not production sizing guidance.
 
 ## 1) Preconditions
 

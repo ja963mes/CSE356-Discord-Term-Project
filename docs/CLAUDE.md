@@ -73,7 +73,7 @@ Channel lifecycle and ACLs live on the **communities service (3002)** — no sep
 
 **Still to do for section 4 / cross-cutting**  
 - **messages**: ~~authorize channel reads/writes~~ — implemented on messages service; optional “join” UX polish.  
-- **Frontend**: promote `admin`; private-channel request-access flow.  
+- **Frontend**: promote `admin`; private-channel request-access flow (channel member management UI is implemented).  
 - Optional: **`GET .../channels-overview?include=recent`** for one round-trip with message previews (after messages API exists).  
 - Optional: promote members to `admin` role (schema already allows `admin` string).
 

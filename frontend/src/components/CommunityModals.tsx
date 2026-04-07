@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import type { Community, CommunityMember } from "../api/discord";
+import type { ChannelAccessMember, Community, CommunityMember } from "../api/discord";
 import { createChannel, joinCommunity, searchCommunities } from "../api/discord";
 import { createCommunity } from "../services/createCommunity";
 
@@ -410,93 +410,165 @@ export function CreateChannelModal({ open, onClose, communityId, onCreated }: Cr
   );
 }
 
-type InvitePrivateChannelMembersModalProps = {
+type ManagePrivateChannelMembersModalProps = {
   open: boolean;
   onClose: () => void;
   channelName: string;
-  members: CommunityMember[];
+  currentUserId: string;
+  communityMembers: CommunityMember[];
+  channelMembers: ChannelAccessMember[];
   onInvite: (userId: string) => Promise<{ ok: boolean; message?: string }>;
+  onRemove: (userId: string) => Promise<{ ok: boolean; message?: string }>;
 };
 
-export function InvitePrivateChannelMembersModal({
+export function ManagePrivateChannelMembersModal({
   open,
   onClose,
   channelName,
-  members,
+  currentUserId,
+  communityMembers,
+  channelMembers,
   onInvite,
-}: InvitePrivateChannelMembersModalProps) {
-  const [query, setQuery] = useState("");
-  const [busyUserId, setBusyUserId] = useState<string | null>(null);
+  onRemove,
+}: ManagePrivateChannelMembersModalProps) {
+  const [addQuery, setAddQuery] = useState("");
+  const [currentQuery, setCurrentQuery] = useState("");
+  const [busyAction, setBusyAction] = useState<{ kind: "add" | "remove"; userId: string } | null>(null);
   const [rowMessageById, setRowMessageById] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!open) return;
-    setQuery("");
-    setBusyUserId(null);
+    setAddQuery("");
+    setCurrentQuery("");
+    setBusyAction(null);
     setRowMessageById({});
   }, [open]);
 
   if (!open) return null;
 
-  const filtered = members.filter((m) => {
-    const q = query.trim().toLowerCase();
+  const channelMemberIdSet = new Set(channelMembers.map((m) => m.user_id));
+
+  const currentMembers = channelMembers.filter((m) => {
+    const q = currentQuery.trim().toLowerCase();
+    if (!q) return true;
+    return m.display_name.toLowerCase().includes(q) || m.username.toLowerCase().includes(q);
+  });
+
+  const addableMembers = communityMembers.filter((m) => !channelMemberIdSet.has(m.user_id)).filter((m) => {
+    const q = addQuery.trim().toLowerCase();
     if (!q) return true;
     return m.display_name.toLowerCase().includes(q) || m.username.toLowerCase().includes(q);
   });
 
   async function handleInvite(userId: string) {
-    if (busyUserId) return;
-    setBusyUserId(userId);
+    if (busyAction) return;
+    setBusyAction({ kind: "add", userId });
     const result = await onInvite(userId);
     setRowMessageById((prev) => ({
       ...prev,
       [userId]: result.ok ? (result.message ?? "Invited") : (result.message ?? "Invite failed"),
     }));
-    setBusyUserId(null);
+    setBusyAction(null);
+  }
+
+  async function handleRemove(userId: string) {
+    if (busyAction) return;
+    setBusyAction({ kind: "remove", userId });
+    const result = await onRemove(userId);
+    setRowMessageById((prev) => ({
+      ...prev,
+      [userId]: result.ok ? (result.message ?? "Removed") : (result.message ?? "Remove failed"),
+    }));
+    setBusyAction(null);
   }
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Channel access settings">
       <button type="button" className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} aria-label="Close" />
-      <div className="relative w-full max-w-md rounded-xl bg-[#1e2128] border border-white/10 shadow-2xl p-6 z-[101]">
-        <h2 className="text-xl font-bold text-[#f6f6fc] font-headline mb-2">Add members to #{channelName}</h2>
-        <p className="text-sm text-[#b5bac1] mb-4">
-          Invite individual community members to this private channel.
+      <div className="relative w-full max-w-3xl rounded-xl bg-[#1e2128] border border-white/10 shadow-2xl p-6 z-[101]">
+        <h2 className="text-xl font-bold text-[#f6f6fc] font-headline mb-1">Channel settings — #{channelName}</h2>
+        <p className="text-sm text-[#b5bac1] mb-5">
+          Manage visibility for this private channel. Add or remove individual community members.
         </p>
 
-        <input
-          className="w-full bg-[#111318] border border-white/10 text-[#f6f6fc] rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#5865F2] placeholder:text-[#6d737a] mb-4"
-          placeholder="Search members"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-
-        <div className="max-h-[340px] overflow-y-auto pr-1 space-y-2">
-          {filtered.length === 0 ? (
-            <p className="text-sm text-[#b5bac1]">No members found.</p>
-          ) : (
-            filtered.map((m) => (
-              <div key={m.user_id} className="px-3 py-2 rounded-lg bg-[#14171d] border border-white/5">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-[#f6f6fc] truncate">{m.display_name}</p>
-                    <p className="text-[11px] text-[#b5bac1] truncate">@{m.username}</p>
-                    {rowMessageById[m.user_id] ? (
-                      <p className="text-[10px] text-[#b5bac1] mt-1 truncate">{rowMessageById[m.user_id]}</p>
-                    ) : null}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <section className="rounded-lg border border-white/10 bg-[#14171d] p-3">
+            <p className="text-xs uppercase tracking-widest text-[#b5bac1] mb-2">Has Access ({channelMembers.length})</p>
+            <input
+              className="w-full bg-[#111318] border border-white/10 text-[#f6f6fc] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#5865F2] placeholder:text-[#6d737a] mb-3"
+              placeholder="Filter current members"
+              value={currentQuery}
+              onChange={(e) => setCurrentQuery(e.target.value)}
+            />
+            <div className="max-h-[320px] overflow-y-auto pr-1 space-y-2">
+              {currentMembers.length === 0 ? (
+                <p className="text-sm text-[#b5bac1]">No matching members.</p>
+              ) : (
+                currentMembers.map((m) => (
+                  <div key={m.user_id} className="px-3 py-2 rounded-lg bg-[#1e2128] border border-white/5">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-[#f6f6fc] truncate">{m.display_name}</p>
+                        <p className="text-[11px] text-[#b5bac1] truncate">@{m.username}</p>
+                        {rowMessageById[m.user_id] ? (
+                          <p className="text-[10px] text-[#b5bac1] mt-1 truncate">{rowMessageById[m.user_id]}</p>
+                        ) : null}
+                      </div>
+                      <button
+                        type="button"
+                        disabled={busyAction !== null || m.user_id === currentUserId}
+                        onClick={() => void handleRemove(m.user_id)}
+                        className="px-3 py-1.5 rounded-lg text-[12px] font-semibold bg-red-500/15 hover:bg-red-500/30 text-red-300 border border-red-400/20 disabled:opacity-50"
+                      >
+                        {m.user_id === currentUserId
+                          ? "Protected"
+                          : busyAction?.kind === "remove" && busyAction.userId === m.user_id
+                            ? "Removing…"
+                            : "Remove"}
+                      </button>
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    disabled={busyUserId !== null}
-                    onClick={() => void handleInvite(m.user_id)}
-                    className="px-3 py-1.5 rounded-lg text-[12px] font-semibold bg-[#5865F2] hover:bg-[#4752c4] text-white border border-white/10 disabled:opacity-50"
-                  >
-                    {busyUserId === m.user_id ? "Adding…" : "Add"}
-                  </button>
-                </div>
-              </div>
-            ))
-          )}
+                ))
+              )}
+            </div>
+          </section>
+
+          <section className="rounded-lg border border-white/10 bg-[#14171d] p-3">
+            <p className="text-xs uppercase tracking-widest text-[#b5bac1] mb-2">Add People</p>
+            <input
+              className="w-full bg-[#111318] border border-white/10 text-[#f6f6fc] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#5865F2] placeholder:text-[#6d737a] mb-3"
+              placeholder="Search community members"
+              value={addQuery}
+              onChange={(e) => setAddQuery(e.target.value)}
+            />
+            <div className="max-h-[320px] overflow-y-auto pr-1 space-y-2">
+              {addableMembers.length === 0 ? (
+                <p className="text-sm text-[#b5bac1]">No members available to add.</p>
+              ) : (
+                addableMembers.map((m) => (
+                  <div key={m.user_id} className="px-3 py-2 rounded-lg bg-[#1e2128] border border-white/5">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-[#f6f6fc] truncate">{m.display_name}</p>
+                        <p className="text-[11px] text-[#b5bac1] truncate">@{m.username}</p>
+                        {rowMessageById[m.user_id] ? (
+                          <p className="text-[10px] text-[#b5bac1] mt-1 truncate">{rowMessageById[m.user_id]}</p>
+                        ) : null}
+                      </div>
+                      <button
+                        type="button"
+                        disabled={busyAction !== null}
+                        onClick={() => void handleInvite(m.user_id)}
+                        className="px-3 py-1.5 rounded-lg text-[12px] font-semibold bg-[#5865F2] hover:bg-[#4752c4] text-white border border-white/10 disabled:opacity-50"
+                      >
+                        {busyAction?.kind === "add" && busyAction.userId === m.user_id ? "Adding…" : "Add"}
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
         </div>
 
         <div className="flex justify-end mt-5">
