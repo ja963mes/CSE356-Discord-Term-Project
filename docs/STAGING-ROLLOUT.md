@@ -1,26 +1,23 @@
-# Staging rollout runbook (auth + communities + messages + realtime)
+# Staging rollout runbook (full stack minus search)
 
-Use this runbook to deploy and validate the core chat path in a staging environment before production.
+Use this runbook to deploy and validate the chat path in a staging environment before production.
 
 ## Scope
 
-Services covered:
-- `auth` (session + identity)
-- `communities` (guild/channels/ACL)
-- `messages` (channel history in Cassandra + ACL checks)
-- `realtime` (WebSocket fan-out/presence plumbing)
-- optional but recommended: `frontend` pointed at staging APIs
+Services to run on staging (Node processes):
+- `auth` (3001) — session + identity
+- `communities` (3002) — guild/channels/ACL
+- `create-community` (3006)
+- `messages` (3003) — channel history in Cassandra + ACL checks
+- `realtime` (3005) — WebSocket fan-out/presence
+- `dms` (3007) — direct messages (Cassandra)
+- optional but recommended: static or proxied `frontend`
+
+**Intentionally omitted on staging:** **`search` (3004)**. The search stub is small, but **Elasticsearch** (see `docker-compose.yml`) is heavy on RAM/CPU; we do not run ES or `search-service` on the staging VM. The UI falls back when `/search` is unavailable. Nginx: comment out the `/search` `location` in [`nginx-linode-staging.conf.example`](./nginx-linode-staging.conf.example) if nothing listens on `3004`.
 
 ## Current staging reality (this repo)
 
-At the moment, the staging box at **`130.245.136.45`** is typically used to run:
-- `auth` (3001)
-- `communities` (3002)
-- `create-community` (3006)
-- optionally `realtime` (3005)
-- data deps via Docker: Postgres (5433), Redis (6379), Cassandra (9042)[^cassandra-vm]
-
-If you are not running `messages` or `dms` on staging (common on low-memory boxes), keep those local.
+The staging box at **`130.245.136.45`** is expected to run the services above, plus data deps via Docker: Postgres (5433), Redis (6379), Cassandra (9042)[^cassandra-vm], and **MinIO** (9000) if you use attachments. **Do not** start the Elasticsearch container on staging unless you explicitly need it for search development.
 
 [^cassandra-vm]: **Future ops:** Cassandra is memory-capped on small staging hosts (see `docker-compose.yml` and optional `CASSANDRA_MAX_HEAP` / `CASSANDRA_MEM_LIMIT` in `.env.example`). Eventually Cassandra will run on its **own VM** and will be sized **without** those staging-only caps.
 
@@ -56,8 +53,10 @@ At minimum, verify:
   - `CASSANDRA_LOCAL_DATACENTER`
 - **Messages keyspace separation**
   - `MESSAGES_CASSANDRA_KEYSPACE=messaging` (or your staging name)
-- **DM service compatibility (if deployed)**
-  - keep `CASSANDRA_KEYSPACE=dms` for the DMs service
+- **DM service**
+  - `DMS_PORT=3007`
+  - `CASSANDRA_KEYSPACE=dms` (keep separate from `MESSAGES_CASSANDRA_KEYSPACE`)
+- **Search / Elasticsearch (not used on staging)** — omit `ELASTICSEARCH_URL` and do not run `search-service` unless you add capacity.
 
 Replication/consistency knobs for messages:
 - `CASSANDRA_TOPOLOGY` (`simple` or `network`)
@@ -85,10 +84,11 @@ npm install
 npm run build --workspace auth-service
 npm run build --workspace communities-service
 npm run build --workspace create-community-service
-# optional (only if you run these on staging)
 npm run build --workspace messages-service
 npm run build --workspace realtime-service
-# optional
+npm run build --workspace dms-service
+# optional — not deployed on staging VM (see Scope)
+# npm run build --workspace search-service
 npm run build --workspace frontend
 ```
 
@@ -135,6 +135,7 @@ PORT=3001
 COMMUNITIES_PORT=3002
 CREATE_COMMUNITY_PORT=3006
 REALTIME_PORT=3005
+DMS_PORT=3007
 EOF
 sudo chmod 600 /etc/discord-staging.env
 ```
@@ -244,14 +245,32 @@ RestartSec=3
 WantedBy=multi-user.target
 ```
 
+`discord-dms.service`
+
+```ini
+[Unit]
+Description=Discord staging DMs service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/CSE356-Discord-Term-Project
+EnvironmentFile=/etc/discord-staging.env
+ExecStart=/usr/bin/npm run start --workspace dms-service
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
 ### C. Enable + verify
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now discord-auth discord-communities discord-create-community
-# optional
-sudo systemctl enable --now discord-messages discord-realtime
-sudo systemctl status discord-auth discord-communities discord-create-community --no-pager
+sudo systemctl enable --now discord-auth discord-communities discord-create-community discord-messages discord-realtime discord-dms
+sudo systemctl status discord-auth discord-communities discord-create-community discord-messages discord-realtime discord-dms --no-pager
 ```
 
 Follow logs:
@@ -262,6 +281,7 @@ sudo journalctl -u discord-communities -f
 sudo journalctl -u discord-create-community -f
 sudo journalctl -u discord-messages -f
 sudo journalctl -u discord-realtime -f
+sudo journalctl -u discord-dms -f
 ```
 
 ### Using tmux instead of systemd (quick dev-only)
@@ -282,9 +302,10 @@ In staging, avoid binding raw service ports publicly; prefer one ingress host wi
 
 There are two example configs:
 
-- **Services-only staging (recommended for low-memory boxes):** [`nginx-linode-services-only.conf.example`](./nginx-linode-services-only.conf.example)  
-  Proxies `auth`, `communities`, `create-community`, and `realtime` only.
-- **Full proxy (includes messages/dms/search and optional Vite on-box):** [`nginx-linode-staging.conf.example`](./nginx-linode-staging.conf.example)
+- **Full proxy (default for staging):** [`nginx-linode-staging.conf.example`](./nginx-linode-staging.conf.example)  
+  Proxies all API prefixes including `messages`, `attachments`, `dms`, and `/ws`. **Comment out** the `/search` block if you are not running `search-service` (see Scope).
+- **Services-only (legacy / special cases):** [`nginx-linode-services-only.conf.example`](./nginx-linode-services-only.conf.example)  
+  Proxies only `auth`, `communities`, `create-community`, and `realtime` — use only if you intentionally keep messages/DMs off the host.
 
 - API paths proxy to `127.0.0.1:3001`–`3007` as in the README proxy table (including `/attachments` → messages on `3003`).
 - `server_name` should be `130.245.136.45` (or your domain).
@@ -302,14 +323,16 @@ sudo systemctl reload nginx
 
 Deploy in this order:
 
-1. Data dependencies (Postgres, Redis, Cassandra)
+1. Data dependencies (Postgres, Redis, Cassandra, MinIO if using attachments)
 2. `auth`
 3. `communities`
-4. `messages`
-5. `realtime`
-6. `frontend` (if you use one)
+4. `create-community`
+5. `messages`
+6. `dms`
+7. `realtime`
+8. `frontend` (if you use one)
 
-Rationale: auth/session and ACL metadata should be healthy before messages/realtime start receiving traffic.
+Rationale: auth/session and ACL metadata should be healthy before messages/DMs/realtime receive traffic. **Do not** deploy `search` on this VM unless you add resources and Elasticsearch.
 
 ## 7) Update procedure (safe rolling restart)
 
@@ -324,13 +347,15 @@ npm run build --workspace communities-service
 npm run build --workspace create-community-service
 npm run build --workspace messages-service
 npm run build --workspace realtime-service
+npm run build --workspace dms-service
 npm run db:migrate
 sudo systemctl restart discord-auth
 sudo systemctl restart discord-communities
 sudo systemctl restart discord-create-community
 sudo systemctl restart discord-messages
 sudo systemctl restart discord-realtime
-sudo systemctl status discord-auth discord-communities discord-create-community --no-pager
+sudo systemctl restart discord-dms
+sudo systemctl status discord-auth discord-communities discord-create-community discord-messages discord-realtime discord-dms --no-pager
 ```
 
 If frontend is local Vite on the same host:
@@ -345,6 +370,7 @@ If frontend is static files:
 - `GET /auth/health` (or root health endpoint used by your deployment)
 - `GET /communities/health`
 - `GET /messages/health` (should report Cassandra reachable)
+- DMs: `GET /health` on `127.0.0.1:3007` (not under `/dms` in nginx; check the process directly)
 - `GET /ws` handshake path is reachable (or realtime health endpoint)
 
 ### B. Session/cookie path
@@ -380,7 +406,7 @@ Default local ports are unique:
 - auth `3001`
 - communities `3002`
 - messages `3003`
-- search `3004`
+- search `3004` (not deployed on staging)
 - realtime `3005`
 - create-community `3006`
 - dms `3007`
@@ -394,7 +420,7 @@ If rollout is unstable:
 
 1. Roll back `frontend` first (fastest user-impact mitigation).
 2. Roll back `realtime` if message delivery is noisy but REST is healthy.
-3. Roll back `messages` if Cassandra path is failing.
+3. Roll back `messages` or `dms` if Cassandra paths are failing.
 4. Keep `auth` and `communities` on last known good revisions.
 
 If schema migration `0008_*` is already applied, do not assume old Postgres message reads will work; use app rollback that still reads Cassandra.
@@ -407,9 +433,11 @@ git checkout <last-known-good-commit>
 npm install
 npm run build --workspace auth-service
 npm run build --workspace communities-service
+npm run build --workspace create-community-service
 npm run build --workspace messages-service
 npm run build --workspace realtime-service
-sudo systemctl restart discord-auth discord-communities discord-messages discord-realtime
+npm run build --workspace dms-service
+sudo systemctl restart discord-auth discord-communities discord-create-community discord-messages discord-realtime discord-dms
 ```
 
 ## 11) Observability minimum
@@ -420,12 +448,12 @@ Track these during rollout:
 - `/messages` 5xx rate and p95 latency
 - Cassandra client errors/timeouts
 - websocket connection count, disconnect rate, reconnect loops
-- proxy 4xx/5xx by route prefix (`/auth`, `/communities`, `/messages`, `/ws`)
+- proxy 4xx/5xx by route prefix (`/auth`, `/communities`, `/messages`, `/dms`, `/ws`)
 
 Useful checks:
 
 ```bash
-sudo systemctl status discord-auth discord-communities discord-messages discord-realtime --no-pager
+sudo systemctl status discord-auth discord-communities discord-create-community discord-messages discord-realtime discord-dms --no-pager
 sudo journalctl -u discord-messages -n 200 --no-pager
 sudo journalctl -u discord-realtime -n 200 --no-pager
 ```
@@ -434,7 +462,7 @@ sudo journalctl -u discord-realtime -n 200 --no-pager
 
 Rollout is considered healthy when:
 
-- All four services are passing health checks.
+- All deployed Node services (`auth`, `communities`, `create-community`, `messages`, `realtime`, `dms`) are passing health checks (excluding `search`).
 - Login + authenticated communities listing works.
 - Channel message write/read works across refresh.
 - Realtime fan-out works for at least two concurrent clients.

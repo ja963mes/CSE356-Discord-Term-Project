@@ -92,6 +92,8 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    # Search (port 3004) — optional. Staging typically skips search-service (and Elasticsearch) to save RAM.
+    # Comment out this entire block if search is not running; otherwise GET /search will 502.
     location ^~ /search {
         proxy_pass http://127.0.0.1:3004;
         proxy_set_header Host $host;

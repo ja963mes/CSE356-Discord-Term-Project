@@ -1,4 +1,7 @@
-# Nginx — services-only staging (auth + communities + create-community + realtime)
+# Nginx — services-only (auth + communities + create-community + realtime)
+#
+# Use when the frontend runs elsewhere and this host does not run messages/DMs/search.
+# For normal staging with the full API on-box, prefer nginx-linode-staging.conf.example.
 #
 # Use this when the frontend runs on your laptop, and the Linode hosts only:
 #   - auth (3001)

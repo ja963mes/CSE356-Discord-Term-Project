@@ -174,38 +174,23 @@ VITE_API_ORIGIN=http://130.245.136.45 npm run dev:frontend
 - `npm run dev` proxies APIs to **staging** (`130.245.136.45`).
 - `npm run dev:all` is the exception: it is **local-only** and forces the frontend to proxy APIs to **localhost** so the full local stack works end-to-end.
 
-- **Frontend → staging, but keep some services local**:
+- **Frontend → staging, but keep some services on localhost** — set origins explicitly, for example:
 
 ```bash
-npm run dev:frontend:staging-lite
+VITE_API_ORIGIN=http://130.245.136.45 \
+VITE_MESSAGES_ORIGIN=http://localhost:3003 \
+VITE_DMS_ORIGIN=http://localhost:3007 \
+npm run dev:frontend
 ```
 
-This proxies most routes to staging but keeps `/messages`, `/search`, and `/dms` pointing at localhost (so you can run those locally if desired).
-
-- **Hybrid dev (recommended when staging already runs auth/communities/create-community/realtime)**:
-
-```bash
-npm run dev:hybrid
-```
-
-This starts local `messages` (3003), `search` (3004), and `dms` (3007), plus the frontend (5173) configured to proxy auth/communities/create-community/ws to staging at `130.245.136.45`.
-
-Note: `messages` and `dms` require Cassandra. `dev:hybrid` will start the Cassandra container via `docker compose up cassandra`.
-
-- **Hybrid dev without Cassandra (search-only local)**:
-
-```bash
-npm run dev:hybrid:no-cassandra
-```
-
-This starts only `search` locally and proxies the rest to staging. Use this when you don’t want to run Cassandra on your machine.
+Run `docker compose up -d cassandra` and `npm run dev:messages` / `npm run dev:dms` locally when you need those off staging.
 
 ## Local vs staging environments (`ENV_FILE`)
 
 Backend services load the repo-root `.env` by default, but you can override it with:
 
 ```bash
-ENV_FILE=.env.staging npm run dev:staging:core
+ENV_FILE=.env.staging npm run dev:auth
 ```
 
 This repo includes a template at `docs/env.staging.example`.
@@ -250,13 +235,6 @@ Runs auth, all stub services, and the frontend together (uses [concurrently](htt
 npm run dev:all
 ```
 
-Equivalent shell wrapper (from repo root):
-
-```bash
-chmod +x scripts/dev-all.sh   # once
-./scripts/dev-all.sh
-```
-
 ## Available Scripts
 
 | Command | Description |
@@ -270,6 +248,7 @@ chmod +x scripts/dev-all.sh   # once
 | `npm run dev:messages` | Start messages service — channel chat API (port 3003) |
 | `npm run dev:search` | Start search stub service (port 3004) |
 | `npm run dev:realtime` | Start realtime stub service (port 3005) |
+| `npm run dev:dms` | Start DM service (port 3007) |
 | `npm run db:generate` | Generate a new migration (auth service) |
 | `npm run db:migrate` | Apply pending migrations (auth service) |
 
@@ -287,6 +266,7 @@ services/
   messages/
   search/
   realtime/
+  dms/
 frontend/
   src/
 ```
