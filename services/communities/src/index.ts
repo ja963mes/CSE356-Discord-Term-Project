@@ -512,7 +512,7 @@ app.post("/communities/:communityId/channels/:channelId/leave", requireAuth, asy
   }
 });
 
-/** Add a community member to a channel (admin only; used for private channels). */
+/** Add a community member to a private channel (admin only; user-by-user invites). */
 app.post("/communities/:communityId/channels/:channelId/members", requireAuth, async (req: Request, res: Response) => {
   const userId = req.user!.internal_id;
   const communityId = String(req.params.communityId);
@@ -546,6 +546,10 @@ app.post("/communities/:communityId/channels/:channelId/members", requireAuth, a
       res.status(404).json({ error: "Channel not found" });
       return;
     }
+    if (!ch.is_private) {
+      res.status(400).json({ error: "Only private channels need member invites" });
+      return;
+    }
 
     const [targetMembership] = await db
       .select()
@@ -558,8 +562,19 @@ app.post("/communities/:communityId/channels/:channelId/members", requireAuth, a
       return;
     }
 
-    await db.insert(channelMembers).values({ channel_id: channelId, user_id: targetUserId }).onConflictDoNothing();
-    res.status(201).json({ message: "Added to channel" });
+    const [alreadyInChannel] = await db
+      .select()
+      .from(channelMembers)
+      .where(and(eq(channelMembers.channel_id, channelId), eq(channelMembers.user_id, targetUserId)))
+      .limit(1);
+
+    if (alreadyInChannel) {
+      res.status(200).json({ message: "User is already in this channel", status: "already_member" });
+      return;
+    }
+
+    await db.insert(channelMembers).values({ channel_id: channelId, user_id: targetUserId });
+    res.status(201).json({ message: "Added to channel", status: "added" });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Failed to add channel member" });

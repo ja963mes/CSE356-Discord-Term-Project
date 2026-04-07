@@ -116,6 +116,9 @@ export async function leaveCommunity(communityId: string): Promise<LeaveCommunit
 }
 
 export type ChannelMutationOk = { ok: true } | { ok: false; error: string };
+export type AddChannelMemberResult =
+  | { ok: true; status: "added" | "already_member" }
+  | { ok: false; error: string };
 
 export type CreateChannelResult = { ok: true; channel: Channel } | { ok: false; error: string };
 
@@ -179,6 +182,31 @@ export async function leaveChannel(communityId: string, channelId: string): Prom
     if (res.status === 200) return { ok: true };
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     return { ok: false, error: data.error ?? "Could not leave channel." };
+  } catch {
+    return { ok: false, error: "Network error." };
+  }
+}
+
+/** Add one community member to a private channel (owner/admin only). */
+export async function addChannelMember(
+  communityId: string,
+  channelId: string,
+  userId: string
+): Promise<AddChannelMemberResult> {
+  try {
+    const res = await fetch(
+      `/communities/${encodeURIComponent(communityId)}/channels/${encodeURIComponent(channelId)}/members`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId }),
+      }
+    );
+    if (res.status === 201) return { ok: true, status: "added" };
+    if (res.status === 200) return { ok: true, status: "already_member" };
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    return { ok: false, error: data.error ?? "Could not add member to channel." };
   } catch {
     return { ok: false, error: "Network error." };
   }

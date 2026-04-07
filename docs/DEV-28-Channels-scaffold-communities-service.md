@@ -69,7 +69,9 @@ Schema copies stay aligned in:
 
 ## Frontend
 
-- `frontend/src/api/discord.ts` — **`Channel`** type extended with optional `position`, `is_private`, `joined` for API compatibility (sidebar can branch on these later).
+- `frontend/src/api/discord.ts` — **`Channel`** type extended with optional `position`, `is_private`, `joined`; includes `addChannelMember(...)` client for private-channel invites.
+- `frontend/src/pages/ChatPage.tsx` — admin affordance (`person_add`) on private channels opens an invite modal.
+- `frontend/src/components/CommunityModals.tsx` — `InvitePrivateChannelMembersModal` lets admins add **individual community members** to the selected private channel.
 
 ---
 
@@ -97,7 +99,7 @@ All completed successfully on the integration branch before push.
 ## Not in scope for this ticket (follow-up)
 
 1. **Messages service (§6):** ~~Authorize `channel_id` using **`channel_members`** before read/write~~ — **done** on `GET/POST /messages`; channel history is in **Cassandra** (`messages_by_channel`). Migration `0008_*` drops Postgres `channel_messages`. Remaining: WebSocket fan-out, edits, pagination UX polish.
-2. **UI (partially done):** Create channel modal, delete channel (admin), join gate when `joined === false`, lock/private affordances, **send message** to channel. **Still missing:** add member to private channel from UI (`POST .../members`), promote member to `admin`, private “request access”.
+2. **UI (partially done):** Create channel modal, delete channel (admin), join gate when `joined === false`, lock/private affordances, **send message** to channel, and add member to private channel from UI (`POST .../members`). **Still missing:** promote member to `admin`, private “request access”.
 3. **Optional:** `GET .../channels-overview?include=recent` once message history APIs exist.
 4. **Optional:** promote member to `admin` via API, private-channel “request access”.
 

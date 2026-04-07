@@ -217,7 +217,7 @@ Users can **create** and **join** communities. A **community** is a named space 
 | `PATCH` | `/communities/:communityId/channels/:channelId` | communities (3002) | Update `name` / `is_private` / `position` (owner/admin) |
 | `POST` | `/communities/:communityId/channels/:channelId/join` | communities (3002) | Join a **public** channel |
 | `POST` | `/communities/:communityId/channels/:channelId/leave` | communities (3002) | Leave channel (drops `channel_members`) |
-| `POST` | `/communities/:communityId/channels/:channelId/members` | communities (3002) | Add user to channel — body `{ "user_id" }` (owner/admin; for private channels) |
+| `POST` | `/communities/:communityId/channels/:channelId/members` | communities (3002) | Add one **community member** to a **private** channel — body `{ "user_id" }` (owner/admin, no role-based bulk add) |
 | `DELETE` | `/communities/:communityId/channels/:channelId` | communities (3002) | Delete channel (owner/admin; cannot delete the last channel in a guild) |
 | `GET` | `/communities/:communityId/members` | communities (3002) | Members with display names and roles |
 | `GET` | `/messages?channelId=&before=&limit=` | messages (3003) | List channel messages (session; must be in `channel_members`) |
