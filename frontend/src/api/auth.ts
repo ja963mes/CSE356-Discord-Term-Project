@@ -43,6 +43,43 @@ export interface Me {
   username: string;
   email: string | null;
   profile: { displayName: string; avatar: string | null };
+  has_password: boolean;
+}
+
+export interface LinkedIdentity {
+  provider: string;
+  created_at: string;
+}
+
+export async function getIdentities(): Promise<LinkedIdentity[]> {
+  const res = await fetch("/auth/identities", { credentials: "include" });
+  if (!res.ok) return [];
+  const data = (await res.json()) as { identities: LinkedIdentity[] };
+  return data.identities;
+}
+
+export async function changePassword(currentPassword: string | undefined, newPassword: string): Promise<void> {
+  const res = await fetch("/auth/password", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? "Failed to update password");
+  }
+}
+
+export async function unlinkProvider(provider: string): Promise<void> {
+  const res = await fetch(`/auth/identities/${provider}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? "Failed to unlink provider");
+  }
 }
 
 export async function getMe(): Promise<Me> {

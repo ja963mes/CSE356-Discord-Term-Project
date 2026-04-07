@@ -9,6 +9,8 @@ import {
   inviteParticipant,
   leaveConversation,
 } from "../api/dms";
+import { DmUser, getDmUsers } from "../api/auth";
+import SearchPanel from "./SearchPanel";
 
 import { IncomingMessage } from "../hooks/useWebSocket";
 
@@ -34,16 +36,28 @@ export default function DmChatView({ conversation, currentUserId, displayNameByU
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [showInvite, setShowInvite] = useState(false);
-  const [inviteUserId, setInviteUserId] = useState("");
+  const [inviteSearch, setInviteSearch] = useState("");
+  const [inviteUsers, setInviteUsers] = useState<DmUser[]>([]);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviting, setInviting] = useState(false);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const conversationId = conversation.conversationId;
   const label = conversation.name ?? (conversation.conversationType === "one_to_one" ? "Direct Message" : "Group DM");
+  const participantSet = new Set(conversation.participantIds);
+
+  // Load available users when invite panel opens
+  useEffect(() => {
+    if (showInvite) {
+      setInviteSearch("");
+      setInviteError(null);
+      getDmUsers().then(setInviteUsers).catch(() => setInviteUsers([]));
+    }
+  }, [showInvite]);
 
   // Load initial messages when conversation changes
   useEffect(() => {
@@ -186,16 +200,12 @@ export default function DmChatView({ conversation, currentUserId, displayNameByU
     }
   }, [wsEvent, conversationId]);
 
-  const handleInvite = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const uid = inviteUserId.trim();
-    if (!uid) return;
+  const handleInvite = async (userId: string) => {
     setInviting(true);
     setInviteError(null);
     try {
-      await inviteParticipant(conversationId, uid);
+      await inviteParticipant(conversationId, userId);
       setShowInvite(false);
-      setInviteUserId("");
     } catch (err) {
       setInviteError(err instanceof Error ? err.message : "Failed to invite");
     } finally {
@@ -216,7 +226,8 @@ export default function DmChatView({ conversation, currentUserId, displayNameByU
   const displayMessages = [...messages].reverse();
 
   return (
-    <section className="flex-1 bg-surface-container flex flex-col relative min-w-0">
+    <section className="flex-1 flex min-w-0">
+      <div className="flex-1 bg-surface-container flex flex-col relative min-w-0">
       {/* Header */}
       <header className="h-16 flex items-center justify-between px-6 w-full bg-[#171a1f]/60 backdrop-blur-xl shadow-sm z-10">
         <div className="flex items-center gap-3">
@@ -228,6 +239,19 @@ export default function DmChatView({ conversation, currentUserId, displayNameByU
           </h1>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowSearch((v) => !v)}
+            className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors ${
+              showSearch
+                ? "text-primary bg-primary/10"
+                : "text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high"
+            }`}
+            title="Search messages"
+          >
+            <span className="material-symbols-outlined text-[18px]">search</span>
+            <span className="hidden sm:inline">Search</span>
+          </button>
           {conversation.conversationType === "group" && (
             <button
               type="button"
@@ -251,33 +275,80 @@ export default function DmChatView({ conversation, currentUserId, displayNameByU
         </div>
       </header>
 
+      {/* Search overlay */}
+      {showSearch && (
+        <SearchPanel
+          scope="dm"
+          conversationId={conversationId}
+          displayNames={displayNameByUserId}
+          onJump={(result) => {
+            setShowSearch(false);
+            // Scroll to message if it's already loaded
+            const el = document.getElementById(`msg-${result.message_id}`);
+            if (el) {
+              el.scrollIntoView({ behavior: "smooth", block: "center" });
+              el.classList.add("ring-1", "ring-primary/50");
+              setTimeout(() => el.classList.remove("ring-1", "ring-primary/50"), 2000);
+            }
+          }}
+          onClose={() => setShowSearch(false)}
+        />
+      )}
+
       {/* Invite panel */}
       {showInvite && (
         <div className="px-6 py-3 bg-surface-container-high border-b border-outline-variant/20">
-          <form onSubmit={handleInvite} className="flex items-center gap-2">
-            <input
-              className="flex-1 bg-surface-container-lowest border-none rounded-lg px-3 py-1.5 text-sm text-on-surface placeholder:text-on-surface-variant focus:ring-1 focus:ring-primary"
-              placeholder="User ID to invite"
-              value={inviteUserId}
-              onChange={(e) => setInviteUserId(e.target.value)}
-              autoFocus
-            />
-            <button
-              type="submit"
-              disabled={inviting || !inviteUserId.trim()}
-              className="text-xs bg-primary text-on-primary px-3 py-1.5 rounded-lg disabled:opacity-50"
-            >
-              {inviting ? "Inviting…" : "Invite"}
-            </button>
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">
+              Invite a member
+            </label>
             <button
               type="button"
-              onClick={() => { setShowInvite(false); setInviteUserId(""); setInviteError(null); }}
+              onClick={() => { setShowInvite(false); setInviteError(null); }}
               className="text-xs text-on-surface-variant hover:text-on-surface"
             >
               Cancel
             </button>
-          </form>
-          {inviteError && <p className="text-xs text-red-400 mt-1">{inviteError}</p>}
+          </div>
+          <input
+            type="text"
+            className="w-full bg-surface-container-lowest border-none rounded-lg px-3 py-1.5 text-sm text-on-surface placeholder:text-on-surface-variant focus:ring-1 focus:ring-primary mb-2"
+            placeholder="Search by username or display name..."
+            value={inviteSearch}
+            onChange={(e) => setInviteSearch(e.target.value)}
+            autoFocus
+          />
+          <div className="max-h-40 overflow-y-auto rounded-lg bg-surface-container-lowest border border-outline-variant/20">
+            {inviteUsers
+              .filter((u) => !participantSet.has(u.internal_id))
+              .filter((u) => {
+                if (!inviteSearch.trim()) return true;
+                const q = inviteSearch.toLowerCase();
+                return u.username.toLowerCase().includes(q) || u.profile.displayName.toLowerCase().includes(q);
+              })
+              .map((u) => (
+                <button
+                  key={u.internal_id}
+                  type="button"
+                  disabled={inviting}
+                  onClick={() => void handleInvite(u.internal_id)}
+                  className="flex items-center gap-3 w-full px-3 py-2 text-on-surface hover:bg-surface-variant/50 transition-colors disabled:opacity-50"
+                >
+                  <div className="w-7 h-7 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant text-xs flex-shrink-0">
+                    {u.profile.displayName.slice(0, 2).toUpperCase()}
+                  </div>
+                  <div className="flex flex-col items-start min-w-0">
+                    <span className="text-sm truncate">{u.profile.displayName}</span>
+                    <span className="text-[10px] text-on-surface-variant truncate">{u.username}</span>
+                  </div>
+                  <span className="material-symbols-outlined text-[18px] text-on-surface-variant ml-auto">person_add</span>
+                </button>
+              ))}
+            {inviteUsers.filter((u) => !participantSet.has(u.internal_id)).length === 0 && (
+              <p className="px-3 py-3 text-sm text-on-surface-variant text-center">No users available to invite.</p>
+            )}
+          </div>
+          {inviteError && <p className="text-xs text-red-400 mt-2">{inviteError}</p>}
         </div>
       )}
 
@@ -332,7 +403,7 @@ export default function DmChatView({ conversation, currentUserId, displayNameByU
           const authorName = authorLabel(m.authorId, displayNameByUserId);
 
           return (
-            <div key={m.messageId} className="flex gap-3 items-start group">
+            <div key={m.messageId} id={`msg-${m.messageId}`} className="flex gap-3 items-start group rounded-lg transition-all">
               <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant text-xs flex-shrink-0">
                 {authorName.slice(0, 2).toUpperCase()}
               </div>
@@ -445,6 +516,32 @@ export default function DmChatView({ conversation, currentUserId, displayNameByU
           </button>
         </form>
       </div>
+      </div>
+
+      {/* Participant sidebar for group DMs */}
+      {conversation.conversationType === "group" && (
+        <aside className="w-56 bg-surface-container-low border-l border-outline-variant/20 flex flex-col flex-shrink-0">
+          <div className="h-16 flex items-center px-4 text-on-surface-variant uppercase text-[10px] font-bold tracking-widest">
+            Members — {conversation.participantIds.length}
+          </div>
+          <div className="flex-1 overflow-y-auto px-2 pb-4 flex flex-col gap-1">
+            {conversation.participantIds.map((pid) => {
+              const name = authorLabel(pid, displayNameByUserId);
+              const isMe = pid === currentUserId;
+              return (
+                <div key={pid} className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-surface-variant/40">
+                  <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant text-xs flex-shrink-0">
+                    {name.slice(0, 2).toUpperCase()}
+                  </div>
+                  <span className="text-sm text-on-surface truncate">
+                    {name}{isMe ? " (you)" : ""}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </aside>
+      )}
     </section>
   );
 }
