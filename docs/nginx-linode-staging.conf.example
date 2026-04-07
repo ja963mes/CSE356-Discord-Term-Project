@@ -1,4 +1,4 @@
-# Nginx — reverse proxy for staging (matches frontend/vite.config.ts path order)
+# Nginx — reverse proxy for full staging (matches frontend/vite.config.ts path order)
 #
 # Copy to /etc/nginx/sites-available/discord-staging, symlink sites-enabled,
 # run `sudo nginx -t` and `sudo systemctl reload nginx`.
@@ -92,8 +92,8 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # Search (port 3004) — optional. Staging typically skips search-service (and Elasticsearch) to save RAM.
-    # Comment out this entire block if search is not running; otherwise GET /search will 502.
+    # Search (port 3004) — keep enabled when running the full staging stack.
+    # If search is intentionally disabled, comment out this block to avoid /search 502s.
     location ^~ /search {
         proxy_pass http://127.0.0.1:3004;
         proxy_set_header Host $host;
