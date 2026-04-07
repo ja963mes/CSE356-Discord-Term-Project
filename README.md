@@ -88,7 +88,9 @@ From the repo root:
 docker compose up -d
 ```
 
-This starts Postgres on host **5433**, Redis on **6379**, and Cassandra on **9042** (see [`docker-compose.yml`](./docker-compose.yml)). Copy [`.env.example`](./.env.example) to `.env` and set `DATABASE_URL` to use port **5433** for the DB. Channel messages (`messages` service) and DMs expect Cassandra reachable at **`127.0.0.1:9042`** by default (see optional `CASSANDRA_*` variables in `.env.example`). Stop with `docker compose down`.
+This starts Postgres on host **5433**, Redis on **6379**, and Cassandra on **9042** (see [`docker-compose.yml`](./docker-compose.yml)). Copy [`.env.example`](./.env.example) to `.env` and set `DATABASE_URL` to use port **5433** for the DB. Channel messages (`messages` service) and DMs expect Cassandra reachable at **`127.0.0.1:9042`** by default (see optional `CASSANDRA_*` variables in `.env.example`).  
+**Note:** Cassandra/Elasticsearch memory caps in this repo are intended as **staging/local safety limits** on small machines, not production sizing recommendations.
+Stop with `docker compose down`.
 
 **Option B — Docker without Compose**
 
@@ -216,8 +218,10 @@ Users can **create** and **join** communities. A **community** is a named space 
 | `POST` | `/communities/:communityId/channels` | communities (3002) | Create channel — body `{ "name", "type?", "is_private?", "position?" }` (owner/admin) |
 | `PATCH` | `/communities/:communityId/channels/:channelId` | communities (3002) | Update `name` / `is_private` / `position` (owner/admin) |
 | `POST` | `/communities/:communityId/channels/:channelId/join` | communities (3002) | Join a **public** channel |
-| `POST` | `/communities/:communityId/channels/:channelId/leave` | communities (3002) | Leave channel (drops `channel_members`) |
+| `POST` | `/communities/:communityId/channels/:channelId/leave` | communities (3002) | Leave channel (drops `channel_members`); admins cannot leave private channels they manage |
+| `GET` | `/communities/:communityId/channels/:channelId/members` | communities (3002) | List members with visibility for a **private** channel (owner/admin) |
 | `POST` | `/communities/:communityId/channels/:channelId/members` | communities (3002) | Add one **community member** to a **private** channel — body `{ "user_id" }` (owner/admin, no role-based bulk add) |
+| `DELETE` | `/communities/:communityId/channels/:channelId/members/:userId` | communities (3002) | Remove one member’s visibility access from a **private** channel (owner/admin; cannot remove yourself) |
 | `DELETE` | `/communities/:communityId/channels/:channelId` | communities (3002) | Delete channel (owner/admin; cannot delete the last channel in a guild) |
 | `GET` | `/communities/:communityId/members` | communities (3002) | Members with display names and roles |
 | `GET` | `/messages?channelId=&before=&limit=` | messages (3003) | List channel messages (session; must be in `channel_members`) |

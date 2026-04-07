@@ -3,8 +3,10 @@ import { useNavigate } from "react-router-dom";
 import {
   addChannelMember,
   Channel,
+  ChannelAccessMember,
   Community,
   deleteChannel,
+  getChannelMembers,
   getCommunityChannels,
   getCommunityMembers,
   getSampleChannels,
@@ -12,6 +14,7 @@ import {
   joinChannel,
   leaveCommunity,
   listCommunities,
+  removeChannelMember,
 } from "../api/discord";
 import { getMe, getDmUsers, logout, Me, DmUser } from "../api/auth";
 import { listConversations } from "../api/dms";
@@ -29,7 +32,7 @@ import CreateDmModal from "../components/CreateDmModal";
 import {
   CreateChannelModal,
   CreateCommunityModal,
-  InvitePrivateChannelMembersModal,
+  ManagePrivateChannelMembersModal,
   JoinCommunityPlaceholderModal,
   ServerActionMenuModal,
 } from "../components/CommunityModals";
@@ -102,6 +105,7 @@ export default function ChatPage() {
   const [leaveError, setLeaveError] = useState<string | null>(null);
   const [showCreateChannel, setShowCreateChannel] = useState(false);
   const [showInviteMembers, setShowInviteMembers] = useState(false);
+  const [selectedChannelMembers, setSelectedChannelMembers] = useState<ChannelAccessMember[]>([]);
   const [guildDataVersion, setGuildDataVersion] = useState(0);
   const guildMenuRef = useRef<HTMLDivElement>(null);
 
@@ -225,8 +229,20 @@ export default function ChatPage() {
     if (!selectedCommunityId || !selectedChannel?.is_private) return { ok: false, message: "No private channel selected." };
     const r = await addChannelMember(selectedCommunityId, selectedChannel.id, userId);
     if (!r.ok) return { ok: false, message: r.error };
+    const refreshed = await getChannelMembers(selectedCommunityId, selectedChannel.id);
+    if (refreshed) setSelectedChannelMembers(refreshed);
     setGuildDataVersion((v) => v + 1);
     return { ok: true, message: r.status === "already_member" ? "Already in channel" : "Added to channel" };
+  }
+
+  async function handleRemoveFromPrivateChannel(userId: string): Promise<{ ok: boolean; message?: string }> {
+    if (!selectedCommunityId || !selectedChannel?.is_private) return { ok: false, message: "No private channel selected." };
+    const r = await removeChannelMember(selectedCommunityId, selectedChannel.id, userId);
+    if (!r.ok) return { ok: false, message: r.error };
+    const refreshed = await getChannelMembers(selectedCommunityId, selectedChannel.id);
+    if (refreshed) setSelectedChannelMembers(refreshed);
+    setGuildDataVersion((v) => v + 1);
+    return { ok: true, message: "Removed from channel" };
   }
 
   function closeCommunityModals() {
@@ -313,12 +329,15 @@ export default function ChatPage() {
           setGuildDataVersion((v) => v + 1);
         }}
       />
-      <InvitePrivateChannelMembersModal
+      <ManagePrivateChannelMembersModal
         open={showInviteMembers}
         onClose={() => setShowInviteMembers(false)}
         channelName={selectedChannel?.name ?? "private-channel"}
-        members={members}
+        currentUserId={me?.internal_id ?? ""}
+        communityMembers={members}
+        channelMembers={selectedChannelMembers}
         onInvite={handleInviteToPrivateChannel}
+        onRemove={handleRemoveFromPrivateChannel}
       />
 
       {/* LEFT PANEL: icon nav + channel list stacked, with shared profile bar at bottom */}
@@ -507,6 +526,14 @@ export default function ChatPage() {
                                   e.stopPropagation();
                                   setSelectedChannelId(c.id);
                                   setViewMode("channel");
+                                  void (async () => {
+                                    if (selectedCommunityId) {
+                                      const rows = await getChannelMembers(selectedCommunityId, c.id);
+                                      setSelectedChannelMembers(rows ?? []);
+                                    } else {
+                                      setSelectedChannelMembers([]);
+                                    }
+                                  })();
                                   setShowInviteMembers(true);
                                 }}
                               >
