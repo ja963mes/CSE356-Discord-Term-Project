@@ -40,6 +40,11 @@ export default defineConfig(({ mode }) => {
         target: messagesTarget,
         changeOrigin: true,
       },
+      // MinIO presign for guild channel attachments (messages service)
+      "/attachments": {
+        target: messagesTarget,
+        changeOrigin: true,
+      },
       // Communities directory search (same service as /communities; match before /search)
       "/search-communities": {
         target: communitiesTarget,

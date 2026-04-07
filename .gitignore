@@ -26,5 +26,8 @@ Thumbs.db
 *.log
 npm-debug.log*
 
+# Local diagnostics output snapshots
+diagnostics/
+
 # Stored Files in Auth
 services/auth/uploads

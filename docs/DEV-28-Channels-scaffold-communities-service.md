@@ -59,8 +59,10 @@ Schema copies stay aligned in:
 | `POST` | `/communities/:communityId/channels` | Body: `name`, optional `type`, `is_private`, `position` |
 | `PATCH` | `/communities/:communityId/channels/:channelId` | `name`, `is_private`, `position`; setting `is_private: false` adds all guild members to `channel_members` |
 | `POST` | `/communities/:communityId/channels/:channelId/join` | **Public** channels only |
-| `POST` | `/communities/:communityId/channels/:channelId/leave` | Remove self from `channel_members` |
+| `POST` | `/communities/:communityId/channels/:channelId/leave` | Remove self from `channel_members` (admins cannot leave private channels they manage) |
+| `GET` | `/communities/:communityId/channels/:channelId/members` | Admin; list visibility members for **private** channels |
 | `POST` | `/communities/:communityId/channels/:channelId/members` | Admin; body `{ "user_id" }` — target must be a community member (used for **private** channels) |
+| `DELETE` | `/communities/:communityId/channels/:channelId/members/:userId` | Admin; remove user visibility from **private** channel (cannot remove self) |
 | `DELETE` | `/communities/:communityId/channels/:channelId` | Admin; cannot delete the last channel in the community |
 
 **Listing guilds:** `GET /communities` includes each row’s **`role`** (`owner` | `admin` | `member`) for the current user.
@@ -69,7 +71,9 @@ Schema copies stay aligned in:
 
 ## Frontend
 
-- `frontend/src/api/discord.ts` — **`Channel`** type extended with optional `position`, `is_private`, `joined` for API compatibility (sidebar can branch on these later).
+- `frontend/src/api/discord.ts` — **`Channel`** type extended with optional `position`, `is_private`, `joined`; includes `addChannelMember(...)` client for private-channel invites.
+- `frontend/src/pages/ChatPage.tsx` — admin affordance opens a channel management modal for private channels.
+- `frontend/src/components/CommunityModals.tsx` — `ManagePrivateChannelMembersModal` shows who has visibility and allows add/remove actions (Discord-like access management flow).
 
 ---
 
@@ -97,7 +101,7 @@ All completed successfully on the integration branch before push.
 ## Not in scope for this ticket (follow-up)
 
 1. **Messages service (§6):** ~~Authorize `channel_id` using **`channel_members`** before read/write~~ — **done** on `GET/POST /messages`; channel history is in **Cassandra** (`messages_by_channel`). Migration `0008_*` drops Postgres `channel_messages`. Remaining: WebSocket fan-out, edits, pagination UX polish.
-2. **UI (partially done):** Create channel modal, delete channel (admin), join gate when `joined === false`, lock/private affordances, **send message** to channel. **Still missing:** add member to private channel from UI (`POST .../members`), promote member to `admin`, private “request access”.
+2. **UI (partially done):** Create channel modal, delete channel (admin), join gate when `joined === false`, lock/private affordances, **send message** to channel, and add member to private channel from UI (`POST .../members`). **Still missing:** promote member to `admin`, private “request access”.
 3. **Optional:** `GET .../channels-overview?include=recent` once message history APIs exist.
 4. **Optional:** promote member to `admin` via API, private-channel “request access”.
 

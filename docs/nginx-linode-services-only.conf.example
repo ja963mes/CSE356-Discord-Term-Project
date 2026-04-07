@@ -1,4 +1,7 @@
-# Nginx — services-only staging (auth + communities + create-community + realtime)
+# Nginx — services-only (auth + communities + create-community + realtime)
+#
+# Use when the frontend runs elsewhere and this host does not run messages/DMs/search.
+# For normal staging with the full API on-box, prefer nginx-linode-staging.conf.example.
 #
 # Use this when the frontend runs on your laptop, and the Linode hosts only:
 #   - auth (3001)
@@ -8,7 +11,8 @@
 #
 # Notes:
 # - Order matters: /search-communities must be before /search.
-# - This file intentionally does NOT proxy /messages, /dms, /search unless you enable them.
+# - This file intentionally does NOT proxy /messages, /attachments, /dms, /search
+#   (run those services locally or switch to nginx-linode-staging.conf.example).
 
 map $http_upgrade $connection_upgrade {
     default upgrade;

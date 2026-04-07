@@ -494,6 +494,10 @@ app.post("/communities/:communityId/channels/:channelId/leave", requireAuth, asy
       res.status(404).json({ error: "Channel not found" });
       return;
     }
+    if (ch.is_private && isCommunityAdminRole(membership.role)) {
+      res.status(400).json({ error: "Community admins cannot leave private channels they manage" });
+      return;
+    }
 
     const removed = await db
       .delete(channelMembers)
@@ -512,7 +516,73 @@ app.post("/communities/:communityId/channels/:channelId/leave", requireAuth, asy
   }
 });
 
-/** Add a community member to a channel (admin only; used for private channels). */
+/** List members with access to a private channel (admin only). */
+app.get("/communities/:communityId/channels/:channelId/members", requireAuth, async (req: Request, res: Response) => {
+  const userId = req.user!.internal_id;
+  const communityId = String(req.params.communityId);
+  const channelId = String(req.params.channelId);
+
+  try {
+    const [adminMembership] = await db
+      .select()
+      .from(communityMembers)
+      .where(and(eq(communityMembers.community_id, communityId), eq(communityMembers.user_id, userId)))
+      .limit(1);
+
+    if (!adminMembership || !isCommunityAdminRole(adminMembership.role)) {
+      res.status(403).json({ error: "Only community administrators can view channel members" });
+      return;
+    }
+
+    const [ch] = await db
+      .select()
+      .from(channels)
+      .where(and(eq(channels.id, channelId), eq(channels.community_id, communityId)))
+      .limit(1);
+
+    if (!ch) {
+      res.status(404).json({ error: "Channel not found" });
+      return;
+    }
+    if (!ch.is_private) {
+      res.status(400).json({ error: "Public channels are visible to all community members" });
+      return;
+    }
+
+    const rows = await db
+      .select({
+        user_id: users.internal_id,
+        username: users.username,
+        profile: users.profile,
+        role: communityMembers.role,
+      })
+      .from(channelMembers)
+      .innerJoin(users, eq(users.internal_id, channelMembers.user_id))
+      .innerJoin(
+        communityMembers,
+        and(eq(communityMembers.community_id, communityId), eq(communityMembers.user_id, channelMembers.user_id))
+      )
+      .where(eq(channelMembers.channel_id, channelId))
+      .orderBy(asc(users.username));
+
+    const members = rows.map((row) => {
+      const profile = (row.profile as { displayName?: string } | null) ?? {};
+      return {
+        user_id: row.user_id,
+        username: row.username,
+        display_name: profile.displayName ?? row.username,
+        role: row.role,
+      };
+    });
+
+    res.json({ members });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to list channel members" });
+  }
+});
+
+/** Add a community member to a private channel (admin only; user-by-user invites). */
 app.post("/communities/:communityId/channels/:channelId/members", requireAuth, async (req: Request, res: Response) => {
   const userId = req.user!.internal_id;
   const communityId = String(req.params.communityId);
@@ -546,6 +616,10 @@ app.post("/communities/:communityId/channels/:channelId/members", requireAuth, a
       res.status(404).json({ error: "Channel not found" });
       return;
     }
+    if (!ch.is_private) {
+      res.status(400).json({ error: "Only private channels need member invites" });
+      return;
+    }
 
     const [targetMembership] = await db
       .select()
@@ -558,11 +632,77 @@ app.post("/communities/:communityId/channels/:channelId/members", requireAuth, a
       return;
     }
 
-    await db.insert(channelMembers).values({ channel_id: channelId, user_id: targetUserId }).onConflictDoNothing();
-    res.status(201).json({ message: "Added to channel" });
+    const [alreadyInChannel] = await db
+      .select()
+      .from(channelMembers)
+      .where(and(eq(channelMembers.channel_id, channelId), eq(channelMembers.user_id, targetUserId)))
+      .limit(1);
+
+    if (alreadyInChannel) {
+      res.status(200).json({ message: "User is already in this channel", status: "already_member" });
+      return;
+    }
+
+    await db.insert(channelMembers).values({ channel_id: channelId, user_id: targetUserId });
+    res.status(201).json({ message: "Added to channel", status: "added" });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Failed to add channel member" });
+  }
+});
+
+/** Remove a member from a private channel (admin only). */
+app.delete("/communities/:communityId/channels/:channelId/members/:targetUserId", requireAuth, async (req: Request, res: Response) => {
+  const userId = req.user!.internal_id;
+  const communityId = String(req.params.communityId);
+  const channelId = String(req.params.channelId);
+  const targetUserId = String(req.params.targetUserId);
+
+  try {
+    const [adminMembership] = await db
+      .select()
+      .from(communityMembers)
+      .where(and(eq(communityMembers.community_id, communityId), eq(communityMembers.user_id, userId)))
+      .limit(1);
+
+    if (!adminMembership || !isCommunityAdminRole(adminMembership.role)) {
+      res.status(403).json({ error: "Only community administrators can remove channel members" });
+      return;
+    }
+
+    const [ch] = await db
+      .select()
+      .from(channels)
+      .where(and(eq(channels.id, channelId), eq(channels.community_id, communityId)))
+      .limit(1);
+
+    if (!ch) {
+      res.status(404).json({ error: "Channel not found" });
+      return;
+    }
+    if (!ch.is_private) {
+      res.status(400).json({ error: "Public channels are visible to all community members" });
+      return;
+    }
+    if (targetUserId === userId) {
+      res.status(400).json({ error: "Admins cannot remove their own access from private channels" });
+      return;
+    }
+
+    const removed = await db
+      .delete(channelMembers)
+      .where(and(eq(channelMembers.channel_id, channelId), eq(channelMembers.user_id, targetUserId)))
+      .returning({ user_id: channelMembers.user_id });
+
+    if (removed.length === 0) {
+      res.status(404).json({ error: "User is not a member of this channel" });
+      return;
+    }
+
+    res.status(204).send();
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to remove channel member" });
   }
 });
 

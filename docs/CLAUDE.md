@@ -73,7 +73,7 @@ Channel lifecycle and ACLs live on the **communities service (3002)** — no sep
 
 **Still to do for section 4 / cross-cutting**  
 - **messages**: ~~authorize channel reads/writes~~ — implemented on messages service; optional “join” UX polish.  
-- **Frontend**: add users to private (`POST .../members`); promote `admin`.  
+- **Frontend**: promote `admin`; private-channel request-access flow (channel member management UI is implemented).  
 - Optional: **`GET .../channels-overview?include=recent`** for one round-trip with message previews (after messages API exists).  
 - Optional: promote members to `admin` role (schema already allows `admin` string).
 
@@ -125,7 +125,7 @@ Channel lifecycle and ACLs live on the **communities service (3002)** — no sep
 - `services/auth/src/index.ts` has duplicate `GET /` handlers — first one (requireAuth) wins, unauthenticated users get 401 JSON instead of redirect
 - Stub services return hardcoded data; frontend falls back to sample data if services are down
 - `passport` is installed but not actively used (sessions bypass it)
-- nginx/reverse proxy not yet set up
+- Staging nginx examples live in `docs/nginx-linode-*.conf.example` (see README proxy map)
 - RabbitMQ not yet integrated (needed for inter-service events)
 
 ## Frontend Proxy Config (vite.config.ts)
@@ -136,6 +136,7 @@ Channel lifecycle and ACLs live on the **communities service (3002)** — no sep
 /search-communities → localhost:3002
 /channels           → localhost:3002 (legacy path; channel APIs use `/communities/.../channels`)
 /messages           → localhost:3003
+/attachments        → localhost:3003 (presign for guild channel uploads)
 /search             → localhost:3004
 /ws                 → localhost:3005 (WebSocket)
 /dms                → localhost:3007

@@ -40,7 +40,7 @@ services:
     environment:
       MAX_HEAP_SIZE: ${CASSANDRA_MAX_HEAP:-512M}
       HEAP_NEWSIZE: ${CASSANDRA_HEAP_NEW:-128M}
-    mem_limit: ${CASSANDRA_MEM_LIMIT:-1536m}
+    mem_limit: ${CASSANDRA_MEM_LIMIT:-512m}
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
@@ -49,6 +49,7 @@ services:
       - discovery.type=single-node
       - xpack.security.enabled=false
       - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    mem_limit: ${ELASTICSEARCH_MEM_LIMIT:-512m}
     ports:
       - "${ELASTICSEARCH_PORT:-9200}:9200"
     volumes:

@@ -1,9 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+  addChannelMember,
   Channel,
+  ChannelAccessMember,
   Community,
   deleteChannel,
+  getChannelMembers,
   getCommunityChannels,
   getCommunityMembers,
   getSampleChannels,
@@ -11,6 +14,7 @@ import {
   joinChannel,
   leaveCommunity,
   listCommunities,
+  removeChannelMember,
 } from "../api/discord";
 import { getMe, getDmUsers, logout, Me, DmUser } from "../api/auth";
 import { listConversations } from "../api/dms";
@@ -28,6 +32,7 @@ import CreateDmModal from "../components/CreateDmModal";
 import {
   CreateChannelModal,
   CreateCommunityModal,
+  ManagePrivateChannelMembersModal,
   JoinCommunityPlaceholderModal,
   ServerActionMenuModal,
 } from "../components/CommunityModals";
@@ -99,6 +104,8 @@ export default function ChatPage() {
   const [leaveBusy, setLeaveBusy] = useState(false);
   const [leaveError, setLeaveError] = useState<string | null>(null);
   const [showCreateChannel, setShowCreateChannel] = useState(false);
+  const [showInviteMembers, setShowInviteMembers] = useState(false);
+  const [selectedChannelMembers, setSelectedChannelMembers] = useState<ChannelAccessMember[]>([]);
   const [guildDataVersion, setGuildDataVersion] = useState(0);
   const guildMenuRef = useRef<HTMLDivElement>(null);
 
@@ -218,6 +225,26 @@ export default function ChatPage() {
     window.alert(r.error);
   }
 
+  async function handleInviteToPrivateChannel(userId: string): Promise<{ ok: boolean; message?: string }> {
+    if (!selectedCommunityId || !selectedChannel?.is_private) return { ok: false, message: "No private channel selected." };
+    const r = await addChannelMember(selectedCommunityId, selectedChannel.id, userId);
+    if (!r.ok) return { ok: false, message: r.error };
+    const refreshed = await getChannelMembers(selectedCommunityId, selectedChannel.id);
+    if (refreshed) setSelectedChannelMembers(refreshed);
+    setGuildDataVersion((v) => v + 1);
+    return { ok: true, message: r.status === "already_member" ? "Already in channel" : "Added to channel" };
+  }
+
+  async function handleRemoveFromPrivateChannel(userId: string): Promise<{ ok: boolean; message?: string }> {
+    if (!selectedCommunityId || !selectedChannel?.is_private) return { ok: false, message: "No private channel selected." };
+    const r = await removeChannelMember(selectedCommunityId, selectedChannel.id, userId);
+    if (!r.ok) return { ok: false, message: r.error };
+    const refreshed = await getChannelMembers(selectedCommunityId, selectedChannel.id);
+    if (refreshed) setSelectedChannelMembers(refreshed);
+    setGuildDataVersion((v) => v + 1);
+    return { ok: true, message: "Removed from channel" };
+  }
+
   function closeCommunityModals() {
     setCommunityModal("none");
   }
@@ -301,6 +328,16 @@ export default function ChatPage() {
         onCreated={async () => {
           setGuildDataVersion((v) => v + 1);
         }}
+      />
+      <ManagePrivateChannelMembersModal
+        open={showInviteMembers}
+        onClose={() => setShowInviteMembers(false)}
+        channelName={selectedChannel?.name ?? "private-channel"}
+        currentUserId={me?.internal_id ?? ""}
+        communityMembers={members}
+        channelMembers={selectedChannelMembers}
+        onInvite={handleInviteToPrivateChannel}
+        onRemove={handleRemoveFromPrivateChannel}
       />
 
       {/* LEFT PANEL: icon nav + channel list stacked, with shared profile bar at bottom */}
@@ -478,18 +515,44 @@ export default function ChatPage() {
                           </button>
                         ) : null}
                         {isGuildAdmin && usingLiveCommunities ? (
-                          <button
-                            type="button"
-                            title="Delete channel"
-                            className="shrink-0 p-1 rounded opacity-0 group-hover/ch:opacity-100 hover:bg-red-500/20 text-red-400"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              void handleDeleteChannel(c.id);
-                            }}
-                          >
-                            <span className="material-symbols-outlined text-[16px]">delete</span>
-                          </button>
+                          <>
+                            {c.is_private ? (
+                              <button
+                                type="button"
+                                title="Add members"
+                                className="shrink-0 p-1 rounded opacity-0 group-hover/ch:opacity-100 hover:bg-[#5865F2]/20 text-[#8ea1ff]"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setSelectedChannelId(c.id);
+                                  setViewMode("channel");
+                                  void (async () => {
+                                    if (selectedCommunityId) {
+                                      const rows = await getChannelMembers(selectedCommunityId, c.id);
+                                      setSelectedChannelMembers(rows ?? []);
+                                    } else {
+                                      setSelectedChannelMembers([]);
+                                    }
+                                  })();
+                                  setShowInviteMembers(true);
+                                }}
+                              >
+                                <span className="material-symbols-outlined text-[16px]">person_add</span>
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              title="Delete channel"
+                              className="shrink-0 p-1 rounded opacity-0 group-hover/ch:opacity-100 hover:bg-red-500/20 text-red-400"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                void handleDeleteChannel(c.id);
+                              }}
+                            >
+                              <span className="material-symbols-outlined text-[16px]">delete</span>
+                            </button>
+                          </>
                         ) : null}
                       </div>
                     );
