@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import type { Community } from "../api/discord";
+import type { Community, CommunityMember } from "../api/discord";
 import { createChannel, joinCommunity, searchCommunities } from "../api/discord";
 import { createCommunity } from "../services/createCommunity";
 
@@ -405,6 +405,109 @@ export function CreateChannelModal({ open, onClose, communityId, onCreated }: Cr
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+type InvitePrivateChannelMembersModalProps = {
+  open: boolean;
+  onClose: () => void;
+  channelName: string;
+  members: CommunityMember[];
+  onInvite: (userId: string) => Promise<{ ok: boolean; message?: string }>;
+};
+
+export function InvitePrivateChannelMembersModal({
+  open,
+  onClose,
+  channelName,
+  members,
+  onInvite,
+}: InvitePrivateChannelMembersModalProps) {
+  const [query, setQuery] = useState("");
+  const [busyUserId, setBusyUserId] = useState<string | null>(null);
+  const [rowMessageById, setRowMessageById] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!open) return;
+    setQuery("");
+    setBusyUserId(null);
+    setRowMessageById({});
+  }, [open]);
+
+  if (!open) return null;
+
+  const filtered = members.filter((m) => {
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    return m.display_name.toLowerCase().includes(q) || m.username.toLowerCase().includes(q);
+  });
+
+  async function handleInvite(userId: string) {
+    if (busyUserId) return;
+    setBusyUserId(userId);
+    const result = await onInvite(userId);
+    setRowMessageById((prev) => ({
+      ...prev,
+      [userId]: result.ok ? (result.message ?? "Invited") : (result.message ?? "Invite failed"),
+    }));
+    setBusyUserId(null);
+  }
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" role="dialog" aria-modal="true">
+      <button type="button" className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} aria-label="Close" />
+      <div className="relative w-full max-w-md rounded-xl bg-[#1e2128] border border-white/10 shadow-2xl p-6 z-[101]">
+        <h2 className="text-xl font-bold text-[#f6f6fc] font-headline mb-2">Add members to #{channelName}</h2>
+        <p className="text-sm text-[#b5bac1] mb-4">
+          Invite individual community members to this private channel.
+        </p>
+
+        <input
+          className="w-full bg-[#111318] border border-white/10 text-[#f6f6fc] rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#5865F2] placeholder:text-[#6d737a] mb-4"
+          placeholder="Search members"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+
+        <div className="max-h-[340px] overflow-y-auto pr-1 space-y-2">
+          {filtered.length === 0 ? (
+            <p className="text-sm text-[#b5bac1]">No members found.</p>
+          ) : (
+            filtered.map((m) => (
+              <div key={m.user_id} className="px-3 py-2 rounded-lg bg-[#14171d] border border-white/5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-[#f6f6fc] truncate">{m.display_name}</p>
+                    <p className="text-[11px] text-[#b5bac1] truncate">@{m.username}</p>
+                    {rowMessageById[m.user_id] ? (
+                      <p className="text-[10px] text-[#b5bac1] mt-1 truncate">{rowMessageById[m.user_id]}</p>
+                    ) : null}
+                  </div>
+                  <button
+                    type="button"
+                    disabled={busyUserId !== null}
+                    onClick={() => void handleInvite(m.user_id)}
+                    className="px-3 py-1.5 rounded-lg text-[12px] font-semibold bg-[#5865F2] hover:bg-[#4752c4] text-white border border-white/10 disabled:opacity-50"
+                  >
+                    {busyUserId === m.user_id ? "Adding…" : "Add"}
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="flex justify-end mt-5">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-6 py-2 rounded-lg text-sm font-semibold bg-[#2b2d31] hover:bg-[#35373c] text-[#f6f6fc] transition-colors"
+          >
+            Close
+          </button>
+        </div>
       </div>
     </div>
   );
