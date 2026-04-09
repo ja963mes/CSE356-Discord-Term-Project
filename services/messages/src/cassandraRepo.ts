@@ -125,14 +125,3 @@ export async function listChannelMessages(
     attachmentKeys: (row.get("attachment_keys") as string[] | null) ?? [],
   }));
 }
-
-export async function getLatestChannelMessageTimeuuid(channelId: string): Promise<string | null> {
-  const result = await cassandra.execute(
-    `SELECT created_at FROM ${ks()}.messages_by_channel WHERE channel_id = ? LIMIT 1`,
-    [types.Uuid.fromString(channelId)],
-    { prepare: true, consistency: readConsistency }
-  );
-  const row = result.rows[0];
-  if (!row) return null;
-  return (row.get("created_at") as types.TimeUuid).toString();
-}

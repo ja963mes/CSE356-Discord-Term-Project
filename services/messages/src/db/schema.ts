@@ -2,7 +2,7 @@
  * Must stay aligned with `services/auth/src/db/schema.ts`.
  */
 
-import { pgTable, uuid, text, jsonb, timestamp, unique, integer, primaryKey, boolean, index } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, jsonb, timestamp, unique, integer, primaryKey, boolean } from "drizzle-orm/pg-core";
 
 export const users = pgTable("users", {
   internal_id: uuid("internal_id").primaryKey().defaultRandom(),
@@ -81,19 +81,3 @@ export const channelMembers = pgTable(
   })
 );
 
-export const readState = pgTable(
-  "read_state",
-  {
-    user_id: uuid("user_id")
-      .notNull()
-      .references(() => users.internal_id, { onDelete: "cascade" }),
-    context_type: text("context_type").notNull(),
-    context_id: uuid("context_id").notNull(),
-    last_read_timeuuid: text("last_read_timeuuid").notNull(),
-    updated_at: timestamp("updated_at").notNull().defaultNow(),
-  },
-  (table) => ({
-    pk: primaryKey({ columns: [table.user_id, table.context_type, table.context_id] }),
-    user_context_idx: index("read_state_user_context_idx").on(table.user_id, table.context_type),
-  })
-);

@@ -16,7 +16,6 @@ import {
   leaveConversation,
   listConversations,
   listMessages,
-  markConversationRead,
 } from "./dm/service";
 
 export const app = express();
@@ -88,10 +87,6 @@ const editMessageSchema = z.object({
 });
 
 const deleteMessageSchema = z.object({
-  timeuuid: z.string().min(1),
-});
-
-const readStateSchema = z.object({
   timeuuid: z.string().min(1),
 });
 
@@ -167,17 +162,6 @@ app.get("/dms/:id/messages", requireAuth, async (req, res, next) => {
       before,
     });
     res.json(result);
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.post("/dms/:id/read-state", requireAuth, async (req, res, next) => {
-  try {
-    const conversationId = z.string().uuid().parse(req.params.id);
-    const { timeuuid } = readStateSchema.parse(req.body);
-    await markConversationRead(conversationId, req.user.internal_id, timeuuid);
-    res.status(204).send();
   } catch (error) {
     next(error);
   }

@@ -7,8 +7,6 @@ export type Conversation = {
   participantIds: string[];
   createdAt: string;
   updatedAt: string;
-  lastReadTimeuuid?: string | null;
-  hasUnread?: boolean;
 };
 
 export type DmMessage = {
@@ -117,12 +115,4 @@ export async function deleteMessage(
     `/dms/${conversationId}/messages/${messageId}?timeuuid=${encodeURIComponent(timeuuid)}`,
     { method: "DELETE" }
   );
-}
-
-export async function markConversationRead(conversationId: string, timeuuid: string): Promise<void> {
-  await fetchApi(`/dms/${conversationId}/read-state`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ timeuuid }),
-  });
 }

@@ -3,7 +3,7 @@ import { uuidv4, uuidv5 } from "../uuid";
 import { and, eq, inArray } from "drizzle-orm";
 import { cassandra } from "../db";
 import { pg } from "../db/pg";
-import { directConversations, dmParticipants, readState } from "../db/pgSchema";
+import { directConversations, dmParticipants } from "../db/pgSchema";
 import { publishDmEvent } from "../events";
 import { keyToUrl } from "../minio";
 
@@ -20,8 +20,6 @@ export type ConversationRecord = {
   participantIds: string[];
   createdAt: string;
   updatedAt: string;
-  lastReadTimeuuid?: string | null;
-  hasUnread?: boolean;
 };
 
 export type MessageRecord = {
@@ -41,9 +39,6 @@ export type MessageRecord = {
 
 const toUuid = (value: string): cassandraTypes.Uuid => cassandraTypes.Uuid.fromString(value);
 const toTimeUuid = (value: string): cassandraTypes.TimeUuid => cassandraTypes.TimeUuid.fromString(value);
-
-const compareTimeuuids = (a: string, b: string): number =>
-  toTimeUuid(a).getBuffer().compare(toTimeUuid(b).getBuffer());
 
 export class DmError extends Error {
   constructor(public statusCode: number, message: string) {
@@ -111,67 +106,6 @@ const touchConversation = async (conversationId: string): Promise<void> => {
     .where(eq(directConversations.id, conversationId));
 };
 
-const getLatestConversationMessageTimeuuid = async (conversationId: string): Promise<string | null> => {
-  const result = await cassandra.execute(
-    `SELECT created_at FROM messages_by_conversation WHERE conversation_id = ? LIMIT 1`,
-    [toUuid(conversationId)],
-    { prepare: true }
-  );
-  const row = result.rows[0];
-  if (!row) return null;
-  return (row.get("created_at") as cassandraTypes.TimeUuid).toString();
-};
-
-const upsertDmReadState = async (userId: string, conversationId: string, timeuuid: string): Promise<void> => {
-  const inserted = await pg.insert(readState).values({
-      user_id: userId,
-      context_type: "dm",
-      context_id: conversationId,
-      last_read_timeuuid: timeuuid,
-      updated_at: nowDate(),
-    })
-    .onConflictDoNothing()
-    .returning({ last_read_timeuuid: readState.last_read_timeuuid });
-
-  if (inserted.length > 0) {
-    return;
-  }
-
-  const [existing] = await pg
-    .select({ last_read_timeuuid: readState.last_read_timeuuid })
-    .from(readState)
-    .where(and(
-      eq(readState.user_id, userId),
-      eq(readState.context_type, "dm"),
-      eq(readState.context_id, conversationId),
-    ))
-    .limit(1);
-
-  if (!existing || compareTimeuuids(timeuuid, existing.last_read_timeuuid) <= 0) {
-    return;
-  }
-
-  await pg
-    .update(readState)
-    .set({ last_read_timeuuid: timeuuid, updated_at: nowDate() })
-    .where(and(
-      eq(readState.user_id, userId),
-      eq(readState.context_type, "dm"),
-      eq(readState.context_id, conversationId),
-    ));
-};
-
-const ensureConversationMessageExists = async (conversationId: string, timeuuid: string): Promise<void> => {
-  const result = await cassandra.execute(
-    `SELECT created_at FROM messages_by_conversation WHERE conversation_id = ? AND created_at = ? LIMIT 1`,
-    [toUuid(conversationId), toTimeUuid(timeuuid)],
-    { prepare: true }
-  );
-  if (result.rowLength === 0) {
-    throw new DmError(404, "Message not found");
-  }
-};
-
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 export const listConversations = async (userId: string): Promise<ConversationRecord[]> => {
@@ -199,31 +133,16 @@ export const listConversations = async (userId: string): Promise<ConversationRec
     participantMap.set(p.conversation_id, list);
   }
 
-  const readRows = await pg
-    .select({
-      context_id: readState.context_id,
-      last_read_timeuuid: readState.last_read_timeuuid,
-    })
-    .from(readState)
-    .where(and(eq(readState.user_id, userId), eq(readState.context_type, "dm")));
-  const readMap = new Map(readRows.map((row) => [row.context_id, row.last_read_timeuuid]));
-
-  const withUnread = await Promise.all(conversations.map(async (conv) => {
-    const latestTimeuuid = await getLatestConversationMessageTimeuuid(conv.id);
-    const lastReadTimeuuid = readMap.get(conv.id) ?? null;
-    return {
+  return conversations
+    .map((conv) => ({
       conversationId: conv.id,
       conversationType: conv.type as ConversationType,
       name: conv.name,
       participantIds: participantMap.get(conv.id) ?? [],
       createdAt: conv.created_at.toISOString(),
       updatedAt: conv.updated_at.toISOString(),
-      lastReadTimeuuid,
-      hasUnread: latestTimeuuid != null && (!lastReadTimeuuid || compareTimeuuids(latestTimeuuid, lastReadTimeuuid) > 0),
-    };
-  }));
-
-  return withUnread.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    }))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 };
 
 export const createConversation = async (params: {
@@ -634,13 +553,4 @@ export const deleteMessage = async (params: {
     messageId: params.messageId,
     authorId: params.authorId,
   });
-};
-
-export const markConversationRead = async (conversationId: string, userId: string, timeuuid: string): Promise<void> => {
-  if (!(await isParticipant(conversationId, userId))) {
-    throw new DmError(403, "Only participants can update read state");
-  }
-
-  await ensureConversationMessageExists(conversationId, timeuuid);
-  await upsertDmReadState(userId, conversationId, timeuuid);
 };
