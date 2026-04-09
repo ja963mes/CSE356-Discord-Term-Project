@@ -7,6 +7,7 @@ import {
   deleteChannelMessage,
   presignAttachments,
   uploadToMinIO,
+  markChannelRead,
 } from "../api/discord";
 import { IncomingMessage } from "../hooks/useWebSocket";
 import SearchPanel from "./SearchPanel";
@@ -19,6 +20,7 @@ interface Props {
   currentUserId: string;
   currentUsername: string;
   wsEvent?: IncomingMessage | null;
+  onReadStateUpdated?: (channelId: string, timeuuid: string) => void;
 }
 
 const MAX_ATTACHMENTS = 4;
@@ -32,6 +34,7 @@ export default function ChannelChatView({
   currentUserId,
   currentUsername,
   wsEvent,
+  onReadStateUpdated,
 }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [oldestTimeuuid, setOldestTimeuuid] = useState<string | null>(null);
@@ -51,6 +54,15 @@ export default function ChannelChatView({
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
+  const lastMarkedRef = useRef<string | null>(null);
+
+  const markLatestRead = useCallback(async (timeuuid: string | null | undefined) => {
+    if (!timeuuid || lastMarkedRef.current === timeuuid) return;
+    const ok = await markChannelRead(channelId, timeuuid);
+    if (!ok) return;
+    lastMarkedRef.current = timeuuid;
+    onReadStateUpdated?.(channelId, timeuuid);
+  }, [channelId, onReadStateUpdated]);
 
   // Load initial messages when channel changes
   useEffect(() => {
@@ -60,16 +72,18 @@ export default function ChannelChatView({
     setComposerText("");
     setPendingFiles([]);
     setEditingId(null);
+    lastMarkedRef.current = null;
 
     getMessages(channelId)
       .then((msgs) => {
         setMessages(msgs);
         if (msgs.length > 0) setOldestTimeuuid(msgs[0].timeuuid);
         if (msgs.length < 50) setHasMore(false);
+        void markLatestRead(msgs[msgs.length - 1]?.timeuuid ?? null);
         setTimeout(() => bottomRef.current?.scrollIntoView(), 50);
       })
       .catch(() => setMessages([]));
-  }, [channelId]);
+  }, [channelId, markLatestRead]);
 
   // Infinite scroll — load older messages
   const loadOlder = useCallback(async () => {
@@ -126,6 +140,7 @@ export default function ChannelChatView({
         return [...prev, msg];
       });
       if (atBottomRef.current) {
+        void markLatestRead(msg.timeuuid);
         setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
       }
     } else if (e.type === "channel:message:edit") {
@@ -142,7 +157,7 @@ export default function ChannelChatView({
       const messageId = String(e.messageId ?? "");
       setMessages((prev) => prev.filter((m) => m.id !== messageId));
     }
-  }, [wsEvent, channelId]);
+  }, [wsEvent, channelId, markLatestRead]);
 
   // Send message
   const handleSend = async (e: React.FormEvent) => {
@@ -173,6 +188,7 @@ export default function ChannelChatView({
         setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
         setComposerText("");
         setPendingFiles([]);
+        void markLatestRead(msg.timeuuid);
         setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
       }
     } finally {

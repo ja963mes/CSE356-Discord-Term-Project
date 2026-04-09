@@ -7,6 +7,7 @@ import {
   Community,
   deleteChannel,
   getChannelMembers,
+  getChannelReadState,
   getCommunityChannels,
   getCommunityMembers,
   getSampleChannels,
@@ -41,6 +42,29 @@ type CommunityModal = "none" | "menu" | "create" | "join";
 type ViewMode = "channel" | "dm";
 type ActivePanel = "home" | "server";
 
+function timeuuidOrderValue(value: string | null | undefined): bigint | null {
+  if (!value) return null;
+  const parts = value.toLowerCase().split("-");
+  if (parts.length !== 5) return null;
+  try {
+    const timeLow = BigInt(`0x${parts[0]}`);
+    const timeMid = BigInt(`0x${parts[1]}`);
+    const timeHiAndVersion = BigInt(`0x${parts[2]}`);
+    const timeHi = timeHiAndVersion & 0x0fffn;
+    return (timeHi << 48n) | (timeMid << 32n) | timeLow;
+  } catch {
+    return null;
+  }
+}
+
+function isTimeuuidAfter(a: string | null | undefined, b: string | null | undefined): boolean {
+  const aVal = timeuuidOrderValue(a);
+  const bVal = timeuuidOrderValue(b);
+  if (aVal == null) return false;
+  if (bVal == null) return true;
+  return aVal > bVal;
+}
+
 export default function ChatPage() {
   const navigate = useNavigate();
   const [me, setMe] = useState<Me | null>(null);
@@ -56,6 +80,9 @@ export default function ChatPage() {
   const [showCreateDm, setShowCreateDm] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("dm");
   const [activePanel, setActivePanel] = useState<ActivePanel>("home");
+  const [channelUnreadById, setChannelUnreadById] = useState<Record<string, boolean>>({});
+  const [dmUnreadById, setDmUnreadById] = useState<Record<string, boolean>>({});
+  const [dmLastReadById, setDmLastReadById] = useState<Record<string, string | null>>({});
 
   const { handleMessage: handlePresenceMessage, getPresence } = usePresence();
   const {
@@ -72,11 +99,27 @@ export default function ChatPage() {
 
   const handleMessage = useCallback((msg: IncomingMessage) => {
     console.log("[ws] incoming:", msg);
-    handlePresenceMessage(msg);
-    handleDmMessage(msg);
-    handleCommunityMessage(msg, selectedCommunityIdRef.current);
-    if (typeof msg.type === "string" && msg.type.startsWith("channel:")) {
-      setLatestChannelEvent(msg);
+    try {
+      handlePresenceMessage(msg);
+    } catch (err) {
+      console.error("[ws] presence handler failed:", err, msg);
+    }
+    try {
+      handleDmMessage(msg);
+    } catch (err) {
+      console.error("[ws] DM handler failed:", err, msg);
+    }
+    try {
+      handleCommunityMessage(msg, selectedCommunityIdRef.current);
+    } catch (err) {
+      console.error("[ws] community handler failed:", err, msg);
+    }
+    try {
+      if (typeof msg.type === "string" && msg.type.startsWith("channel:")) {
+        setLatestChannelEvent(msg);
+      }
+    } catch (err) {
+      console.error("[ws] channel event handler failed:", err, msg);
     }
   }, [handlePresenceMessage, handleDmMessage, handleCommunityMessage]);
 
@@ -88,7 +131,21 @@ export default function ChatPage() {
           getDmUsers().then(setDmUsers).catch((err) => { console.error("[ChatPage] getDmUsers failed:", err); setDmUsers([]); }),
           listConversations().then((convs) => {
             setDmConversations(convs);
-            if (convs.length > 0) setSelectedDmId(convs[0].conversationId);
+            const initialSelectedId = convs[0]?.conversationId ?? null;
+            setDmUnreadById((prev) => {
+              const next = Object.fromEntries(
+                convs.map((conv) => [conv.conversationId, conv.conversationId === initialSelectedId ? false : conv.hasUnread === true])
+              );
+              for (const [conversationId, unread] of Object.entries(prev)) {
+                if (unread === false) next[conversationId] = false;
+              }
+              return next;
+            });
+            setDmLastReadById((prev) => ({
+              ...prev,
+              ...Object.fromEntries(convs.map((conv) => [conv.conversationId, conv.lastReadTimeuuid ?? null])),
+            }));
+            if (initialSelectedId) setSelectedDmId(initialSelectedId);
           }).catch((err) => { console.error("[ChatPage] listConversations failed:", err); setDmConversations([]); }),
         ]);
       })
@@ -120,6 +177,7 @@ export default function ChatPage() {
       setGuildName("The Obsidian Architect");
       setChannels(getSampleChannels());
       setMembers(getSampleMembers());
+      setChannelUnreadById({});
       return;
     }
     setUsingLiveCommunities(true);
@@ -137,6 +195,7 @@ export default function ChatPage() {
       setGuildName("No community yet");
       setChannels([]);
       setMembers([]);
+      setChannelUnreadById({});
     }
   }, []);
 
@@ -166,9 +225,68 @@ export default function ChatPage() {
         setChannels([]);
       }
       setMembers(mems ?? []);
+
+      const readStates = await getChannelReadState(selectedCommunityId);
+      if (!cancelled) {
+        setChannelUnreadById((prev) => {
+          const next = Object.fromEntries((readStates ?? []).map((row) => [row.channelId, row.hasUnread]));
+          if (viewMode === "channel" && selectedCommunityIdRef.current === selectedCommunityId) {
+            const openChannelId = selectedChannelId;
+            if (openChannelId) next[openChannelId] = false;
+          }
+          for (const [channelId, unread] of Object.entries(prev)) {
+            if (unread === false) next[channelId] = false;
+          }
+          return next;
+        });
+      }
     })();
     return () => { cancelled = true; };
-  }, [usingLiveCommunities, selectedCommunityId, guildDataVersion]);
+  }, [usingLiveCommunities, selectedCommunityId, guildDataVersion, selectedChannelId, viewMode]);
+
+  useEffect(() => {
+    if (viewMode === "dm" && selectedDmId) {
+      setDmUnreadById((prev) => ({ ...prev, [selectedDmId]: false }));
+    }
+  }, [viewMode, selectedDmId]);
+
+  useEffect(() => {
+    if (viewMode === "channel" && selectedChannelId) {
+      setChannelUnreadById((prev) => ({ ...prev, [selectedChannelId]: false }));
+    }
+  }, [viewMode, selectedChannelId]);
+
+  useEffect(() => {
+    if (!latestDmEvent || !me || latestDmEvent.type !== "dm:message:create") return;
+    const convId = typeof latestDmEvent.conversationId === "string" ? latestDmEvent.conversationId : null;
+    const raw =
+      latestDmEvent.message && typeof latestDmEvent.message === "object" && latestDmEvent.message !== null
+        ? latestDmEvent.message as Record<string, unknown>
+        : null;
+    const authorId = raw ? String(raw.authorId ?? "") : "";
+    const timeuuid = raw ? String(raw.timeuuid ?? "") : "";
+    if (!convId || authorId === me.internal_id) return;
+    const lastRead = dmLastReadById[convId] ?? null;
+    if (lastRead && !isTimeuuidAfter(timeuuid, lastRead)) return;
+    const isOpen = viewMode === "dm" && selectedDmId === convId;
+    if (!isOpen) {
+      setDmUnreadById((prev) => ({ ...prev, [convId]: true }));
+    }
+  }, [dmLastReadById, latestDmEvent, me, selectedDmId, viewMode]);
+
+  useEffect(() => {
+    if (!latestChannelEvent || !me || latestChannelEvent.type !== "channel:message:create") return;
+    const channelId = typeof latestChannelEvent.channelId === "string" ? latestChannelEvent.channelId : null;
+    const authorId =
+      latestChannelEvent.message && typeof latestChannelEvent.message === "object" && latestChannelEvent.message !== null
+        ? String((latestChannelEvent.message as Record<string, unknown>).authorId ?? "")
+        : "";
+    if (!channelId || authorId === me.internal_id) return;
+    const isOpen = viewMode === "channel" && selectedChannelId === channelId;
+    if (!isOpen) {
+      setChannelUnreadById((prev) => ({ ...prev, [channelId]: true }));
+    }
+  }, [latestChannelEvent, me, selectedChannelId, viewMode]);
 
   const selectedChannel = useMemo(() => channels.find((c) => c.id === selectedChannelId), [channels, selectedChannelId]);
 
@@ -207,6 +325,26 @@ export default function ChatPage() {
     if (role === "member") return "Member";
     return role;
   }
+
+  const handleDmReadStateUpdated = useCallback((conversationId: string) => {
+    setDmUnreadById((prev) => ({ ...prev, [conversationId]: false }));
+  }, []);
+
+  const handleDmReadStateAdvanced = useCallback((conversationId: string, timeuuid: string) => {
+    setDmLastReadById((prev) => ({
+      ...prev,
+      [conversationId]: timeuuid,
+    }));
+  }, []);
+
+  const handleDmRead = useCallback((conversationId: string, timeuuid: string) => {
+    handleDmReadStateUpdated(conversationId);
+    handleDmReadStateAdvanced(conversationId, timeuuid);
+  }, [handleDmReadStateAdvanced, handleDmReadStateUpdated]);
+
+  const handleChannelReadStateUpdated = useCallback((channelId: string) => {
+    setChannelUnreadById((prev) => ({ ...prev, [channelId]: false }));
+  }, []);
 
   async function handleJoinChannel(channelId: string) {
     if (!selectedCommunityId) return;
@@ -453,12 +591,17 @@ export default function ChatPage() {
               {activePanel === "home" ? (
                 <DmList
                   selectedId={selectedDmId}
-                  onSelect={(c) => { setSelectedDmId(c.conversationId); setViewMode("dm"); }}
+                  onSelect={(c) => {
+                    setSelectedDmId(c.conversationId);
+                    setViewMode("dm");
+                    setDmUnreadById((prev) => ({ ...prev, [c.conversationId]: false }));
+                  }}
                   onNewDm={() => setShowCreateDm(true)}
                   conversations={dmConversations}
                   currentUserId={me?.internal_id ?? null}
                   dmUsers={dmUsers}
                   getPresence={getPresence}
+                  unreadByConversationId={dmUnreadById}
                 />
               ) : (
                 <>
@@ -481,6 +624,7 @@ export default function ChatPage() {
                   {textChannels.map((c) => {
                     const active = viewMode === "channel" && c.id === selectedChannelId;
                     const needsJoin = c.joined === false;
+                    const hasUnread = channelUnreadById[c.id] === true;
                     return (
                       <div key={c.id} className="flex items-center gap-0.5 group/ch">
                         <button
@@ -494,14 +638,18 @@ export default function ChatPage() {
                             setSelectedChannelId(c.id);
                             setViewMode("channel");
                             setSelectedDmId(null);
+                            setChannelUnreadById((prev) => ({ ...prev, [c.id]: false }));
                           }}
                         >
                           <span className="material-symbols-outlined text-[18px] shrink-0 text-on-surface-variant">
                             {c.is_private ? "lock" : "tag"}
                           </span>
                           <span className="truncate">{c.name}</span>
+                          {hasUnread && !active ? (
+                            <span className="ml-auto h-2.5 w-2.5 rounded-full bg-[#5865F2] shrink-0" aria-label="Unread messages" />
+                          ) : null}
                           {needsJoin ? (
-                            <span className="ml-auto text-[9px] font-bold uppercase text-amber-400 shrink-0">Join</span>
+                            <span className={`${hasUnread && !active ? "ml-2" : "ml-auto"} text-[9px] font-bold uppercase text-amber-400 shrink-0`}>Join</span>
                           ) : null}
                         </button>
                         {needsJoin ? (
@@ -604,6 +752,7 @@ export default function ChatPage() {
             currentUserId={me.internal_id}
             displayNameByUserId={dmDisplayNames}
             wsEvent={latestDmEvent}
+            onReadStateUpdated={handleDmRead}
             onLeave={(id) => {
               onConversationLeft(id);
             }}
@@ -617,6 +766,7 @@ export default function ChatPage() {
             currentUserId={me?.internal_id ?? ""}
             currentUsername={me?.username ?? ""}
             wsEvent={latestChannelEvent}
+            onReadStateUpdated={handleChannelReadStateUpdated}
           />
         ) : (
           <section className="flex-1 bg-surface-container flex flex-col relative min-w-0">

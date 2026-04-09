@@ -71,6 +71,13 @@
       "when": 1774847291442,
       "tag": "0009_serious_doorman",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1775690075837,
+      "tag": "0010_natural_albert_cleary",
+      "breakpoints": true
     }
   ]
 }

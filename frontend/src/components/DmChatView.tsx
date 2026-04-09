@@ -8,6 +8,7 @@ import {
   deleteMessage,
   inviteParticipant,
   leaveConversation,
+  markConversationRead,
 } from "../api/dms";
 import { DmUser, getDmUsers } from "../api/auth";
 import SearchPanel from "./SearchPanel";
@@ -21,13 +22,21 @@ interface Props {
   displayNameByUserId: Record<string, string>;
   wsEvent?: IncomingMessage | null;
   onLeave?: (conversationId: string) => void;
+  onReadStateUpdated?: (conversationId: string, timeuuid: string) => void;
 }
 
 function authorLabel(authorId: string, displayNameByUserId: Record<string, string>): string {
   return displayNameByUserId[authorId] ?? `${authorId.slice(0, 8)}…`;
 }
 
-export default function DmChatView({ conversation, currentUserId, displayNameByUserId, wsEvent, onLeave }: Props) {
+export default function DmChatView({
+  conversation,
+  currentUserId,
+  displayNameByUserId,
+  wsEvent,
+  onLeave,
+  onReadStateUpdated,
+}: Props) {
   const [messages, setMessages] = useState<DmMessage[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -45,10 +54,23 @@ export default function DmChatView({ conversation, currentUserId, displayNameByU
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const atBottomRef = useRef(true);
+  const lastMarkedRef = useRef<string | null>(null);
 
   const conversationId = conversation.conversationId;
   const label = conversation.name ?? (conversation.conversationType === "one_to_one" ? "Direct Message" : "Group DM");
   const participantSet = new Set(conversation.participantIds);
+
+  const markLatestRead = useCallback(async (timeuuid: string | null | undefined) => {
+    if (!timeuuid || lastMarkedRef.current === timeuuid) return;
+    try {
+      await markConversationRead(conversationId, timeuuid);
+      lastMarkedRef.current = timeuuid;
+      onReadStateUpdated?.(conversationId, timeuuid);
+    } catch {
+      // ignore
+    }
+  }, [conversationId, onReadStateUpdated]);
 
   // Load available users when invite panel opens
   useEffect(() => {
@@ -63,15 +85,18 @@ export default function DmChatView({ conversation, currentUserId, displayNameByU
   useEffect(() => {
     setMessages([]);
     setNextCursor(null);
+    lastMarkedRef.current = null;
     listMessages(conversationId)
       .then((data) => {
         setMessages(data.messages);
         setNextCursor(data.nextCursor);
+        const newest = data.messages[0]?.timeuuid ?? null;
+        void markLatestRead(newest);
         // Scroll to bottom after initial load
         setTimeout(() => bottomRef.current?.scrollIntoView(), 50);
       })
       .catch(() => setMessages([]));
-  }, [conversationId]);
+  }, [conversationId, markLatestRead]);
 
   // Infinite scroll — load older messages
   const loadOlder = useCallback(async () => {
@@ -91,6 +116,7 @@ export default function DmChatView({ conversation, currentUserId, displayNameByU
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
+    atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
     // Messages are ordered newest-first from the API, rendered top=newest.
     // But we reverse them for display (oldest on top). So "scroll up" = load older.
     if (el.scrollTop < 100) {
@@ -110,6 +136,7 @@ export default function DmChatView({ conversation, currentUserId, displayNameByU
         prev.some((m) => m.messageId === msg.messageId) ? prev : [msg, ...prev]
       );
       setComposerText("");
+      void markLatestRead(msg.timeuuid);
       setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
     } catch {
       // ignore
@@ -172,6 +199,9 @@ export default function DmChatView({ conversation, currentUserId, displayNameByU
         if (prev.some((m) => m.messageId === msg.messageId)) return prev;
         return [msg, ...prev];
       });
+      if (atBottomRef.current || raw.authorId === currentUserId) {
+        void markLatestRead(msg.timeuuid);
+      }
       setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
     } else if (e.type === "dm:message:edit") {
       const raw = e.message as Record<string, unknown>;
@@ -198,7 +228,7 @@ export default function DmChatView({ conversation, currentUserId, displayNameByU
         )
       );
     }
-  }, [wsEvent, conversationId]);
+  }, [wsEvent, conversationId, currentUserId, markLatestRead]);
 
   const handleInvite = async (userId: string) => {
     setInviting(true);
