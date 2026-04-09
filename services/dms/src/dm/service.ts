@@ -24,6 +24,11 @@ export type ConversationRecord = {
   hasUnread?: boolean;
 };
 
+export type ConversationReadStateRecord = {
+  userId: string;
+  lastReadTimeuuid: string | null;
+};
+
 export type MessageRecord = {
   messageId: string;
   conversationId: string;
@@ -170,6 +175,30 @@ const ensureConversationMessageExists = async (conversationId: string, timeuuid:
   if (result.rowLength === 0) {
     throw new DmError(404, "Message not found");
   }
+};
+
+export const getConversationReadState = async (
+  conversationId: string,
+  requesterId: string
+): Promise<ConversationReadStateRecord[]> => {
+  if (!(await isParticipant(conversationId, requesterId))) {
+    throw new DmError(403, "Only participants can view read receipts");
+  }
+
+  const participantIds = await listParticipantIds(conversationId);
+  const rows = await pg
+    .select({
+      user_id: readState.user_id,
+      last_read_timeuuid: readState.last_read_timeuuid,
+    })
+    .from(readState)
+    .where(and(eq(readState.context_type, "dm"), eq(readState.context_id, conversationId)));
+
+  const rowMap = new Map(rows.map((row) => [row.user_id, row.last_read_timeuuid]));
+  return participantIds.map((userId) => ({
+    userId,
+    lastReadTimeuuid: rowMap.get(userId) ?? null,
+  }));
 };
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -643,4 +672,12 @@ export const markConversationRead = async (conversationId: string, userId: strin
 
   await ensureConversationMessageExists(conversationId, timeuuid);
   await upsertDmReadState(userId, conversationId, timeuuid);
+  const participantIds = await listParticipantIds(conversationId);
+  await publishDmEvent({
+    type: "dm:read-state:update",
+    conversationId,
+    participantIds,
+    userId,
+    timeuuid,
+  });
 };

@@ -61,6 +61,13 @@ export type DmEvent =
       participantIds: string[];
       userId: string;
       conversationDeleted: boolean;
+    }
+  | {
+      type: "dm:read-state:update";
+      conversationId: string;
+      participantIds: string[];
+      userId: string;
+      timeuuid: string;
     };
 
 export const publishDmEvent = async (event: DmEvent): Promise<void> => {
