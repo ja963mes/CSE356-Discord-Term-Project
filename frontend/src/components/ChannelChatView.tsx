@@ -275,12 +275,30 @@ export default function ChannelChatView({
           </div>
         )}
 
-        {messages.map((m) => {
+        {messages.map((m, i) => {
           const isOwn = m.authorId === currentUserId;
           const isEditing = editingId === m.id;
+          const msgDate = new Date(m.createdAt);
+          const prevDate = i > 0 ? new Date(messages[i - 1].createdAt) : null;
+          const showDivider = !prevDate || msgDate.toDateString() !== prevDate.toDateString();
+          const today = new Date();
+          const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+          const dateLabel = msgDate.toDateString() === today.toDateString()
+            ? "Today"
+            : msgDate.toDateString() === yesterday.toDateString()
+            ? "Yesterday"
+            : msgDate.toLocaleDateString([], { month: "long", day: "numeric", year: "numeric" });
 
           return (
-            <div key={m.id} id={`msg-${m.id}`} className="flex gap-3 items-start group rounded-lg transition-all">
+            <React.Fragment key={m.id}>
+              {showDivider && (
+                <div className="flex items-center gap-3 my-2">
+                  <div className="flex-1 h-px bg-outline-variant/30" />
+                  <span className="text-[11px] font-semibold text-on-surface-variant shrink-0">{dateLabel}</span>
+                  <div className="flex-1 h-px bg-outline-variant/30" />
+                </div>
+              )}
+            <div id={`msg-${m.id}`} className="flex gap-3 items-start group rounded-lg transition-all">
               <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant text-xs flex-shrink-0">
                 {(m.author ?? "?").slice(0, 1).toUpperCase()}
               </div>
@@ -350,6 +368,7 @@ export default function ChannelChatView({
                 )}
               </div>
             </div>
+            </React.Fragment>
           );
         })}
 
