@@ -8,6 +8,13 @@ export type Channel = {
   joined?: boolean;
 };
 
+export type ChannelReadState = {
+  channelId: string;
+  lastReadTimeuuid: string | null;
+  latestTimeuuid: string | null;
+  hasUnread: boolean;
+};
+
 export type Message = {
   id: string;           // messageId from backend
   timeuuid: string;
@@ -398,6 +405,27 @@ export async function deleteChannelMessage(channelId: string, timeuuid: string):
     const res = await fetch(`/messages/${encodeURIComponent(channelId)}/${encodeURIComponent(timeuuid)}`, {
       method: "DELETE",
       credentials: "include",
+    });
+    return res.status === 204;
+  } catch {
+    return false;
+  }
+}
+
+export async function getChannelReadState(communityId: string): Promise<ChannelReadState[] | null> {
+  const body = await fetchJson<{ channels: ChannelReadState[] }>(
+    `/messages/read-state?communityId=${encodeURIComponent(communityId)}`
+  );
+  return body?.channels ?? null;
+}
+
+export async function markChannelRead(channelId: string, timeuuid: string): Promise<boolean> {
+  try {
+    const res = await fetch("/messages/read-state", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channelId, timeuuid }),
     });
     return res.status === 204;
   } catch {

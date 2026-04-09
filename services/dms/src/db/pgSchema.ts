@@ -36,3 +36,20 @@ export const dmParticipants = pgTable(
     user_idx: index("dm_participants_user_idx").on(table.user_id),
   })
 );
+
+export const readState = pgTable(
+  "read_state",
+  {
+    user_id: uuid("user_id")
+      .notNull()
+      .references(() => users.internal_id, { onDelete: "cascade" }),
+    context_type: text("context_type").notNull(),
+    context_id: uuid("context_id").notNull(),
+    last_read_timeuuid: text("last_read_timeuuid").notNull(),
+    updated_at: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.user_id, table.context_type, table.context_id] }),
+    user_context_idx: index("read_state_user_context_idx").on(table.user_id, table.context_type),
+  })
+);

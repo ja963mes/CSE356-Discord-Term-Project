@@ -4,7 +4,7 @@ import cookieParser from "cookie-parser";
 import { eq, and } from "drizzle-orm";
 import { db } from "./db";
 import { requireAuth } from "./middleware/session";
-import { channels, channelMembers, communityMembers, users } from "./db/schema";
+import { channels, channelMembers, communityMembers, readState, users } from "./db/schema";
 import { cassandra, parseBeforeCursor } from "./cassandra";
 import {
   insertChannelMessage,
@@ -12,6 +12,7 @@ import {
   getChannelMessage,
   editChannelMessage,
   deleteChannelMessage,
+  getLatestChannelMessageTimeuuid,
 } from "./cassandraRepo";
 import { publishChannelEvent } from "./events";
 import { presignUpload, keyToUrl } from "./minio";
@@ -34,6 +35,48 @@ function isUuid(s: string): boolean {
 
 function timeuuidToDate(t: types.TimeUuid): string {
   return new Date(t.getDate().getTime()).toISOString();
+}
+
+function compareTimeuuids(a: string, b: string): number {
+  return types.TimeUuid.fromString(a).getBuffer().compare(types.TimeUuid.fromString(b).getBuffer());
+}
+
+async function upsertChannelReadState(userId: string, channelId: string, timeuuid: string): Promise<void> {
+  const inserted = await db.insert(readState).values({
+      user_id: userId,
+      context_type: "channel",
+      context_id: channelId,
+      last_read_timeuuid: timeuuid,
+      updated_at: new Date(),
+    })
+    .onConflictDoNothing()
+    .returning({ last_read_timeuuid: readState.last_read_timeuuid });
+
+  if (inserted.length > 0) {
+    return;
+  }
+
+  const [existing] = await db
+    .select({ last_read_timeuuid: readState.last_read_timeuuid })
+    .from(readState)
+    .where(and(
+      eq(readState.user_id, userId),
+      eq(readState.context_type, "channel"),
+      eq(readState.context_id, channelId),
+    ))
+    .limit(1);
+
+  if (!existing || compareTimeuuids(timeuuid, existing.last_read_timeuuid) <= 0) {
+    return;
+  }
+
+  await db.update(readState)
+    .set({ last_read_timeuuid: timeuuid, updated_at: new Date() })
+    .where(and(
+      eq(readState.user_id, userId),
+      eq(readState.context_type, "channel"),
+      eq(readState.context_id, channelId),
+    ));
 }
 
 async function assertChannelAccess(
@@ -139,6 +182,91 @@ app.get("/messages", requireAuth, async (req: Request, res: Response) => {
   }));
 
   res.json({ channelId, messages });
+});
+
+app.get("/messages/read-state", requireAuth, async (req: Request, res: Response) => {
+  const communityId = String(req.query.communityId ?? "");
+  if (!communityId || !isUuid(communityId)) {
+    res.status(400).json({ error: "communityId (UUID) is required" });
+    return;
+  }
+
+  const userId = req.user!.internal_id;
+  const member = await db
+    .select({ user_id: communityMembers.user_id })
+    .from(communityMembers)
+    .where(and(eq(communityMembers.community_id, communityId), eq(communityMembers.user_id, userId)))
+    .limit(1);
+  if (member.length === 0) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const allowedChannels = await db
+    .select({ id: channels.id })
+    .from(channels)
+    .innerJoin(channelMembers, eq(channelMembers.channel_id, channels.id))
+    .where(and(eq(channels.community_id, communityId), eq(channelMembers.user_id, userId)));
+
+  const summaries = await Promise.all(allowedChannels.map(async ({ id }) => {
+    const [state] = await db
+      .select({ last_read_timeuuid: readState.last_read_timeuuid })
+      .from(readState)
+      .where(and(
+        eq(readState.user_id, userId),
+        eq(readState.context_type, "channel"),
+        eq(readState.context_id, id),
+      ))
+      .limit(1);
+
+    const latestTimeuuid = await getLatestChannelMessageTimeuuid(id);
+    return {
+      channelId: id,
+      lastReadTimeuuid: state?.last_read_timeuuid ?? null,
+      latestTimeuuid,
+      hasUnread: latestTimeuuid != null && (!state || compareTimeuuids(latestTimeuuid, state.last_read_timeuuid) > 0),
+    };
+  }));
+
+  res.json({ channels: summaries });
+});
+
+app.post("/messages/read-state", requireAuth, async (req: Request, res: Response) => {
+  const channelId = typeof req.body?.channelId === "string" ? req.body.channelId.trim() : "";
+  const timeuuid = typeof req.body?.timeuuid === "string" ? req.body.timeuuid.trim() : "";
+
+  if (!channelId || !isUuid(channelId)) {
+    res.status(400).json({ error: "channelId (UUID) is required" });
+    return;
+  }
+  if (!timeuuid) {
+    res.status(400).json({ error: "timeuuid is required" });
+    return;
+  }
+
+  const userId = req.user!.internal_id;
+  const access = await assertChannelAccess(userId, channelId);
+  if (!access.ok) {
+    res.status(access.status).json({ error: access.status === 404 ? "Channel not found" : "Forbidden" });
+    return;
+  }
+
+  let createdAt: types.TimeUuid;
+  try {
+    createdAt = types.TimeUuid.fromString(timeuuid);
+  } catch {
+    res.status(400).json({ error: "invalid timeuuid" });
+    return;
+  }
+
+  const existing = await getChannelMessage(channelId, createdAt);
+  if (!existing) {
+    res.status(404).json({ error: "Message not found" });
+    return;
+  }
+
+  await upsertChannelReadState(userId, channelId, timeuuid);
+  res.status(204).send();
 });
 
 app.post("/messages", requireAuth, async (req: Request, res: Response) => {

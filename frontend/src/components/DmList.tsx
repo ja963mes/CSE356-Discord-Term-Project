@@ -11,9 +11,19 @@ interface Props {
   currentUserId: string | null;
   dmUsers: DmUser[];
   getPresence: (userId: string) => PresenceState;
+  unreadByConversationId?: Record<string, boolean>;
 }
 
-export default function DmList({ selectedId, onSelect, onNewDm, conversations, currentUserId, dmUsers, getPresence }: Props) {
+export default function DmList({
+  selectedId,
+  onSelect,
+  onNewDm,
+  conversations,
+  currentUserId,
+  dmUsers,
+  getPresence,
+  unreadByConversationId = {},
+}: Props) {
   const userMap = new Map(dmUsers.map((u) => [u.internal_id, u]));
 
   return (
@@ -54,6 +64,7 @@ export default function DmList({ selectedId, onSelect, onNewDm, conversations, c
 
         const avatarUrl = otherUser?.profile.avatar ?? undefined;
         const presence = otherId ? getPresence(otherId) : { status: "offline" as const };
+        const hasUnread = unreadByConversationId[c.conversationId] ?? c.hasUnread === true;
 
         return (
           <button
@@ -80,6 +91,9 @@ export default function DmList({ selectedId, onSelect, onNewDm, conversations, c
                 <span className="text-sm truncate">{displayName}</span>
               </>
             )}
+            {hasUnread && !active ? (
+              <span className="ml-auto h-2.5 w-2.5 rounded-full bg-[#5865F2] shrink-0" aria-label="Unread messages" />
+            ) : null}
           </button>
         );
       })}
