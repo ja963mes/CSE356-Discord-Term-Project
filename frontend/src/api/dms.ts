@@ -11,11 +11,6 @@ export type Conversation = {
   hasUnread?: boolean;
 };
 
-export type ConversationReadState = {
-  userId: string;
-  lastReadTimeuuid: string | null;
-};
-
 export type DmMessage = {
   messageId: string;
   conversationId: string;
@@ -130,9 +125,4 @@ export async function markConversationRead(conversationId: string, timeuuid: str
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ timeuuid }),
   });
-}
-
-export async function getConversationReadState(conversationId: string): Promise<ConversationReadState[]> {
-  const data = await fetchApi<{ readState: ConversationReadState[] }>(`/dms/${conversationId}/read-state`);
-  return data.readState;
 }

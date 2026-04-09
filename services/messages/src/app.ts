@@ -222,6 +222,8 @@ app.get("/messages/read-state", requireAuth, async (req: Request, res: Response)
     const latestTimeuuid = await getLatestChannelMessageTimeuuid(id);
     return {
       channelId: id,
+      lastReadTimeuuid: state?.last_read_timeuuid ?? null,
+      latestTimeuuid,
       hasUnread: latestTimeuuid != null && (!state || compareTimeuuids(latestTimeuuid, state.last_read_timeuuid) > 0),
     };
   }));

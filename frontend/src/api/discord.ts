@@ -10,6 +10,8 @@ export type Channel = {
 
 export type ChannelReadState = {
   channelId: string;
+  lastReadTimeuuid: string | null;
+  latestTimeuuid: string | null;
   hasUnread: boolean;
 };
 

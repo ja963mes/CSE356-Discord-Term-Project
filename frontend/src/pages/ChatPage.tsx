@@ -83,8 +83,6 @@ export default function ChatPage() {
   const [channelUnreadById, setChannelUnreadById] = useState<Record<string, boolean>>({});
   const [dmUnreadById, setDmUnreadById] = useState<Record<string, boolean>>({});
   const [dmLastReadById, setDmLastReadById] = useState<Record<string, string | null>>({});
-  const [communityUnreadById, setCommunityUnreadById] = useState<Record<string, boolean>>({});
-  const [channelLastReadById, setChannelLastReadById] = useState<Record<string, string | null>>({});
 
   const { handleMessage: handlePresenceMessage, getPresence } = usePresence();
   const {
@@ -170,16 +168,6 @@ export default function ChatPage() {
 
   const memberCommunityIds = useMemo(() => new Set(communities.map((c) => c.id)), [communities]);
 
-  const refreshCommunityUnread = useCallback(async (communityList: Community[]) => {
-    const entries = await Promise.all(
-      communityList.map(async (community) => {
-        const rows = await getChannelReadState(community.id);
-        return [community.id, (rows ?? []).some((row) => row.hasUnread)] as const;
-      })
-    );
-    setCommunityUnreadById(Object.fromEntries(entries));
-  }, []);
-
   const refreshCommunities = useCallback(async (opts?: { preferSelectId?: string }) => {
     const list = await listCommunities();
     if (list === null) {
@@ -190,12 +178,10 @@ export default function ChatPage() {
       setChannels(getSampleChannels());
       setMembers(getSampleMembers());
       setChannelUnreadById({});
-      setCommunityUnreadById({});
       return;
     }
     setUsingLiveCommunities(true);
     setCommunities(list);
-    void refreshCommunityUnread(list);
     const prefer = opts?.preferSelectId;
     if (prefer && list.some((c) => c.id === prefer)) {
       const c = list.find((x) => x.id === prefer)!;
@@ -210,9 +196,8 @@ export default function ChatPage() {
       setChannels([]);
       setMembers([]);
       setChannelUnreadById({});
-      setCommunityUnreadById({});
     }
-  }, [refreshCommunityUnread]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -254,12 +239,6 @@ export default function ChatPage() {
           }
           return next;
         });
-        setCommunityUnreadById((prev) => ({
-          ...prev,
-          [selectedCommunityId]: (readStates ?? []).some(
-            (row) => row.hasUnread && !(viewMode === "channel" && row.channelId === selectedChannelId)
-          ),
-        }));
       }
     })();
     return () => { cancelled = true; };
@@ -276,15 +255,6 @@ export default function ChatPage() {
       setChannelUnreadById((prev) => ({ ...prev, [selectedChannelId]: false }));
     }
   }, [viewMode, selectedChannelId]);
-
-  useEffect(() => {
-    if (viewMode === "channel" && selectedCommunityId) {
-      setCommunityUnreadById((prev) => ({
-        ...prev,
-        [selectedCommunityId]: channels.some((channel) => channelUnreadById[channel.id] === true),
-      }));
-    }
-  }, [channelUnreadById, channels, selectedCommunityId, viewMode]);
 
   useEffect(() => {
     if (!latestDmEvent || !me || latestDmEvent.type !== "dm:message:create") return;
@@ -307,24 +277,16 @@ export default function ChatPage() {
   useEffect(() => {
     if (!latestChannelEvent || !me || latestChannelEvent.type !== "channel:message:create") return;
     const channelId = typeof latestChannelEvent.channelId === "string" ? latestChannelEvent.channelId : null;
-    const raw =
+    const authorId =
       latestChannelEvent.message && typeof latestChannelEvent.message === "object" && latestChannelEvent.message !== null
-        ? latestChannelEvent.message as Record<string, unknown>
-        : null;
-    const authorId = raw ? String(raw.authorId ?? "") : "";
-    const timeuuid = raw ? String(raw.timeuuid ?? "") : "";
+        ? String((latestChannelEvent.message as Record<string, unknown>).authorId ?? "")
+        : "";
     if (!channelId || authorId === me.internal_id) return;
-    const lastRead = channelLastReadById[channelId] ?? null;
-    if (lastRead && !isTimeuuidAfter(timeuuid, lastRead)) return;
     const isOpen = viewMode === "channel" && selectedChannelId === channelId;
     if (!isOpen) {
       setChannelUnreadById((prev) => ({ ...prev, [channelId]: true }));
-      const communityId = typeof latestChannelEvent.communityId === "string" ? latestChannelEvent.communityId : null;
-      if (communityId) {
-        setCommunityUnreadById((prev) => ({ ...prev, [communityId]: true }));
-      }
     }
-  }, [channelLastReadById, latestChannelEvent, me, selectedChannelId, viewMode]);
+  }, [latestChannelEvent, me, selectedChannelId, viewMode]);
 
   const selectedChannel = useMemo(() => channels.find((c) => c.id === selectedChannelId), [channels, selectedChannelId]);
 
@@ -381,29 +343,8 @@ export default function ChatPage() {
   }, [handleDmReadStateAdvanced, handleDmReadStateUpdated]);
 
   const handleChannelReadStateUpdated = useCallback((channelId: string) => {
-    setChannelUnreadById((prev) => {
-      const next = { ...prev, [channelId]: false };
-      if (selectedCommunityId) {
-        setCommunityUnreadById((communityPrev) => ({
-          ...communityPrev,
-          [selectedCommunityId]: channels.some((channel) => next[channel.id] === true && channel.id !== channelId)
-        }));
-      }
-      return next;
-    });
-  }, [channels, selectedCommunityId]);
-
-  const handleChannelReadStateAdvanced = useCallback((channelId: string, timeuuid: string) => {
-    setChannelLastReadById((prev) => ({
-      ...prev,
-      [channelId]: timeuuid,
-    }));
+    setChannelUnreadById((prev) => ({ ...prev, [channelId]: false }));
   }, []);
-
-  const handleChannelRead = useCallback((channelId: string, timeuuid: string) => {
-    handleChannelReadStateUpdated(channelId);
-    handleChannelReadStateAdvanced(channelId, timeuuid);
-  }, [handleChannelReadStateAdvanced, handleChannelReadStateUpdated]);
 
   async function handleJoinChannel(channelId: string) {
     if (!selectedCommunityId) return;
@@ -563,28 +504,24 @@ export default function ChatPage() {
               {communities.map((c) => {
                 const active = activePanel === "server" && c.id === selectedCommunityId;
                 return (
-                  <div key={c.id} className="relative">
-                    <button
-                      type="button"
-                      title={c.name}
-                      onClick={() => {
-                        setSelectedCommunityId(c.id);
-                        setGuildName(c.name);
-                        setActivePanel("server");
-                        setViewMode("channel");
-                      }}
-                      className={
-                        active
-                          ? "flex items-center justify-center rounded-[2rem] bg-[#5865F2] text-white w-12 h-12 transition-all"
-                          : "flex items-center justify-center rounded-[2rem] bg-[#171a1f] text-gray-400 w-12 h-12 hover:bg-[#5865F2] hover:text-white cursor-pointer transition-all"
-                      }
-                    >
-                      <span className="text-sm font-bold">{c.name.slice(0, 2).toUpperCase()}</span>
-                    </button>
-                    {communityUnreadById[c.id] && !active ? (
-                      <span className="absolute -right-0.5 top-1/2 -translate-y-1/2 h-2.5 w-2.5 rounded-full bg-[#5865F2]" aria-label="Unread channels" />
-                    ) : null}
-                  </div>
+                  <button
+                    key={c.id}
+                    type="button"
+                    title={c.name}
+                    onClick={() => {
+                      setSelectedCommunityId(c.id);
+                      setGuildName(c.name);
+                      setActivePanel("server");
+                      setViewMode("channel");
+                    }}
+                    className={
+                      active
+                        ? "flex items-center justify-center rounded-[2rem] bg-[#5865F2] text-white w-12 h-12 transition-all"
+                        : "flex items-center justify-center rounded-[2rem] bg-[#171a1f] text-gray-400 w-12 h-12 hover:bg-[#5865F2] hover:text-white cursor-pointer transition-all"
+                    }
+                  >
+                    <span className="text-sm font-bold">{c.name.slice(0, 2).toUpperCase()}</span>
+                  </button>
                 );
               })}
               <button
@@ -829,7 +766,7 @@ export default function ChatPage() {
             currentUserId={me?.internal_id ?? ""}
             currentUsername={me?.username ?? ""}
             wsEvent={latestChannelEvent}
-            onReadStateUpdated={handleChannelRead}
+            onReadStateUpdated={handleChannelReadStateUpdated}
           />
         ) : (
           <section className="flex-1 bg-surface-container flex flex-col relative min-w-0">

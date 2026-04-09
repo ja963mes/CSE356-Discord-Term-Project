@@ -16,7 +16,6 @@ import {
   leaveConversation,
   listConversations,
   listMessages,
-  getConversationReadState,
   markConversationRead,
 } from "./dm/service";
 
@@ -179,16 +178,6 @@ app.post("/dms/:id/read-state", requireAuth, async (req, res, next) => {
     const { timeuuid } = readStateSchema.parse(req.body);
     await markConversationRead(conversationId, req.user.internal_id, timeuuid);
     res.status(204).send();
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.get("/dms/:id/read-state", requireAuth, async (req, res, next) => {
-  try {
-    const conversationId = z.string().uuid().parse(req.params.id);
-    const readState = await getConversationReadState(conversationId, req.user.internal_id);
-    res.json({ readState });
   } catch (error) {
     next(error);
   }
