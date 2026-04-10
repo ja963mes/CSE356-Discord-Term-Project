@@ -97,6 +97,8 @@ export default function ChatPage() {
   const [selectedCommunityId, setSelectedCommunityId] = useState<string | null>(null);
   const selectedCommunityIdRef = useRef<string | null>(null);
   useEffect(() => { selectedCommunityIdRef.current = selectedCommunityId; }, [selectedCommunityId]);
+  const meRef = useRef<Me | null>(null);
+  useEffect(() => { meRef.current = me; }, [me]);
   const [guildName, setGuildName] = useState("The Obsidian Architect");
   const [usingLiveCommunities, setUsingLiveCommunities] = useState(false);
   const [communityModal, setCommunityModal] = useState<CommunityModal>("none");
@@ -127,7 +129,7 @@ export default function ChatPage() {
     console.log("[ws] incoming:", msg);
     handlePresenceMessage(msg);
     handleDmMessage(msg);
-    handleCommunityMessage(msg, selectedCommunityIdRef.current);
+    handleCommunityMessage(msg, selectedCommunityIdRef.current, meRef.current?.internal_id ?? null);
     if (typeof msg.type === "string" && msg.type.startsWith("channel:")) {
       setLatestChannelEvent(msg);
     }
@@ -278,6 +280,13 @@ export default function ChatPage() {
     })();
     return () => { cancelled = true; };
   }, [usingLiveCommunities, selectedCommunityId, guildDataVersion, refreshCommunityReadState]);
+
+  useEffect(() => {
+    if (viewMode !== "channel" || !selectedCommunityId || channels.length === 0) return;
+    if (channels.some((c) => c.id === selectedChannelId)) return;
+    const firstText = channels.find((c) => c.type === "text") ?? channels[0];
+    setSelectedChannelId(firstText.id);
+  }, [channels, selectedChannelId, selectedCommunityId, viewMode]);
 
   useEffect(() => {
     if (viewMode === "dm" && selectedDmId) {
