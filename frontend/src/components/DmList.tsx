@@ -11,9 +11,19 @@ interface Props {
   currentUserId: string | null;
   dmUsers: DmUser[];
   getPresence: (userId: string) => PresenceState;
+  unreadByConversationId?: Record<string, boolean>;
 }
 
-export default function DmList({ selectedId, onSelect, onNewDm, conversations, currentUserId, dmUsers, getPresence }: Props) {
+export default function DmList({
+  selectedId,
+  onSelect,
+  onNewDm,
+  conversations,
+  currentUserId,
+  dmUsers,
+  getPresence,
+  unreadByConversationId = {},
+}: Props) {
   const userMap = new Map(dmUsers.map((u) => [u.internal_id, u]));
 
   return (
@@ -39,6 +49,7 @@ export default function DmList({ selectedId, onSelect, onNewDm, conversations, c
 
       {conversations.map((c) => {
         const active = c.conversationId === selectedId;
+        const hasUnread = unreadByConversationId[c.conversationId] === true;
 
         // For 1-to-1: show the other user. For group: show a generic entry.
         const otherId = c.conversationType === "one_to_one" && currentUserId
@@ -80,6 +91,9 @@ export default function DmList({ selectedId, onSelect, onNewDm, conversations, c
                 <span className="text-sm truncate">{displayName}</span>
               </>
             )}
+            {hasUnread && !active ? (
+              <span className="ml-auto h-2.5 w-2.5 rounded-full bg-[#5865F2] shrink-0" aria-label="Unread messages" />
+            ) : null}
           </button>
         );
       })}

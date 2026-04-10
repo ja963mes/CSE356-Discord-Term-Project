@@ -40,6 +40,14 @@ export type ChannelAccessMember = {
   role: string;
 };
 
+export type ChannelReadState = {
+  channelId: string;
+  lastReadMessageId: string | null;
+  lastReadTimeuuid: string | null;
+  mentionCount: number;
+  hasUnread: boolean;
+};
+
 async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T | null> {
   try {
     const res = await fetch(input, { ...init, credentials: "include" });
@@ -398,6 +406,27 @@ export async function deleteChannelMessage(channelId: string, timeuuid: string):
     const res = await fetch(`/messages/${encodeURIComponent(channelId)}/${encodeURIComponent(timeuuid)}`, {
       method: "DELETE",
       credentials: "include",
+    });
+    return res.status === 204;
+  } catch {
+    return false;
+  }
+}
+
+export async function getChannelReadState(communityId: string): Promise<ChannelReadState[] | null> {
+  const body = await fetchJson<{ channels: ChannelReadState[] }>(
+    `/read-state/channels?communityId=${encodeURIComponent(communityId)}`
+  );
+  return body?.channels ?? null;
+}
+
+export async function markChannelRead(channelId: string, messageId: string, timeuuid: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/read-state/channels/${encodeURIComponent(channelId)}/read`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messageId, timeuuid }),
     });
     return res.status === 204;
   } catch {
