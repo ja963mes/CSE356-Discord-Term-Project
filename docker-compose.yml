@@ -7,11 +7,7 @@
 #
 # Postgres is published on host port 5433 by default so it does not conflict
 # with a local PostgreSQL on 5432 (common on macOS/Homebrew). Override with
-# POSTGRES_PORT in `.env` (e.g. POSTGRES_PORT=5432) and match DATABASE_URL_DIRECT.
-#
-# PgBouncer (optional, recommended for many Node pools): published on host
-# PGBOUNCER_PORT (default 6432). Point app DATABASE_URL at localhost:6432;
-# keep DATABASE_URL_DIRECT at localhost:5433 for drizzle-kit migrate and admin.
+# POSTGRES_PORT in `.env` (e.g. POSTGRES_PORT=5432) and match DATABASE_URL.
 #
 services:
   postgres:
@@ -21,33 +17,10 @@ services:
       - "${POSTGRES_PORT:-5433}:5432"
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-123456789}"
+      POSTGRES_PASSWORD: "123456789"
       POSTGRES_DB: auth_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d auth_db"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  pgbouncer:
-    image: edoburu/pgbouncer:v1.25.1-p0
-    container_name: discord-clone-pgbouncer
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-123456789}@postgres:5432/auth_db
-      # Plain password in userlist so PgBouncer can SCRAM-auth to Postgres 14+; clients use SCRAM too.
-      AUTH_TYPE: scram-sha-256
-      POOL_MODE: transaction
-      MAX_CLIENT_CONN: "${PGBOUNCER_MAX_CLIENT_CONN:-1000}"
-      DEFAULT_POOL_SIZE: "${PGBOUNCER_DEFAULT_POOL_SIZE:-20}"
-      MIN_POOL_SIZE: "${PGBOUNCER_MIN_POOL_SIZE:-5}"
-      RESERVE_POOL_SIZE: "${PGBOUNCER_RESERVE_POOL_SIZE:-5}"
-    ports:
-      - "${PGBOUNCER_PORT:-6432}:5432"
 
   redis:
     image: redis:7-alpine
