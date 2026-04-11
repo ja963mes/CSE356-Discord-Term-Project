@@ -644,6 +644,19 @@ app.post("/communities/:communityId/channels/:channelId/members", requireAuth, a
     }
 
     await db.insert(channelMembers).values({ channel_id: channelId, user_id: targetUserId });
+    await publishCommunityEvent({
+      type: "community:channel:member:add",
+      communityId,
+      channelId,
+      userId: targetUserId,
+      channel: {
+        id: ch.id,
+        name: ch.name,
+        type: ch.type,
+        position: ch.position,
+        is_private: ch.is_private,
+      },
+    });
     res.status(201).json({ message: "Added to channel", status: "added" });
   } catch (e) {
     console.error(e);
@@ -699,6 +712,12 @@ app.delete("/communities/:communityId/channels/:channelId/members/:targetUserId"
       return;
     }
 
+    await publishCommunityEvent({
+      type: "community:channel:member:remove",
+      communityId,
+      channelId,
+      userId: targetUserId,
+    });
     res.status(204).send();
   } catch (e) {
     console.error(e);
