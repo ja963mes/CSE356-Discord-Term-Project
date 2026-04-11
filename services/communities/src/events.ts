@@ -32,6 +32,27 @@ export type CommunityEvent =
       type: "community:channel:delete";
       communityId: string;
       channelId: string;
+    }
+  | {
+      type: "community:channel:member:add";
+      communityId: string;
+      channelId: string;
+      /** User who gained channel access (show channel in their sidebar). */
+      userId: string;
+      channel: {
+        id: string;
+        name: string;
+        type: string;
+        position: number;
+        is_private: boolean;
+      };
+    }
+  | {
+      type: "community:channel:member:remove";
+      communityId: string;
+      channelId: string;
+      /** User who lost channel access. */
+      userId: string;
     };
 
 export async function publishCommunityEvent(event: CommunityEvent): Promise<void> {

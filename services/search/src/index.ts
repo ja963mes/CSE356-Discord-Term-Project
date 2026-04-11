@@ -1,28 +1,32 @@
+/// <reference path="./types/express.d.ts" />
 import express from "express";
-import dotenv from "dotenv";
-
-dotenv.config();
+import cookieParser from "cookie-parser";
+import { env } from "./env";
+import { esClient, ensureIndex } from "./elasticsearch";
+import { startSubscriber } from "./subscriber";
+import searchRouter from "./routes/search";
 
 const app = express();
 app.use(express.json());
+app.use(cookieParser());
 
-app.get("/health", (_req, res) => {
-  res.json({ status: "ok", service: "search-service" });
+app.get("/health", async (_req, res) => {
+  try {
+    await esClient.ping();
+    res.json({ status: "ok", service: "search-service", elasticsearch: "connected" });
+  } catch {
+    res.status(503).json({ status: "degraded", service: "search-service", elasticsearch: "disconnected" });
+  }
 });
 
-// Placeholder search endpoint for the wireframe search bar.
-app.get("/search", (req, res) => {
-  const q = String(req.query.q ?? "");
-  res.json({
-    query: q,
-    results: [
-      { id: "s1", type: "message", title: "Welcome to the sanctuary", snippet: "Welcome to the sanctuary.", score: 1.0 },
-    ],
+app.use(searchRouter);
+
+const port = Number(env.SEARCH_PORT);
+
+void (async () => {
+  await ensureIndex();
+  await startSubscriber();
+  app.listen(port, () => {
+    console.log(`Search service running on port ${port}`);
   });
-});
-
-const port = Number(process.env.PORT ?? 3004);
-app.listen(port, () => {
-  console.log(`Search service running on port ${port}`);
-});
-
+})();

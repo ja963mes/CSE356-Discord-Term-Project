@@ -62,7 +62,7 @@ flowchart TB
 | `/auth` | :3001 |
 | `/create-community` | :3006 |
 | `/communities`, `/channels`, `/search-communities` | :3002 |
-| `/messages` | :3003 |
+| `/messages`, `/attachments` | :3003 |
 | `/search` | :3004 |
 | `/ws` (WebSocket) | :3005 |
 | `/dms` | :3007 |
@@ -88,7 +88,9 @@ From the repo root:
 docker compose up -d
 ```
 
-This starts Postgres on host **5433**, Redis on **6379**, and Cassandra on **9042** (see [`docker-compose.yml`](./docker-compose.yml)). Copy [`.env.example`](./.env.example) to `.env` and set `DATABASE_URL` to use port **5433** for the DB. Channel messages (`messages` service) and DMs expect Cassandra reachable at **`127.0.0.1:9042`** by default (see optional `CASSANDRA_*` variables in `.env.example`). Stop with `docker compose down`.
+This starts Postgres on host **5433**, Redis on **6379**, and Cassandra on **9042** (see [`docker-compose.yml`](./docker-compose.yml)). Copy [`.env.example`](./.env.example) to `.env` and set `DATABASE_URL` to use port **5433** for the DB. Channel messages (`messages` service) and DMs expect Cassandra reachable at **`127.0.0.1:9042`** by default (see optional `CASSANDRA_*` variables in `.env.example`).  
+**Note:** Cassandra/Elasticsearch memory caps in this repo are intended as **staging/local safety limits** on small machines, not production sizing recommendations.
+Stop with `docker compose down`.
 
 **Option B — Docker without Compose**
 
@@ -174,38 +176,23 @@ VITE_API_ORIGIN=http://130.245.136.45 npm run dev:frontend
 - `npm run dev` proxies APIs to **staging** (`130.245.136.45`).
 - `npm run dev:all` is the exception: it is **local-only** and forces the frontend to proxy APIs to **localhost** so the full local stack works end-to-end.
 
-- **Frontend → staging, but keep some services local**:
+- **Frontend → staging, but keep some services on localhost** — set origins explicitly, for example:
 
 ```bash
-npm run dev:frontend:staging-lite
+VITE_API_ORIGIN=http://130.245.136.45 \
+VITE_MESSAGES_ORIGIN=http://localhost:3003 \
+VITE_DMS_ORIGIN=http://localhost:3007 \
+npm run dev:frontend
 ```
 
-This proxies most routes to staging but keeps `/messages`, `/search`, and `/dms` pointing at localhost (so you can run those locally if desired).
-
-- **Hybrid dev (recommended when staging already runs auth/communities/create-community/realtime)**:
-
-```bash
-npm run dev:hybrid
-```
-
-This starts local `messages` (3003), `search` (3004), and `dms` (3007), plus the frontend (5173) configured to proxy auth/communities/create-community/ws to staging at `130.245.136.45`.
-
-Note: `messages` and `dms` require Cassandra. `dev:hybrid` will start the Cassandra container via `docker compose up cassandra`.
-
-- **Hybrid dev without Cassandra (search-only local)**:
-
-```bash
-npm run dev:hybrid:no-cassandra
-```
-
-This starts only `search` locally and proxies the rest to staging. Use this when you don’t want to run Cassandra on your machine.
+Run `docker compose up -d cassandra` and `npm run dev:messages` / `npm run dev:dms` locally when you need those off staging.
 
 ## Local vs staging environments (`ENV_FILE`)
 
 Backend services load the repo-root `.env` by default, but you can override it with:
 
 ```bash
-ENV_FILE=.env.staging npm run dev:staging:core
+ENV_FILE=.env.staging npm run dev:auth
 ```
 
 This repo includes a template at `docs/env.staging.example`.
@@ -231,8 +218,10 @@ Users can **create** and **join** communities. A **community** is a named space 
 | `POST` | `/communities/:communityId/channels` | communities (3002) | Create channel — body `{ "name", "type?", "is_private?", "position?" }` (owner/admin) |
 | `PATCH` | `/communities/:communityId/channels/:channelId` | communities (3002) | Update `name` / `is_private` / `position` (owner/admin) |
 | `POST` | `/communities/:communityId/channels/:channelId/join` | communities (3002) | Join a **public** channel |
-| `POST` | `/communities/:communityId/channels/:channelId/leave` | communities (3002) | Leave channel (drops `channel_members`) |
-| `POST` | `/communities/:communityId/channels/:channelId/members` | communities (3002) | Add user to channel — body `{ "user_id" }` (owner/admin; for private channels) |
+| `POST` | `/communities/:communityId/channels/:channelId/leave` | communities (3002) | Leave channel (drops `channel_members`); admins cannot leave private channels they manage |
+| `GET` | `/communities/:communityId/channels/:channelId/members` | communities (3002) | List members with visibility for a **private** channel (owner/admin) |
+| `POST` | `/communities/:communityId/channels/:channelId/members` | communities (3002) | Add one **community member** to a **private** channel — body `{ "user_id" }` (owner/admin, no role-based bulk add) |
+| `DELETE` | `/communities/:communityId/channels/:channelId/members/:userId` | communities (3002) | Remove one member’s visibility access from a **private** channel (owner/admin; cannot remove yourself) |
 | `DELETE` | `/communities/:communityId/channels/:channelId` | communities (3002) | Delete channel (owner/admin; cannot delete the last channel in a guild) |
 | `GET` | `/communities/:communityId/members` | communities (3002) | Members with display names and roles |
 | `GET` | `/messages?channelId=&before=&limit=` | messages (3003) | List channel messages (session; must be in `channel_members`) |
@@ -250,13 +239,6 @@ Runs auth, all stub services, and the frontend together (uses [concurrently](htt
 npm run dev:all
 ```
 
-Equivalent shell wrapper (from repo root):
-
-```bash
-chmod +x scripts/dev-all.sh   # once
-./scripts/dev-all.sh
-```
-
 ## Available Scripts
 
 | Command | Description |
@@ -270,6 +252,7 @@ chmod +x scripts/dev-all.sh   # once
 | `npm run dev:messages` | Start messages service — channel chat API (port 3003) |
 | `npm run dev:search` | Start search stub service (port 3004) |
 | `npm run dev:realtime` | Start realtime stub service (port 3005) |
+| `npm run dev:dms` | Start DM service (port 3007) |
 | `npm run db:generate` | Generate a new migration (auth service) |
 | `npm run db:migrate` | Apply pending migrations (auth service) |
 
@@ -287,6 +270,7 @@ services/
   messages/
   search/
   realtime/
+  dms/
 frontend/
   src/
 ```

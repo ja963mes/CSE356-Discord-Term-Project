@@ -308,13 +308,29 @@ redisSub.on("message", (channel, message) => {
     if (event.type === "community:channel:member:add") {
       const channelId = event.channelId as string;
       const userId = event.userId as string;
-      void subscribeChannel(redis, channelId, userId);
+      const payload = JSON.stringify(event);
+      void (async () => {
+        await subscribeChannel(redis, channelId, userId);
+        for (const { ws, userId: connUserId } of connections.values()) {
+          if (connUserId === userId && ws.readyState === WebSocket.OPEN) {
+            ws.send(payload);
+          }
+        }
+      })();
     }
 
     if (event.type === "community:channel:member:remove") {
       const channelId = event.channelId as string;
       const userId = event.userId as string;
-      void unsubscribeChannel(redis, channelId, userId);
+      const payload = JSON.stringify(event);
+      void (async () => {
+        await unsubscribeChannel(redis, channelId, userId);
+        for (const { ws, userId: connUserId } of connections.values()) {
+          if (connUserId === userId && ws.readyState === WebSocket.OPEN) {
+            ws.send(payload);
+          }
+        }
+      })();
     }
     return;
   }

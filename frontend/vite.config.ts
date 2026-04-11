@@ -11,6 +11,7 @@ export default defineConfig(({ mode }) => {
   const realtimeTarget = env.VITE_REALTIME_ORIGIN || `${apiOrigin}:3005`;
   const createCommunityTarget = env.VITE_CREATE_COMMUNITY_ORIGIN || `${apiOrigin}:3006`;
   const dmsTarget = env.VITE_DMS_ORIGIN || `${apiOrigin}:3007`;
+  const readStateTarget = env.VITE_READ_STATE_ORIGIN || `${apiOrigin}:3008`;
 
   return {
   plugins: [react()],
@@ -40,6 +41,11 @@ export default defineConfig(({ mode }) => {
         target: messagesTarget,
         changeOrigin: true,
       },
+      // MinIO presign for guild channel attachments (messages service)
+      "/attachments": {
+        target: messagesTarget,
+        changeOrigin: true,
+      },
       // Communities directory search (same service as /communities; match before /search)
       "/search-communities": {
         target: communitiesTarget,
@@ -53,6 +59,10 @@ export default defineConfig(({ mode }) => {
         target: dmsTarget,
         changeOrigin: true,
       },
+      "/read-state": {
+        target: readStateTarget,
+        changeOrigin: true,
+      },
       "/ws": {
         target: realtimeTarget,
         changeOrigin: true,
@@ -62,4 +72,3 @@ export default defineConfig(({ mode }) => {
   },
   };
 });
-

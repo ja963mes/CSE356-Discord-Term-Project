@@ -1,9 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+  addChannelMember,
   Channel,
+  ChannelAccessMember,
+  ChannelReadState,
   Community,
   deleteChannel,
+  getChannelReadState,
+  getChannelMembers,
   getCommunityChannels,
   getCommunityMembers,
   getSampleChannels,
@@ -11,9 +16,10 @@ import {
   joinChannel,
   leaveCommunity,
   listCommunities,
+  removeChannelMember,
 } from "../api/discord";
 import { getMe, getDmUsers, logout, Me, DmUser } from "../api/auth";
-import { listConversations } from "../api/dms";
+import { getDmReadState, listConversations } from "../api/dms";
 import { IncomingMessage, useWebSocket } from "../hooks/useWebSocket";
 import { useActivityDetection } from "../hooks/useActivityDetection";
 import { usePresence } from "../hooks/usePresence";
@@ -28,6 +34,7 @@ import CreateDmModal from "../components/CreateDmModal";
 import {
   CreateChannelModal,
   CreateCommunityModal,
+  ManagePrivateChannelMembersModal,
   JoinCommunityPlaceholderModal,
   ServerActionMenuModal,
 } from "../components/CommunityModals";
@@ -35,6 +42,51 @@ import {
 type CommunityModal = "none" | "menu" | "create" | "join";
 type ViewMode = "channel" | "dm";
 type ActivePanel = "home" | "server";
+
+function mergeBooleanMap(
+  prev: Record<string, boolean>,
+  entries: Array<readonly [string, boolean]>
+): Record<string, boolean> {
+  let changed = false;
+  const next = { ...prev };
+  for (const [key, value] of entries) {
+    if (next[key] !== value) {
+      next[key] = value;
+      changed = true;
+    }
+  }
+  return changed ? next : prev;
+}
+
+function mergeNumberMap(
+  prev: Record<string, number>,
+  entries: Array<readonly [string, number]>
+): Record<string, number> {
+  let changed = false;
+  const next = { ...prev };
+  for (const [key, value] of entries) {
+    if ((next[key] ?? 0) !== value) {
+      next[key] = value;
+      changed = true;
+    }
+  }
+  return changed ? next : prev;
+}
+
+function mergeNullableStringMap(
+  prev: Record<string, string | null>,
+  entries: Array<readonly [string, string | null]>
+): Record<string, string | null> {
+  let changed = false;
+  const next = { ...prev };
+  for (const [key, value] of entries) {
+    if ((next[key] ?? null) !== value) {
+      next[key] = value;
+      changed = true;
+    }
+  }
+  return changed ? next : prev;
+}
 
 export default function ChatPage() {
   const navigate = useNavigate();
@@ -45,12 +97,20 @@ export default function ChatPage() {
   const [selectedCommunityId, setSelectedCommunityId] = useState<string | null>(null);
   const selectedCommunityIdRef = useRef<string | null>(null);
   useEffect(() => { selectedCommunityIdRef.current = selectedCommunityId; }, [selectedCommunityId]);
+  const meRef = useRef<Me | null>(null);
+  useEffect(() => { meRef.current = me; }, [me]);
   const [guildName, setGuildName] = useState("The Obsidian Architect");
   const [usingLiveCommunities, setUsingLiveCommunities] = useState(false);
   const [communityModal, setCommunityModal] = useState<CommunityModal>("none");
   const [showCreateDm, setShowCreateDm] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("dm");
   const [activePanel, setActivePanel] = useState<ActivePanel>("home");
+  const [channelUnreadById, setChannelUnreadById] = useState<Record<string, boolean>>({});
+  const [channelMentionCountById, setChannelMentionCountById] = useState<Record<string, number>>({});
+  const [communityUnreadById, setCommunityUnreadById] = useState<Record<string, boolean>>({});
+  const [channelLastReadById, setChannelLastReadById] = useState<Record<string, string | null>>({});
+  const [dmUnreadById, setDmUnreadById] = useState<Record<string, boolean>>({});
+  const [dmLastReadById, setDmLastReadById] = useState<Record<string, string | null>>({});
 
   const { handleMessage: handlePresenceMessage, getPresence } = usePresence();
   const {
@@ -69,7 +129,7 @@ export default function ChatPage() {
     console.log("[ws] incoming:", msg);
     handlePresenceMessage(msg);
     handleDmMessage(msg);
-    handleCommunityMessage(msg, selectedCommunityIdRef.current);
+    handleCommunityMessage(msg, selectedCommunityIdRef.current, meRef.current?.internal_id ?? null);
     if (typeof msg.type === "string" && msg.type.startsWith("channel:")) {
       setLatestChannelEvent(msg);
     }
@@ -80,11 +140,30 @@ export default function ChatPage() {
       .then((data) => {
         setMe(data);
         return Promise.all([
-          getDmUsers().then(setDmUsers).catch(() => setDmUsers([])),
-          listConversations().then((convs) => {
-            setDmConversations(convs);
-            if (convs.length > 0) setSelectedDmId(convs[0].conversationId);
-          }).catch(() => setDmConversations([])),
+          getDmUsers().then(setDmUsers).catch((err) => { console.error("[ChatPage] getDmUsers failed:", err); setDmUsers([]); }),
+          Promise.all([listConversations(), getDmReadState()])
+            .then(([convs, readState]) => {
+              setDmConversations(convs);
+              const initialSelectedId = convs[0]?.conversationId ?? null;
+              setDmUnreadById((prev) => {
+                const next = Object.fromEntries(
+                  convs.map((conv) => {
+                    const state = readState.find((row) => row.conversationId === conv.conversationId);
+                    return [conv.conversationId, conv.conversationId === initialSelectedId ? false : state?.hasUnread === true];
+                  })
+                );
+                for (const [conversationId, unread] of Object.entries(prev)) {
+                  if (unread === false) next[conversationId] = false;
+                }
+                return next;
+              });
+              setDmLastReadById((prev) => ({
+                ...prev,
+                ...Object.fromEntries(readState.map((row) => [row.conversationId, row.lastReadTimeuuid ?? null])),
+              }));
+              if (initialSelectedId) setSelectedDmId(initialSelectedId);
+            })
+            .catch((err) => { console.error("[ChatPage] listConversations failed:", err); setDmConversations([]); }),
         ]);
       })
       .catch(() => setMe(null));
@@ -99,10 +178,43 @@ export default function ChatPage() {
   const [leaveBusy, setLeaveBusy] = useState(false);
   const [leaveError, setLeaveError] = useState<string | null>(null);
   const [showCreateChannel, setShowCreateChannel] = useState(false);
+  const [showInviteMembers, setShowInviteMembers] = useState(false);
+  const [selectedChannelMembers, setSelectedChannelMembers] = useState<ChannelAccessMember[]>([]);
   const [guildDataVersion, setGuildDataVersion] = useState(0);
   const guildMenuRef = useRef<HTMLDivElement>(null);
 
   const memberCommunityIds = useMemo(() => new Set(communities.map((c) => c.id)), [communities]);
+
+  const applyCommunityReadState = useCallback((communityId: string, rows: ChannelReadState[]) => {
+    setChannelUnreadById((prev) =>
+      mergeBooleanMap(prev, rows.map((row) => [row.channelId, row.hasUnread] as const))
+    );
+    setChannelMentionCountById((prev) =>
+      mergeNumberMap(prev, rows.map((row) => [row.channelId, row.mentionCount] as const))
+    );
+    setChannelLastReadById((prev) =>
+      mergeNullableStringMap(prev, rows.map((row) => [row.channelId, row.lastReadTimeuuid] as const))
+    );
+    setCommunityUnreadById((prev) => {
+      const nextValue = rows.some((row) => row.hasUnread || row.mentionCount > 0);
+      if (prev[communityId] === nextValue) return prev;
+      return { ...prev, [communityId]: nextValue };
+    });
+  }, []);
+
+  const refreshCommunityReadState = useCallback(async (communityId: string) => {
+    const rows = await getChannelReadState(communityId);
+    applyCommunityReadState(communityId, rows ?? []);
+  }, [applyCommunityReadState]);
+
+  const refreshAllCommunityReadState = useCallback(async (communityList: Community[]) => {
+    const entries = await Promise.all(
+      communityList.map(async (community) => [community.id, await getChannelReadState(community.id)] as const)
+    );
+    for (const [communityId, rows] of entries) {
+      applyCommunityReadState(communityId, rows ?? []);
+    }
+  }, [applyCommunityReadState]);
 
   const refreshCommunities = useCallback(async (opts?: { preferSelectId?: string }) => {
     const list = await listCommunities();
@@ -113,10 +225,15 @@ export default function ChatPage() {
       setGuildName("The Obsidian Architect");
       setChannels(getSampleChannels());
       setMembers(getSampleMembers());
+      setChannelUnreadById({});
+      setChannelMentionCountById({});
+      setCommunityUnreadById({});
+      setChannelLastReadById({});
       return;
     }
     setUsingLiveCommunities(true);
     setCommunities(list);
+    void refreshAllCommunityReadState(list);
     const prefer = opts?.preferSelectId;
     if (prefer && list.some((c) => c.id === prefer)) {
       const c = list.find((x) => x.id === prefer)!;
@@ -159,9 +276,137 @@ export default function ChatPage() {
         setChannels([]);
       }
       setMembers(mems ?? []);
+      await refreshCommunityReadState(selectedCommunityId);
     })();
     return () => { cancelled = true; };
-  }, [usingLiveCommunities, selectedCommunityId, guildDataVersion]);
+  }, [usingLiveCommunities, selectedCommunityId, guildDataVersion, refreshCommunityReadState]);
+
+  useEffect(() => {
+    if (viewMode !== "channel" || !selectedCommunityId || channels.length === 0) return;
+    if (channels.some((c) => c.id === selectedChannelId)) return;
+    const firstText = channels.find((c) => c.type === "text") ?? channels[0];
+    setSelectedChannelId(firstText.id);
+  }, [channels, selectedChannelId, selectedCommunityId, viewMode]);
+
+  useEffect(() => {
+    if (viewMode === "dm" && selectedDmId) {
+      setDmUnreadById((prev) => {
+        if (prev[selectedDmId] === false) return prev;
+        return { ...prev, [selectedDmId]: false };
+      });
+    }
+  }, [viewMode, selectedDmId]);
+
+  useEffect(() => {
+    if (viewMode !== "channel" || activePanel !== "server" || !selectedChannelId) return;
+    setChannelUnreadById((prev) => {
+      if (prev[selectedChannelId] === false) return prev;
+      return { ...prev, [selectedChannelId]: false };
+    });
+    setChannelMentionCountById((prev) => {
+      if ((prev[selectedChannelId] ?? 0) === 0) return prev;
+      return { ...prev, [selectedChannelId]: 0 };
+    });
+    if (selectedCommunityId) {
+      setCommunityUnreadById((prev) => {
+        const nextValue = channels.some((channel) =>
+          channel.id !== selectedChannelId && ((channelUnreadById[channel.id] ?? false) || (channelMentionCountById[channel.id] ?? 0) > 0)
+        );
+        if (prev[selectedCommunityId] === nextValue) return prev;
+        return { ...prev, [selectedCommunityId]: nextValue };
+      });
+    }
+  }, [activePanel, channelMentionCountById, channelUnreadById, channels, selectedChannelId, selectedCommunityId, viewMode]);
+
+  useEffect(() => {
+    if (!latestDmEvent || !me || latestDmEvent.type !== "dm:message:create") return;
+    const convId = typeof latestDmEvent.conversationId === "string" ? latestDmEvent.conversationId : null;
+    const raw =
+      latestDmEvent.message && typeof latestDmEvent.message === "object" && latestDmEvent.message !== null
+        ? latestDmEvent.message as Record<string, unknown>
+        : null;
+    const authorId = raw ? String(raw.authorId ?? "") : "";
+    const timeuuid = raw ? String(raw.timeuuid ?? "") : "";
+    if (!convId || authorId === me.internal_id) return;
+
+    const lastRead = dmLastReadById[convId] ?? null;
+    const isUnread = viewMode !== "dm" || selectedDmId !== convId
+      ? (!lastRead || lastRead !== timeuuid)
+      : false;
+    if (isUnread) {
+      setDmUnreadById((prev) => (prev[convId] === true ? prev : { ...prev, [convId]: true }));
+    }
+  }, [dmLastReadById, latestDmEvent, me, selectedDmId, viewMode]);
+
+  useEffect(() => {
+    if (!latestChannelEvent || latestChannelEvent.type !== "channel:message:create" || !me) return;
+    const channelId = typeof latestChannelEvent.channelId === "string" ? latestChannelEvent.channelId : null;
+    const communityId = typeof latestChannelEvent.communityId === "string" ? latestChannelEvent.communityId : null;
+    const raw =
+      latestChannelEvent.message && typeof latestChannelEvent.message === "object" && latestChannelEvent.message !== null
+        ? latestChannelEvent.message as Record<string, unknown>
+        : null;
+    const authorId = raw ? String(raw.authorId ?? "") : "";
+    const content = raw ? String(raw.content ?? "") : "";
+    const timeuuid = raw ? String(raw.timeuuid ?? "") : "";
+
+    if (!channelId || !communityId || authorId === me.internal_id) return;
+
+    const isOpen = activePanel === "server" && viewMode === "channel" && selectedChannelId === channelId;
+    const lastRead = channelLastReadById[channelId] ?? null;
+    const isUnread = !isOpen && (!lastRead || lastRead !== timeuuid);
+
+    if (isUnread) {
+      setChannelUnreadById((prev) => (prev[channelId] === true ? prev : { ...prev, [channelId]: true }));
+      setCommunityUnreadById((prev) => (prev[communityId] === true ? prev : { ...prev, [communityId]: true }));
+    }
+
+    if (me.username && new RegExp(`(^|[^\\w])@${me.username}\\b`, "i").test(content)) {
+      setChannelMentionCountById((prev) => ({
+        ...prev,
+        [channelId]: isOpen ? 0 : (prev[channelId] ?? 0) + 1,
+      }));
+    }
+
+    if (communityId === selectedCommunityId) {
+      void refreshCommunityReadState(communityId);
+    }
+  }, [activePanel, channelLastReadById, me, latestChannelEvent, refreshCommunityReadState, selectedChannelId, selectedCommunityId, viewMode]);
+
+  const handleChannelReadStateUpdated = useCallback((channelId: string, _messageId: string, timeuuid: string) => {
+    setChannelUnreadById((prev) => {
+      if (prev[channelId] === false) return prev;
+      return { ...prev, [channelId]: false };
+    });
+    setChannelMentionCountById((prev) => {
+      if ((prev[channelId] ?? 0) === 0) return prev;
+      return { ...prev, [channelId]: 0 };
+    });
+    setChannelLastReadById((prev) => {
+      if (prev[channelId] === timeuuid) return prev;
+      return { ...prev, [channelId]: timeuuid };
+    });
+    if (selectedCommunityId) {
+      setCommunityUnreadById((prev) => {
+        const nextValue = channels.some((channel) =>
+          channel.id !== channelId && ((channelUnreadById[channel.id] ?? false) || (channelMentionCountById[channel.id] ?? 0) > 0)
+        );
+        if (prev[selectedCommunityId] === nextValue) return prev;
+        return { ...prev, [selectedCommunityId]: nextValue };
+      });
+    }
+  }, [channelMentionCountById, channelUnreadById, channels, selectedCommunityId]);
+
+  const handleDmReadStateUpdated = useCallback((conversationId: string, _messageId: string, timeuuid: string) => {
+    setDmUnreadById((prev) => {
+      if (prev[conversationId] === false) return prev;
+      return { ...prev, [conversationId]: false };
+    });
+    setDmLastReadById((prev) => {
+      if (prev[conversationId] === timeuuid) return prev;
+      return { ...prev, [conversationId]: timeuuid };
+    });
+  }, []);
 
   const selectedChannel = useMemo(() => channels.find((c) => c.id === selectedChannelId), [channels, selectedChannelId]);
 
@@ -216,6 +461,26 @@ export default function ChatPage() {
       return;
     }
     window.alert(r.error);
+  }
+
+  async function handleInviteToPrivateChannel(userId: string): Promise<{ ok: boolean; message?: string }> {
+    if (!selectedCommunityId || !selectedChannel?.is_private) return { ok: false, message: "No private channel selected." };
+    const r = await addChannelMember(selectedCommunityId, selectedChannel.id, userId);
+    if (!r.ok) return { ok: false, message: r.error };
+    const refreshed = await getChannelMembers(selectedCommunityId, selectedChannel.id);
+    if (refreshed) setSelectedChannelMembers(refreshed);
+    setGuildDataVersion((v) => v + 1);
+    return { ok: true, message: r.status === "already_member" ? "Already in channel" : "Added to channel" };
+  }
+
+  async function handleRemoveFromPrivateChannel(userId: string): Promise<{ ok: boolean; message?: string }> {
+    if (!selectedCommunityId || !selectedChannel?.is_private) return { ok: false, message: "No private channel selected." };
+    const r = await removeChannelMember(selectedCommunityId, selectedChannel.id, userId);
+    if (!r.ok) return { ok: false, message: r.error };
+    const refreshed = await getChannelMembers(selectedCommunityId, selectedChannel.id);
+    if (refreshed) setSelectedChannelMembers(refreshed);
+    setGuildDataVersion((v) => v + 1);
+    return { ok: true, message: "Removed from channel" };
   }
 
   function closeCommunityModals() {
@@ -302,6 +567,16 @@ export default function ChatPage() {
           setGuildDataVersion((v) => v + 1);
         }}
       />
+      <ManagePrivateChannelMembersModal
+        open={showInviteMembers}
+        onClose={() => setShowInviteMembers(false)}
+        channelName={selectedChannel?.name ?? "private-channel"}
+        currentUserId={me?.internal_id ?? ""}
+        communityMembers={members}
+        channelMembers={selectedChannelMembers}
+        onInvite={handleInviteToPrivateChannel}
+        onRemove={handleRemoveFromPrivateChannel}
+      />
 
       {/* LEFT PANEL: icon nav + channel list stacked, with shared profile bar at bottom */}
       <div className="flex flex-col flex-shrink-0 w-[336px]">
@@ -313,7 +588,11 @@ export default function ChatPage() {
               <button
                 type="button"
                 title="Home"
-                onClick={() => { setActivePanel("home"); setViewMode("dm"); }}
+                onClick={() => {
+                  setActivePanel("home");
+                  setViewMode("dm");
+                  setSelectedDmId((prev) => prev ?? dmConversations[0]?.conversationId ?? null);
+                }}
                 className={activePanel === "home"
                   ? "bg-[#5865F2] text-white rounded-2xl w-12 h-12 flex items-center justify-center transition-all duration-300"
                   : "bg-[#171a1f] text-gray-400 rounded-[2rem] hover:rounded-2xl hover:bg-[#5865F2] hover:text-white w-12 h-12 flex items-center justify-center transition-all duration-300 cursor-pointer"
@@ -329,24 +608,28 @@ export default function ChatPage() {
               {communities.map((c) => {
                 const active = activePanel === "server" && c.id === selectedCommunityId;
                 return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    title={c.name}
-                    onClick={() => {
-                      setSelectedCommunityId(c.id);
-                      setGuildName(c.name);
-                      setActivePanel("server");
-                      setViewMode("channel");
-                    }}
-                    className={
-                      active
-                        ? "flex items-center justify-center rounded-[2rem] bg-[#5865F2] text-white w-12 h-12 transition-all"
-                        : "flex items-center justify-center rounded-[2rem] bg-[#171a1f] text-gray-400 w-12 h-12 hover:bg-[#5865F2] hover:text-white cursor-pointer transition-all"
-                    }
-                  >
-                    <span className="text-sm font-bold">{c.name.slice(0, 2).toUpperCase()}</span>
-                  </button>
+                  <div key={c.id} className="relative">
+                    <button
+                      type="button"
+                      title={c.name}
+                      onClick={() => {
+                        setSelectedCommunityId(c.id);
+                        setGuildName(c.name);
+                        setActivePanel("server");
+                        setViewMode("channel");
+                      }}
+                      className={
+                        active
+                          ? "flex items-center justify-center rounded-[2rem] bg-[#5865F2] text-white w-12 h-12 transition-all"
+                          : "flex items-center justify-center rounded-[2rem] bg-[#171a1f] text-gray-400 w-12 h-12 hover:bg-[#5865F2] hover:text-white cursor-pointer transition-all"
+                      }
+                    >
+                      <span className="text-sm font-bold">{c.name.slice(0, 2).toUpperCase()}</span>
+                    </button>
+                    {communityUnreadById[c.id] ? (
+                      <span className="absolute -right-0.5 top-1/2 -translate-y-1/2 h-2.5 w-2.5 rounded-full bg-[#5865F2]" aria-label="Unread channels" />
+                    ) : null}
+                  </div>
                 );
               })}
               <button
@@ -416,12 +699,17 @@ export default function ChatPage() {
               {activePanel === "home" ? (
                 <DmList
                   selectedId={selectedDmId}
-                  onSelect={(c) => { setSelectedDmId(c.conversationId); setViewMode("dm"); }}
+                  onSelect={(c) => {
+                    setSelectedDmId(c.conversationId);
+                    setViewMode("dm");
+                    setDmUnreadById((prev) => (prev[c.conversationId] === false ? prev : { ...prev, [c.conversationId]: false }));
+                  }}
                   onNewDm={() => setShowCreateDm(true)}
                   conversations={dmConversations}
                   currentUserId={me?.internal_id ?? null}
                   dmUsers={dmUsers}
                   getPresence={getPresence}
+                  unreadByConversationId={dmUnreadById}
                 />
               ) : (
                 <>
@@ -444,6 +732,8 @@ export default function ChatPage() {
                   {textChannels.map((c) => {
                     const active = viewMode === "channel" && c.id === selectedChannelId;
                     const needsJoin = c.joined === false;
+                    const hasUnread = channelUnreadById[c.id] === true;
+                    const mentionCount = channelMentionCountById[c.id] ?? 0;
                     return (
                       <div key={c.id} className="flex items-center gap-0.5 group/ch">
                         <button
@@ -456,15 +746,21 @@ export default function ChatPage() {
                           onClick={() => {
                             setSelectedChannelId(c.id);
                             setViewMode("channel");
-                            setSelectedDmId(null);
                           }}
                         >
                           <span className="material-symbols-outlined text-[18px] shrink-0 text-on-surface-variant">
                             {c.is_private ? "lock" : "tag"}
                           </span>
                           <span className="truncate">{c.name}</span>
+                          {mentionCount > 0 ? (
+                            <span className="ml-auto min-w-[18px] rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white text-center shrink-0">
+                              {mentionCount > 9 ? "9+" : mentionCount}
+                            </span>
+                          ) : hasUnread && !active ? (
+                            <span className="ml-auto h-2.5 w-2.5 rounded-full bg-[#5865F2] shrink-0" aria-label="Unread messages" />
+                          ) : null}
                           {needsJoin ? (
-                            <span className="ml-auto text-[9px] font-bold uppercase text-amber-400 shrink-0">Join</span>
+                            <span className={`${(mentionCount > 0 || (hasUnread && !active)) ? "ml-2" : "ml-auto"} text-[9px] font-bold uppercase text-amber-400 shrink-0`}>Join</span>
                           ) : null}
                         </button>
                         {needsJoin ? (
@@ -478,18 +774,44 @@ export default function ChatPage() {
                           </button>
                         ) : null}
                         {isGuildAdmin && usingLiveCommunities ? (
-                          <button
-                            type="button"
-                            title="Delete channel"
-                            className="shrink-0 p-1 rounded opacity-0 group-hover/ch:opacity-100 hover:bg-red-500/20 text-red-400"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              void handleDeleteChannel(c.id);
-                            }}
-                          >
-                            <span className="material-symbols-outlined text-[16px]">delete</span>
-                          </button>
+                          <>
+                            {c.is_private ? (
+                              <button
+                                type="button"
+                                title="Add members"
+                                className="shrink-0 p-1 rounded opacity-0 group-hover/ch:opacity-100 hover:bg-[#5865F2]/20 text-[#8ea1ff]"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setSelectedChannelId(c.id);
+                                  setViewMode("channel");
+                                  void (async () => {
+                                    if (selectedCommunityId) {
+                                      const rows = await getChannelMembers(selectedCommunityId, c.id);
+                                      setSelectedChannelMembers(rows ?? []);
+                                    } else {
+                                      setSelectedChannelMembers([]);
+                                    }
+                                  })();
+                                  setShowInviteMembers(true);
+                                }}
+                              >
+                                <span className="material-symbols-outlined text-[16px]">person_add</span>
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              title="Delete channel"
+                              className="shrink-0 p-1 rounded opacity-0 group-hover/ch:opacity-100 hover:bg-red-500/20 text-red-400"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                void handleDeleteChannel(c.id);
+                              }}
+                            >
+                              <span className="material-symbols-outlined text-[16px]">delete</span>
+                            </button>
+                          </>
                         ) : null}
                       </div>
                     );
@@ -541,6 +863,7 @@ export default function ChatPage() {
             currentUserId={me.internal_id}
             displayNameByUserId={dmDisplayNames}
             wsEvent={latestDmEvent}
+            onReadStateUpdated={handleDmReadStateUpdated}
             onLeave={(id) => {
               onConversationLeft(id);
             }}
@@ -550,9 +873,11 @@ export default function ChatPage() {
             channelId={selectedChannelId}
             channelName={selectedChannel.name}
             isPrivate={selectedChannel.is_private}
+            communityId={selectedCommunityId ?? undefined}
             currentUserId={me?.internal_id ?? ""}
             currentUsername={me?.username ?? ""}
             wsEvent={latestChannelEvent}
+            onReadStateUpdated={handleChannelReadStateUpdated}
           />
         ) : (
           <section className="flex-1 bg-surface-container flex flex-col relative min-w-0">

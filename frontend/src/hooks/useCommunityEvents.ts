@@ -6,7 +6,8 @@ export function useCommunityEvents() {
   const [members, setMembers] = useState<CommunityMember[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
 
-  const handleCommunityMessage = useCallback((msg: IncomingMessage, selectedCommunityId: string | null) => {
+  const handleCommunityMessage = useCallback(
+    (msg: IncomingMessage, selectedCommunityId: string | null, currentUserId: string | null) => {
     if ((msg.communityId as string) !== selectedCommunityId) return;
 
     if (msg.type === "community:member:join") {
@@ -40,7 +41,25 @@ export function useCommunityEvents() {
       const channelId = msg.channelId as string;
       setChannels((prev) => prev.filter((c) => c.id !== channelId));
     }
-  }, []);
+
+    if (msg.type === "community:channel:member:add") {
+      if (!currentUserId || (msg.userId as string) !== currentUserId) return;
+      const ch = msg.channel as Channel;
+      setChannels((prev) => {
+        if (prev.some((c) => c.id === ch.id)) return prev;
+        const next = [...prev, { ...ch, joined: true }];
+        return next.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+      });
+    }
+
+    if (msg.type === "community:channel:member:remove") {
+      if (!currentUserId || (msg.userId as string) !== currentUserId) return;
+      const channelId = msg.channelId as string;
+      setChannels((prev) => prev.filter((c) => c.id !== channelId));
+    }
+  },
+  []
+  );
 
   return { members, setMembers, channels, setChannels, handleCommunityMessage };
 }

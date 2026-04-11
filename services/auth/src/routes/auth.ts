@@ -60,7 +60,7 @@ async function createSession(res: Response, internalId: string) {
   });
 }
 
-// ─── Helper: handle OAuth callback (shared by all providers) ───
+// ─── Helper: handle OAuth callback for login/register flow ───
 async function handleOAuthResult(
   res: Response,
   provider: string,
@@ -91,6 +91,29 @@ async function handleOAuthResult(
   );
 
   res.redirect(`/auth/oauth/pending?token=${tempToken}`);
+}
+
+// ─── Helper: handle OAuth callback for the account-linking flow ───
+async function handleOAuthLink(
+  res: Response,
+  userId: string,
+  provider: string,
+  providerId: string
+): Promise<void> {
+  const [existing] = await db
+    .select()
+    .from(identities)
+    .where(and(eq(identities.provider, provider), eq(identities.provider_uid, providerId)))
+    .limit(1);
+
+  if (existing) {
+    const param = existing.internal_id === userId ? "already_linked" : "in_use";
+    res.redirect(`${FRONTEND_ROOT}?link_error=${param}&provider=${provider}`);
+    return;
+  }
+
+  await db.insert(identities).values({ internal_id: userId, provider, provider_uid: providerId });
+  res.redirect(`${FRONTEND_ROOT}?linked=${provider}`);
 }
 
 // ════════════════════════════════════════════
@@ -203,7 +226,23 @@ router.get("/google/callback", async (req: Request, res: Response): Promise<void
   }
 
   const stored = await redis.get(`oauth_state:${state as string}`);
-  if (stored !== "google") {
+  if (!stored) {
+    res.status(403).json({ error: "Invalid state" });
+    return;
+  }
+
+  let isLinkFlow = false;
+  let linkUserId = "";
+  if (stored.startsWith("{")) {
+    const parsed = JSON.parse(stored) as { action?: string; provider?: string; userId?: string };
+    if (parsed.action === "link" && parsed.provider === "google" && parsed.userId) {
+      isLinkFlow = true;
+      linkUserId = parsed.userId;
+    } else {
+      res.status(403).json({ error: "Invalid state" });
+      return;
+    }
+  } else if (stored !== "google") {
     res.status(403).json({ error: "Invalid state" });
     return;
   }
@@ -233,13 +272,17 @@ router.get("/google/callback", async (req: Request, res: Response): Promise<void
     });
     const profile = await profileRes.json() as Record<string, unknown>;
 
-    await handleOAuthResult(
-      res,
-      "google",
-      profile.sub as string,
-      profile.email as string | undefined,
-      profile.name as string | undefined
-    );
+    if (isLinkFlow) {
+      await handleOAuthLink(res, linkUserId, "google", profile.sub as string);
+    } else {
+      await handleOAuthResult(
+        res,
+        "google",
+        profile.sub as string,
+        profile.email as string | undefined,
+        profile.name as string | undefined
+      );
+    }
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "OAuth error" });
@@ -265,7 +308,23 @@ router.get("/github/callback", async (req: Request, res: Response): Promise<void
   }
 
   const stored = await redis.get(`oauth_state:${state as string}`);
-  if (stored !== "github") {
+  if (!stored) {
+    res.status(403).json({ error: "Invalid state" });
+    return;
+  }
+
+  let isLinkFlow = false;
+  let linkUserId = "";
+  if (stored.startsWith("{")) {
+    const parsed = JSON.parse(stored) as { action?: string; provider?: string; userId?: string };
+    if (parsed.action === "link" && parsed.provider === "github" && parsed.userId) {
+      isLinkFlow = true;
+      linkUserId = parsed.userId;
+    } else {
+      res.status(403).json({ error: "Invalid state" });
+      return;
+    }
+  } else if (stored !== "github") {
     res.status(403).json({ error: "Invalid state" });
     return;
   }
@@ -300,13 +359,17 @@ router.get("/github/callback", async (req: Request, res: Response): Promise<void
     });
     const profile = await profileRes.json() as Record<string, unknown>;
 
-    await handleOAuthResult(
-      res,
-      "github",
-      String(profile.id),
-      profile.email as string | undefined,
-      (profile.name || profile.login) as string | undefined
-    );
+    if (isLinkFlow) {
+      await handleOAuthLink(res, linkUserId, "github", String(profile.id));
+    } else {
+      await handleOAuthResult(
+        res,
+        "github",
+        String(profile.id),
+        profile.email as string | undefined,
+        (profile.name || profile.login) as string | undefined
+      );
+    }
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "OAuth error" });
@@ -351,12 +414,16 @@ router.get("/oidc/callback", async (req: Request, res: Response): Promise<void> 
     return;
   }
 
-  const { provider, nonce } = JSON.parse(storedRaw);
+  const parsed = JSON.parse(storedRaw) as { provider: string; nonce: string; action?: string; userId?: string };
+  const { provider, nonce, action, userId } = parsed;
+
   if (provider !== "oidc") {
     res.status(403).json({ error: "Invalid state" });
     return;
   }
   await redis.del(`oauth_state:${state}`);
+
+  const isLinkFlow = action === "link" && !!userId;
 
   try {
     const currentUrl = new URL(
@@ -369,13 +436,17 @@ router.get("/oidc/callback", async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    await handleOAuthResult(
-      res,
-      "oidc",
-      claims.sub,
-      claims.email as string | undefined,
-      (claims.preferred_username || claims.name) as string | undefined
-    );
+    if (isLinkFlow) {
+      await handleOAuthLink(res, userId!, "oidc", claims.sub);
+    } else {
+      await handleOAuthResult(
+        res,
+        "oidc",
+        claims.sub,
+        claims.email as string | undefined,
+        (claims.preferred_username || claims.name) as string | undefined
+      );
+    }
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "OIDC callback error" });
@@ -482,13 +553,47 @@ router.post("/oauth/complete", async (req: Request, res: Response): Promise<void
 });
 
 // ════════════════════════════════════════════
+//  OAuth Provider Linking (from settings)
+// ════════════════════════════════════════════
+
+router.get("/link/google", requireAuth, (req: Request, res: Response) => {
+  const { internal_id } = req.user as { internal_id: string };
+  const state = generateState();
+  redis.set(`oauth_state:${state}`, JSON.stringify({ action: "link", provider: "google", userId: internal_id }), "EX", 600);
+  res.redirect(buildOAuth2AuthUrl(googleConfig, state));
+});
+
+router.get("/link/github", requireAuth, (req: Request, res: Response) => {
+  const { internal_id } = req.user as { internal_id: string };
+  const state = generateState();
+  redis.set(`oauth_state:${state}`, JSON.stringify({ action: "link", provider: "github", userId: internal_id }), "EX", 600);
+  res.redirect(buildOAuth2AuthUrl(githubConfig, state));
+});
+
+router.get("/link/oidc", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { internal_id } = req.user as { internal_id: string };
+  try {
+    const state = generateState();
+    const nonce = crypto.randomBytes(16).toString("hex");
+    await redis.set(
+      `oauth_state:${state}`,
+      JSON.stringify({ action: "link", provider: "oidc", userId: internal_id, nonce }),
+      "EX",
+      600
+    );
+    const url = await buildOidcAuthUrl(state, nonce);
+    res.redirect(url);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "OIDC initialization error" });
+  }
+});
+
+// ════════════════════════════════════════════
 //  Profile & Presence
 // ════════════════════════════════════════════
 
 // GET /auth/dm-users
-// TODO: replace with real DM participants endpoint once Direct Conversations service is built.
-// Should return only users that the current user has an active DM conversation with (1-to-1 or group).
-// For now returns all users except self so we can test presence display.
 router.get("/dm-users", requireAuth, async (req: Request, res: Response): Promise<void> => {
   const { internal_id } = req.user as { internal_id: string };
   try {
@@ -527,6 +632,7 @@ router.get("/me", requireAuth, async (req: Request, res: Response): Promise<void
       username: user.username,
       email: user.email,
       profile: user.profile,
+      has_password: !!user.password_hash,
     });
   } catch (err) {
     console.error(err);
@@ -610,6 +716,106 @@ router.post("/profile/avatar", requireAuth, uploadAvatar.single("avatar"), async
       .where(eq(users.internal_id, internal_id));
 
     res.json({ message: "Avatar uploaded", avatarUrl });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// PATCH /auth/password — set or change password
+router.patch("/password", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { internal_id } = req.user as { internal_id: string };
+  const { currentPassword, newPassword } = req.body;
+
+  if (!newPassword || typeof newPassword !== "string" || newPassword.length < 6) {
+    res.status(400).json({ error: "New password must be at least 6 characters" });
+    return;
+  }
+
+  try {
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.internal_id, internal_id))
+      .limit(1);
+
+    if (!user) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+
+    if (user.password_hash) {
+      if (!currentPassword) {
+        res.status(400).json({ error: "Current password is required to change your password" });
+        return;
+      }
+      const valid = await bcrypt.compare(currentPassword, user.password_hash);
+      if (!valid) {
+        res.status(401).json({ error: "Current password is incorrect" });
+        return;
+      }
+    }
+
+    const hash = await bcrypt.hash(newPassword, 12);
+    await db.update(users).set({ password_hash: hash }).where(eq(users.internal_id, internal_id));
+
+    res.json({ message: "Password updated" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// GET /auth/identities — list linked OAuth providers
+router.get("/identities", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { internal_id } = req.user as { internal_id: string };
+  try {
+    const rows = await db
+      .select({ provider: identities.provider, created_at: identities.created_at })
+      .from(identities)
+      .where(eq(identities.internal_id, internal_id));
+
+    res.json({ identities: rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// DELETE /auth/identities/:provider — unlink an OAuth provider
+router.delete("/identities/:provider", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { internal_id } = req.user as { internal_id: string };
+  const provider = req.params.provider as string;
+
+  try {
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.internal_id, internal_id))
+      .limit(1);
+
+    if (!user) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+
+    const allIdentities = await db
+      .select()
+      .from(identities)
+      .where(eq(identities.internal_id, internal_id));
+
+    const remainingAfterRemoval = allIdentities.filter((i) => i.provider !== provider);
+
+    if (remainingAfterRemoval.length === 0 && !user.password_hash) {
+      res.status(400).json({ error: "Cannot unlink your only sign-in method. Set a password first." });
+      return;
+    }
+
+    await db
+      .delete(identities)
+      .where(and(eq(identities.internal_id, internal_id), eq(identities.provider, provider)));
+
+    res.json({ message: "Provider unlinked" });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Internal server error" });

@@ -33,6 +33,21 @@ export type CommunityMember = {
   joined_at: string;
 };
 
+export type ChannelAccessMember = {
+  user_id: string;
+  username: string;
+  display_name: string;
+  role: string;
+};
+
+export type ChannelReadState = {
+  channelId: string;
+  lastReadMessageId: string | null;
+  lastReadTimeuuid: string | null;
+  mentionCount: number;
+  hasUnread: boolean;
+};
+
 async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T | null> {
   try {
     const res = await fetch(input, { ...init, credentials: "include" });
@@ -56,6 +71,16 @@ export async function getCommunityChannels(communityId: string): Promise<Channel
 
 export async function getCommunityMembers(communityId: string): Promise<CommunityMember[] | null> {
   const body = await fetchJson<{ members: CommunityMember[] }>(`/communities/${encodeURIComponent(communityId)}/members`);
+  return body?.members ?? null;
+}
+
+export async function getChannelMembers(
+  communityId: string,
+  channelId: string
+): Promise<ChannelAccessMember[] | null> {
+  const body = await fetchJson<{ members: ChannelAccessMember[] }>(
+    `/communities/${encodeURIComponent(communityId)}/channels/${encodeURIComponent(channelId)}/members`
+  );
   return body?.members ?? null;
 }
 
@@ -116,6 +141,9 @@ export async function leaveCommunity(communityId: string): Promise<LeaveCommunit
 }
 
 export type ChannelMutationOk = { ok: true } | { ok: false; error: string };
+export type AddChannelMemberResult =
+  | { ok: true; status: "added" | "already_member" }
+  | { ok: false; error: string };
 
 export type CreateChannelResult = { ok: true; channel: Channel } | { ok: false; error: string };
 
@@ -179,6 +207,53 @@ export async function leaveChannel(communityId: string, channelId: string): Prom
     if (res.status === 200) return { ok: true };
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     return { ok: false, error: data.error ?? "Could not leave channel." };
+  } catch {
+    return { ok: false, error: "Network error." };
+  }
+}
+
+/** Add one community member to a private channel (owner/admin only). */
+export async function addChannelMember(
+  communityId: string,
+  channelId: string,
+  userId: string
+): Promise<AddChannelMemberResult> {
+  try {
+    const res = await fetch(
+      `/communities/${encodeURIComponent(communityId)}/channels/${encodeURIComponent(channelId)}/members`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId }),
+      }
+    );
+    if (res.status === 201) return { ok: true, status: "added" };
+    if (res.status === 200) return { ok: true, status: "already_member" };
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    return { ok: false, error: data.error ?? "Could not add member to channel." };
+  } catch {
+    return { ok: false, error: "Network error." };
+  }
+}
+
+/** Remove one member's access from a private channel (owner/admin only). */
+export async function removeChannelMember(
+  communityId: string,
+  channelId: string,
+  userId: string
+): Promise<ChannelMutationOk> {
+  try {
+    const res = await fetch(
+      `/communities/${encodeURIComponent(communityId)}/channels/${encodeURIComponent(channelId)}/members/${encodeURIComponent(userId)}`,
+      {
+        method: "DELETE",
+        credentials: "include",
+      }
+    );
+    if (res.status === 204) return { ok: true };
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    return { ok: false, error: data.error ?? "Could not remove member from channel." };
   } catch {
     return { ok: false, error: "Network error." };
   }
@@ -331,6 +406,27 @@ export async function deleteChannelMessage(channelId: string, timeuuid: string):
     const res = await fetch(`/messages/${encodeURIComponent(channelId)}/${encodeURIComponent(timeuuid)}`, {
       method: "DELETE",
       credentials: "include",
+    });
+    return res.status === 204;
+  } catch {
+    return false;
+  }
+}
+
+export async function getChannelReadState(communityId: string): Promise<ChannelReadState[] | null> {
+  const body = await fetchJson<{ channels: ChannelReadState[] }>(
+    `/read-state/channels?communityId=${encodeURIComponent(communityId)}`
+  );
+  return body?.channels ?? null;
+}
+
+export async function markChannelRead(channelId: string, messageId: string, timeuuid: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/read-state/channels/${encodeURIComponent(channelId)}/read`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messageId, timeuuid }),
     });
     return res.status === 204;
   } catch {
