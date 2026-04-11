@@ -4,6 +4,7 @@ Project documentation lives under **`docs/`** (except the root [`README.md`](../
 
 | Document | Description |
 |----------|-------------|
+| [`branching.md`](./branching.md) | Git: PRs from `nick` → `main-dev`; syncing after merge |
 | [`CLAUDE.md`](./CLAUDE.md) | Cursor / AI-oriented project guide: stack, monorepo layout, spec checklist, conventions, proxy map |
 | [`IMPLEMENTATION.md`](./IMPLEMENTATION.md) | What is implemented vs course expectations (auth, stubs, frontend) |
 | [`DEV-27-Direct-conversations-dm-service-setup.md`](./DEV-27-Direct-conversations-dm-service-setup.md) | DM service (Cassandra, port 3007), endpoints, local setup |
