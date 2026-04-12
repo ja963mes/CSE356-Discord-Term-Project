@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "dev": "npm run dev:frontend:staging",
-    "dev:all": "concurrently -n auth,create-community,communities,messages,search,realtime,dms,frontend -c auto \"npm run dev:auth\" \"npm run dev:create-community\" \"npm run dev:communities\" \"npm run dev:messages\" \"npm run dev:search\" \"npm run dev:realtime\" \"npm run dev:dms\" \"VITE_API_ORIGIN=http://localhost npm run dev:frontend\"",
+    "dev:all": "concurrently -n auth,create-community,communities,messages,search,realtime,dms,read-state,frontend -c auto \"npm run dev:auth\" \"npm run dev:create-community\" \"npm run dev:communities\" \"npm run dev:messages\" \"npm run dev:search\" \"npm run dev:realtime\" \"npm run dev:dms\" \"npm run dev:read-state\" \"VITE_API_ORIGIN=http://localhost npm run dev:frontend\"",
     "dev:local": "docker compose up -d && npm run dev:all",
     "dev:frontend:staging": "VITE_API_ORIGIN=http://130.245.136.45 npm run dev:frontend",
     "dev:frontend:local": "VITE_API_ORIGIN=http://localhost npm run dev:frontend",
@@ -19,6 +19,7 @@
     "dev:messages": "npm run dev --workspace messages-service",
     "dev:search": "npm run dev --workspace search-service",
     "dev:realtime": "npm run dev --workspace realtime-service",
+    "dev:read-state": "npm run dev --workspace read-state-service",
     "dev:frontend": "npm run dev --workspace frontend",
     "build": "npm run build:auth && npm run build:frontend",
     "build:auth": "npm run build --workspace auth-service",
@@ -26,7 +27,8 @@
     "db:generate": "npm run db:generate --workspace auth-service",
     "db:migrate": "npm run db:migrate --workspace auth-service",
     "dev:dms": "npm run dev --workspace dms-service",
-    "diagnostics:local": "bash ./scripts/collect-diagnostics.sh"
+    "diagnostics:local": "bash ./scripts/collect-diagnostics.sh",
+    "diagnostics:watch-cpu": "bash ./scripts/capture-on-high-cpu.sh"
   },
   "keywords": [],
   "author": "",

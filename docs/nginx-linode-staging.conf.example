@@ -6,6 +6,7 @@
 # Backend services (127.0.0.1, same as local dev):
 #   3001 auth   3002 communities   3003 messages   3004 search
 #   3005 realtime (WebSocket /ws)   3006 create-community   3007 dms
+#   optional: 8081 uptime-kuma (recommended direct access on IP:8081)
 #
 # Prefix notes:
 # - /search-communities must win over /search (longer prefix; same as Vite).
@@ -120,6 +121,11 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
+
+    # Uptime Kuma note:
+    # For IP-only staging, use Kuma directly on host port 8081 (http://<ip>:8081).
+    # Subpath proxying (/kuma/*) is intentionally omitted here because it is brittle
+    # with Kuma's root-relative routes/assets on single-host, IP-based setups.
 
     # SPA: Vite dev server (npm run dev in frontend). For production static files,
     # replace this block with root/try_files to frontend/dist (see README build).

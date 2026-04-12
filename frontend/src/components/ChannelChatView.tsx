@@ -7,6 +7,7 @@ import {
   deleteChannelMessage,
   presignAttachments,
   uploadToMinIO,
+  markChannelRead,
 } from "../api/discord";
 import { IncomingMessage } from "../hooks/useWebSocket";
 import SearchPanel from "./SearchPanel";
@@ -19,6 +20,7 @@ interface Props {
   currentUserId: string;
   currentUsername: string;
   wsEvent?: IncomingMessage | null;
+  onReadStateUpdated?: (channelId: string, messageId: string, timeuuid: string) => void;
 }
 
 const MAX_ATTACHMENTS = 4;
@@ -32,6 +34,7 @@ export default function ChannelChatView({
   currentUserId,
   currentUsername,
   wsEvent,
+  onReadStateUpdated,
 }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [oldestTimeuuid, setOldestTimeuuid] = useState<string | null>(null);
@@ -51,6 +54,15 @@ export default function ChannelChatView({
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
+  const lastMarkedRef = useRef<string | null>(null);
+
+  const markLatestRead = useCallback(async (message: Message | null | undefined) => {
+    if (!message?.id || !message.timeuuid || lastMarkedRef.current === message.id) return;
+    const ok = await markChannelRead(channelId, message.id, message.timeuuid);
+    if (!ok) return;
+    lastMarkedRef.current = message.id;
+    onReadStateUpdated?.(channelId, message.id, message.timeuuid);
+  }, [channelId, onReadStateUpdated]);
 
   // Load initial messages when channel changes
   useEffect(() => {
@@ -60,16 +72,18 @@ export default function ChannelChatView({
     setComposerText("");
     setPendingFiles([]);
     setEditingId(null);
+    lastMarkedRef.current = null;
 
     getMessages(channelId)
       .then((msgs) => {
         setMessages(msgs);
         if (msgs.length > 0) setOldestTimeuuid(msgs[0].timeuuid);
         if (msgs.length < 50) setHasMore(false);
+        void markLatestRead(msgs[msgs.length - 1] ?? null);
         setTimeout(() => bottomRef.current?.scrollIntoView(), 50);
       })
       .catch(() => setMessages([]));
-  }, [channelId]);
+  }, [channelId, markLatestRead]);
 
   // Infinite scroll — load older messages
   const loadOlder = useCallback(async () => {
@@ -126,6 +140,7 @@ export default function ChannelChatView({
         return [...prev, msg];
       });
       if (atBottomRef.current) {
+        void markLatestRead(msg);
         setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
       }
     } else if (e.type === "channel:message:edit") {
@@ -142,7 +157,7 @@ export default function ChannelChatView({
       const messageId = String(e.messageId ?? "");
       setMessages((prev) => prev.filter((m) => m.id !== messageId));
     }
-  }, [wsEvent, channelId]);
+  }, [wsEvent, channelId, markLatestRead]);
 
   // Send message
   const handleSend = async (e: React.FormEvent) => {
@@ -173,6 +188,7 @@ export default function ChannelChatView({
         setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
         setComposerText("");
         setPendingFiles([]);
+        void markLatestRead(msg);
         setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
       }
     } finally {
@@ -275,12 +291,30 @@ export default function ChannelChatView({
           </div>
         )}
 
-        {messages.map((m) => {
+        {messages.map((m, i) => {
           const isOwn = m.authorId === currentUserId;
           const isEditing = editingId === m.id;
+          const msgDate = new Date(m.createdAt);
+          const prevDate = i > 0 ? new Date(messages[i - 1].createdAt) : null;
+          const showDivider = !prevDate || msgDate.toDateString() !== prevDate.toDateString();
+          const today = new Date();
+          const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+          const dateLabel = msgDate.toDateString() === today.toDateString()
+            ? "Today"
+            : msgDate.toDateString() === yesterday.toDateString()
+            ? "Yesterday"
+            : msgDate.toLocaleDateString([], { month: "long", day: "numeric", year: "numeric" });
 
           return (
-            <div key={m.id} id={`msg-${m.id}`} className="flex gap-3 items-start group rounded-lg transition-all">
+            <React.Fragment key={m.id}>
+              {showDivider && (
+                <div className="flex items-center gap-3 my-2">
+                  <div className="flex-1 h-px bg-outline-variant/30" />
+                  <span className="text-[11px] font-semibold text-on-surface-variant shrink-0">{dateLabel}</span>
+                  <div className="flex-1 h-px bg-outline-variant/30" />
+                </div>
+              )}
+            <div id={`msg-${m.id}`} className="flex gap-3 items-start group rounded-lg transition-all">
               <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant text-xs flex-shrink-0">
                 {(m.author ?? "?").slice(0, 1).toUpperCase()}
               </div>
@@ -350,6 +384,7 @@ export default function ChannelChatView({
                 )}
               </div>
             </div>
+            </React.Fragment>
           );
         })}
 

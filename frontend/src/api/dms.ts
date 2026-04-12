@@ -7,6 +7,14 @@ export type Conversation = {
   participantIds: string[];
   createdAt: string;
   updatedAt: string;
+  lastReadTimeuuid?: string | null;
+  hasUnread?: boolean;
+};
+
+export type ConversationReadState = {
+  userId: string;
+  lastReadMessageId: string | null;
+  lastReadTimeuuid: string | null;
 };
 
 export type DmMessage = {
@@ -115,4 +123,32 @@ export async function deleteMessage(
     `/dms/${conversationId}/messages/${messageId}?timeuuid=${encodeURIComponent(timeuuid)}`,
     { method: "DELETE" }
   );
+}
+
+export async function getDmReadState(): Promise<Array<{
+  conversationId: string;
+  lastReadMessageId: string | null;
+  lastReadTimeuuid: string | null;
+  hasUnread: boolean;
+}>> {
+  const data = await fetchApi<{ conversations: Array<{
+    conversationId: string;
+    lastReadMessageId: string | null;
+    lastReadTimeuuid: string | null;
+    hasUnread: boolean;
+  }> }>("/read-state/dms");
+  return data.conversations;
+}
+
+export async function getConversationReadState(conversationId: string): Promise<ConversationReadState[]> {
+  const data = await fetchApi<{ readState: ConversationReadState[] }>(`/read-state/dms/${conversationId}`);
+  return data.readState;
+}
+
+export async function markConversationRead(conversationId: string, messageId: string, timeuuid: string): Promise<void> {
+  await fetchApi(`/read-state/dms/${conversationId}/read`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messageId, timeuuid }),
+  });
 }
