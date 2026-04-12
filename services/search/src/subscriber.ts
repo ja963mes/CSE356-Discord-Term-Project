@@ -5,7 +5,7 @@ import { db } from "./db";
 import { users, channels } from "./db/schema";
 import { eq } from "drizzle-orm";
 
-const sub = new Redis(env.REDIS_URL);
+const sub = new Redis(env.REDIS_URL, { enableReadyCheck: false});
 
 sub.on("connect", () => console.log("[search] Redis subscriber connected"));
 sub.on("error", (err) => console.error("[search] Redis subscriber error:", err));

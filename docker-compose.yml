@@ -57,17 +57,17 @@ services:
     volumes:
       - redis_data:/data
 
-  cassandra:
-    image: cassandra:4.0
-    container_name: discord-clone-cassandra
-    ports:
-      - "${CASSANDRA_PORT:-9042}:9042"
-    # Cap JVM heap so staging fits on small VMs (heap is the main RSS driver; add ~300–500MB for off-heap).
-    # Override on the host: CASSANDRA_MAX_HEAP=768M docker compose up -d cassandra
-    environment:
-      MAX_HEAP_SIZE: ${CASSANDRA_MAX_HEAP:-512M}
-      HEAP_NEWSIZE: ${CASSANDRA_HEAP_NEW:-128M}
-    mem_limit: ${CASSANDRA_MEM_LIMIT:-512m}
+#  cassandra:
+#    image: cassandra:4.0
+#    container_name: discord-clone-cassandra
+#    ports:
+#      - "${CASSANDRA_PORT:-9042}:9042"
+#    # Cap JVM heap so staging fits on small VMs (heap is the main RSS driver; add ~300–500MB for off-heap).
+#    # Override on the host: CASSANDRA_MAX_HEAP=768M docker compose up -d cassandra
+#    environment:
+#      MAX_HEAP_SIZE: ${CASSANDRA_MAX_HEAP:-512M}
+#      HEAP_NEWSIZE: ${CASSANDRA_HEAP_NEW:-128M}
+#    mem_limit: ${CASSANDRA_MEM_LIMIT:-512m}
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
@@ -75,8 +75,8 @@ services:
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
-      - ES_JAVA_OPTS=-Xms512m -Xmx512m
-    mem_limit: ${ELASTICSEARCH_MEM_LIMIT:-512m}
+      - ES_JAVA_OPTS=-Xms256m -Xmx256m
+    mem_limit: ${ELASTICSEARCH_MEM_LIMIT:-768m}
     ports:
       - "${ELASTICSEARCH_PORT:-9200}:9200"
     volumes:
@@ -98,6 +98,6 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  cassandra_data:
+#  cassandra_data:
   elasticsearch_data:
   minio_data:
