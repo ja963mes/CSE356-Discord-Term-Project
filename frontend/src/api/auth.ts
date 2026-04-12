@@ -106,18 +106,58 @@ export interface DmUser {
 }
 
 /** Safe label for lists/search; avoids crashing when `profile` or `displayName` is missing. */
-export function displayNameForDmUser(u: DmUser): string {
+export function displayNameForDmUser(u: DmUser | null | undefined): string {
+  if (!u) return "User";
   const name = u.profile?.displayName?.trim();
   if (name) return name;
   return u.username || "User";
+}
+
+function coerceDmProfile(raw: unknown): DmUser["profile"] {
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  return {
+    displayName: typeof o.displayName === "string" ? o.displayName : undefined,
+    avatar: o.avatar === null ? null : typeof o.avatar === "string" ? o.avatar : undefined,
+  };
+}
+
+/** Normalize API/proxy quirks so we never hand React a non-array or rows missing ids (avoids full-app crash). */
+export function normalizeDmUsersPayload(raw: unknown): DmUser[] {
+  if (raw == null || typeof raw !== "object" || !("users" in raw)) return [];
+  const { users } = raw as { users: unknown };
+  if (!Array.isArray(users)) return [];
+  const out: DmUser[] = [];
+  for (const item of users) {
+    if (item == null || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    const internal_id =
+      typeof row.internal_id === "string"
+        ? row.internal_id
+        : row.internal_id != null
+          ? String(row.internal_id)
+          : "";
+    if (!internal_id) continue;
+    out.push({
+      internal_id,
+      username: typeof row.username === "string" ? row.username : "",
+      profile: coerceDmProfile(row.profile),
+    });
+  }
+  return out;
 }
 
 // TODO: replace with real DM participants once Direct Conversations service is built
 export async function getDmUsers(): Promise<DmUser[]> {
   const res = await fetch("/auth/dm-users", { credentials: "include" });
   if (!res.ok) return [];
-  const data = (await res.json()) as { users: DmUser[] };
-  return data.users;
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch {
+    return [];
+  }
+  return normalizeDmUsersPayload(body);
 }
 
 export async function uploadAvatar(file: File): Promise<string> {

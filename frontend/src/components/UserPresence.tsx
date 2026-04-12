@@ -4,7 +4,8 @@ import { PresenceState } from "../hooks/usePresence";
 
 interface Props {
   userId: string;
-  displayName: string;
+  /** May be missing from API/payload edge cases; coerced to a safe label internally. */
+  displayName?: string | null;
   avatarUrl?: string;
   presence: PresenceState;
   size?: "sm" | "md";
@@ -16,6 +17,9 @@ export default function UserPresence({ displayName, avatarUrl, presence, size = 
   const nameSize = size === "sm" ? "text-sm" : "text-base";
   const [imgFailed, setImgFailed] = React.useState(false);
 
+  const label = (displayName ?? "").trim() || "User";
+  const initial = label.slice(0, 1).toUpperCase();
+
   return (
     <div className="flex items-center gap-3">
       {/* Avatar */}
@@ -23,13 +27,13 @@ export default function UserPresence({ displayName, avatarUrl, presence, size = 
         {avatarUrl && !imgFailed ? (
           <img
             src={avatarUrl}
-            alt={displayName}
+            alt={label}
             className={`${avatarSize} rounded-full object-cover`}
             onError={() => setImgFailed(true)}
           />
         ) : (
           <div className={`${avatarSize} rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant font-bold text-sm`}>
-            {displayName.slice(0, 1).toUpperCase()}
+            {initial}
           </div>
         )}
         <PresenceDot status={presence.status} className={`absolute bottom-0 right-0 ${dotSize}`} />
@@ -37,7 +41,7 @@ export default function UserPresence({ displayName, avatarUrl, presence, size = 
 
       {/* Name + away message */}
       <div className="flex-1 overflow-hidden">
-        <p className={`${nameSize} font-semibold text-on-surface truncate`}>{displayName}</p>
+        <p className={`${nameSize} font-semibold text-on-surface truncate`}>{label}</p>
         {presence.status === "away" && presence.awayMessage ? (
           <p className="text-[11px] text-on-surface-variant truncate">{presence.awayMessage}</p>
         ) : (

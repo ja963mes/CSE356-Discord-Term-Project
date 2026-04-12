@@ -827,8 +827,8 @@ export default function ChatPage() {
           <div className="flex-1 overflow-hidden">
             <UserPresence
               userId={me?.internal_id ?? ""}
-              displayName={me?.profile.displayName ?? "..."}
-              avatarUrl={me?.profile.avatar ?? undefined}
+              displayName={me?.profile?.displayName ?? me?.username ?? "..."}
+              avatarUrl={me?.profile?.avatar ?? undefined}
               presence={getPresence(me?.internal_id ?? "")}
               size="sm"
             />
@@ -927,7 +927,7 @@ export default function ChatPage() {
                   <div className="flex flex-col gap-0.5">
                     <UserPresence
                       userId={m.user_id}
-                      displayName={m.display_name}
+                      displayName={m.display_name ?? m.username ?? "User"}
                       presence={getPresence(m.user_id)}
                       size="sm"
                     />
