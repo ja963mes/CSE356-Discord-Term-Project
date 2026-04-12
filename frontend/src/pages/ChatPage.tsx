@@ -18,7 +18,7 @@ import {
   listCommunities,
   removeChannelMember,
 } from "../api/discord";
-import { getMe, getDmUsers, logout, Me, DmUser } from "../api/auth";
+import { getMe, getDmUsers, logout, Me, DmUser, displayNameForDmUser } from "../api/auth";
 import { getDmReadState, listConversations } from "../api/dms";
 import { IncomingMessage, useWebSocket } from "../hooks/useWebSocket";
 import { useActivityDetection } from "../hooks/useActivityDetection";
@@ -433,7 +433,7 @@ export default function ChatPage() {
       map[me.internal_id] = me.profile.displayName || me.username;
     }
     for (const u of dmUsers) {
-      map[u.internal_id] = u.profile.displayName || u.username;
+      map[u.internal_id] = displayNameForDmUser(u);
     }
     return map;
   }, [me, dmUsers]);

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { DmUser, getDmUsers } from "../api/auth";
+import { DmUser, displayNameForDmUser, getDmUsers } from "../api/auth";
 import { Conversation, ConversationType, createConversation } from "../api/dms";
 
 interface Props {
@@ -140,6 +140,8 @@ export default function CreateDmModal({ open, onClose, onCreated, existingOneToO
             )}
             {users.filter((u) => type !== "one_to_one" || !existingOneToOneUserIds?.has(u.internal_id)).map((u) => {
               const selected = selectedIds.has(u.internal_id);
+              const label = displayNameForDmUser(u);
+              const initial = label.slice(0, 1).toUpperCase();
               return (
                 <button
                   key={u.internal_id}
@@ -152,9 +154,9 @@ export default function CreateDmModal({ open, onClose, onCreated, existingOneToO
                   }
                 >
                   <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant text-xs flex-shrink-0">
-                    {u.profile.displayName.slice(0, 1).toUpperCase()}
+                    {initial}
                   </div>
-                  <span className="text-sm truncate">{u.profile.displayName}</span>
+                  <span className="text-sm truncate">{label}</span>
                   {selected && (
                     <span className="material-symbols-outlined text-[#5865F2] ml-auto text-[18px]">check_circle</span>
                   )}
