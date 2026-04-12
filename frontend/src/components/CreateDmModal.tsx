@@ -30,6 +30,8 @@ export default function CreateDmModal({ open, onClose, onCreated, existingOneToO
 
   if (!open) return null;
 
+  const userList = Array.isArray(users) ? users : [];
+
   function toggleUser(userId: string) {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -135,10 +137,12 @@ export default function CreateDmModal({ open, onClose, onCreated, existingOneToO
             {type === "one_to_one" ? "Select a user" : "Select participants"}
           </label>
           <div className="max-h-48 overflow-y-auto rounded-lg bg-[#111318] border border-white/10 mb-4">
-            {users.length === 0 && (
+            {userList.length === 0 && (
               <p className="px-3 py-4 text-sm text-[#6d737a] text-center">No users found.</p>
             )}
-            {users.filter((u) => type !== "one_to_one" || !existingOneToOneUserIds?.has(u.internal_id)).map((u) => {
+            {userList
+              .filter((u) => type !== "one_to_one" || !existingOneToOneUserIds?.has(u.internal_id))
+              .map((u) => {
               const selected = selectedIds.has(u.internal_id);
               const label = displayNameForDmUser(u);
               const initial = label.slice(0, 1).toUpperCase();
