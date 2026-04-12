@@ -101,7 +101,15 @@ export async function updateProfile(displayName: string): Promise<void> {
 export interface DmUser {
   internal_id: string;
   username: string;
-  profile: { displayName: string; avatar: string | null };
+  /** May be `{}` or omit displayName until the user sets a profile (see DB default). */
+  profile?: { displayName?: string; avatar?: string | null };
+}
+
+/** Safe label for lists/search; avoids crashing when `profile` or `displayName` is missing. */
+export function displayNameForDmUser(u: DmUser): string {
+  const name = u.profile?.displayName?.trim();
+  if (name) return name;
+  return u.username || "User";
 }
 
 // TODO: replace with real DM participants once Direct Conversations service is built

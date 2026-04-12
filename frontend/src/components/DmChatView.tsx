@@ -12,7 +12,7 @@ import {
   inviteParticipant,
   leaveConversation,
 } from "../api/dms";
-import { DmUser, getDmUsers } from "../api/auth";
+import { DmUser, displayNameForDmUser, getDmUsers } from "../api/auth";
 import SearchPanel from "./SearchPanel";
 
 import { IncomingMessage } from "../hooks/useWebSocket";
@@ -398,9 +398,14 @@ export default function DmChatView({
               .filter((u) => {
                 if (!inviteSearch.trim()) return true;
                 const q = inviteSearch.toLowerCase();
-                return u.username.toLowerCase().includes(q) || u.profile.displayName.toLowerCase().includes(q);
+                const label = displayNameForDmUser(u);
+                return (
+                  u.username.toLowerCase().includes(q) || label.toLowerCase().includes(q)
+                );
               })
-              .map((u) => (
+              .map((u) => {
+                const inviteLabel = displayNameForDmUser(u);
+                return (
                 <button
                   key={u.internal_id}
                   type="button"
@@ -409,15 +414,16 @@ export default function DmChatView({
                   className="flex items-center gap-3 w-full px-3 py-2 text-on-surface hover:bg-surface-variant/50 transition-colors disabled:opacity-50"
                 >
                   <div className="w-7 h-7 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant text-xs flex-shrink-0">
-                    {u.profile.displayName.slice(0, 2).toUpperCase()}
+                    {inviteLabel.slice(0, 2).toUpperCase()}
                   </div>
                   <div className="flex flex-col items-start min-w-0">
-                    <span className="text-sm truncate">{u.profile.displayName}</span>
+                    <span className="text-sm truncate">{inviteLabel}</span>
                     <span className="text-[10px] text-on-surface-variant truncate">{u.username}</span>
                   </div>
                   <span className="material-symbols-outlined text-[18px] text-on-surface-variant ml-auto">person_add</span>
                 </button>
-              ))}
+                );
+              })}
             {inviteUsers.filter((u) => !participantSet.has(u.internal_id)).length === 0 && (
               <p className="px-3 py-3 text-sm text-on-surface-variant text-center">No users available to invite.</p>
             )}
