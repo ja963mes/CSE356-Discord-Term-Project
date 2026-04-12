@@ -154,7 +154,8 @@ export default function ChannelChatView({
         )
       );
     } else if (e.type === "channel:message:delete") {
-      const messageId = String(e.messageId ?? "");
+      const raw = e.message as Record<string, unknown> | undefined;
+      const messageId = String(raw?.messageId ?? e.messageId ?? "");
       setMessages((prev) => prev.filter((m) => m.id !== messageId));
     }
   }, [wsEvent, channelId, markLatestRead]);
