@@ -36,6 +36,11 @@ export type ChannelMessageEvent =
       messageId: string;
       timeuuid: string;
       authorId: string;
+      message: {
+        messageId: string;
+        timeuuid: string;
+        authorId: string;
+      };
     };
 
 export const publishChannelEvent = async (event: ChannelMessageEvent): Promise<void> => {

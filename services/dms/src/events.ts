@@ -48,6 +48,12 @@ export type DmEvent =
       participantIds: string[];
       messageId: string;
       authorId: string;
+      timeuuid: string;
+      message: {
+        messageId: string;
+        timeuuid: string;
+        authorId: string;
+      };
     }
   | {
       type: "dm:participant:join";

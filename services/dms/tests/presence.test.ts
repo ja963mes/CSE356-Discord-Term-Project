@@ -309,6 +309,10 @@ describe("WebSocket DM events — message:create forwarded to participants", () 
 
     const event = await deletePromise;
     expect(event.messageId).toBe(messageId);
+    expect(event.timeuuid).toBe(timeuuid);
+    const delMsg = event.message as Record<string, unknown>;
+    expect(delMsg.messageId).toBe(messageId);
+    expect(delMsg.timeuuid).toBe(timeuuid);
 
     wsB.close();
   });

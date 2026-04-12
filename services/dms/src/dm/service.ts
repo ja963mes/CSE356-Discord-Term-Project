@@ -552,5 +552,11 @@ export const deleteMessage = async (params: {
     participantIds,
     messageId: params.messageId,
     authorId: params.authorId,
+    timeuuid: params.timeuuid,
+    message: {
+      messageId: params.messageId,
+      timeuuid: params.timeuuid,
+      authorId: params.authorId,
+    },
   });
 };
