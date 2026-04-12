@@ -16,6 +16,7 @@ export default defineConfig(({ mode }) => {
   return {
   plugins: [react()],
   server: {
+	allowedHosts: true,
     proxy: {
       // Auth service session + OAuth redirects
       "/auth": {
