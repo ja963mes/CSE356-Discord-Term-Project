@@ -9,6 +9,18 @@ export const logger = pino({
   name: "communities-service",
   level: env.LOG_LEVEL,
   redact: ["req.headers.cookie", "req.headers.authorization"],
+  ...(env.LOG_PRETTY
+    ? {
+        transport: {
+          target: "pino-pretty",
+          options: {
+            colorize: false,
+            translateTime: "SYS:standard",
+            ignore: "pid,hostname",
+          },
+        },
+      }
+    : {}),
 });
 
 /** Postgres / Drizzle errors often expose these fields. */

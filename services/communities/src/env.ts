@@ -14,6 +14,8 @@ const envSchema = z.object({
   REDIS_URL: z.string(),
   /** Pino log level: trace | debug | info | warn | error | fatal */
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).default("info"),
+  /** Pretty-print logs for easier tail/journalctl reading. */
+  LOG_PRETTY: z.coerce.boolean().default(true),
 });
 
 export const env = envSchema.parse(process.env);
