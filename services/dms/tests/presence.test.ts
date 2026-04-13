@@ -270,9 +270,9 @@ describe("WebSocket DM events — message:create forwarded to participants", () 
     );
 
     await request(app)
-      .patch(`/dms/${convId}/messages/${messageId}`)
+      .patch(`/dms/${convId}/messages/${encodeURIComponent(timeuuid)}`)
       .set("Cookie", userA.cookie)
-      .send({ content: "Edited", timeuuid });
+      .send({ content: "Edited" });
 
     const event = await editPromise;
     expect((event.message as Record<string, unknown>).content).toBe("Edited");
@@ -303,9 +303,8 @@ describe("WebSocket DM events — message:create forwarded to participants", () 
     );
 
     await request(app)
-      .delete(`/dms/${convId}/messages/${messageId}`)
-      .set("Cookie", userA.cookie)
-      .query({ timeuuid });
+      .delete(`/dms/${convId}/messages/${encodeURIComponent(timeuuid)}`)
+      .set("Cookie", userA.cookie);
 
     const event = await deletePromise;
     expect(event.messageId).toBe(messageId);

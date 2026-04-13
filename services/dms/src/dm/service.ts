@@ -441,7 +441,6 @@ export const listMessages = async (params: {
 
 export const editMessage = async (params: {
   conversationId: string;
-  messageId: string;
   authorId: string;
   timeuuid: string;
   content: string;
@@ -450,9 +449,9 @@ export const editMessage = async (params: {
     throw new DmError(403, "Only participants can edit messages");
   }
   const result = await cassandra.execute(
-    `SELECT author_id, attachments, is_deleted FROM messages_by_conversation
-     WHERE conversation_id = ? AND created_at = ? AND message_id = ?`,
-    [toUuid(params.conversationId), toTimeUuid(params.timeuuid), toUuid(params.messageId)],
+    `SELECT message_id, author_id, attachments, is_deleted, attachment_keys FROM messages_by_conversation
+     WHERE conversation_id = ? AND created_at = ?`,
+    [toUuid(params.conversationId), toTimeUuid(params.timeuuid)],
     { prepare: true }
   );
   if (result.rowLength === 0) {
@@ -465,16 +464,17 @@ export const editMessage = async (params: {
     throw new DmError(403, "Only the author can edit this message");
   }
 
+  const messageId = result.first().get("message_id").toString();
   const updatedAt = nowDate();
   await cassandra.execute(
     `UPDATE messages_by_conversation SET content = ?, updated_at = ? WHERE conversation_id = ? AND created_at = ? AND message_id = ?`,
-    [params.content, updatedAt, toUuid(params.conversationId), toTimeUuid(params.timeuuid), toUuid(params.messageId)],
+    [params.content, updatedAt, toUuid(params.conversationId), toTimeUuid(params.timeuuid), toUuid(messageId)],
     { prepare: true }
   );
 
   const attachmentKeys: string[] = (result.first().get("attachment_keys") as string[] | null) ?? [];
   const messageRecord: MessageRecord = {
-    messageId: params.messageId,
+    messageId,
     conversationId: params.conversationId,
     authorId: params.authorId,
     content: params.content,
@@ -492,7 +492,7 @@ export const editMessage = async (params: {
     conversationId: params.conversationId,
     participantIds,
     message: {
-      messageId: params.messageId,
+      messageId,
       authorId: params.authorId,
       content: params.content,
       createdAt: messageRecord.createdAt,
@@ -506,7 +506,6 @@ export const editMessage = async (params: {
 
 export const deleteMessage = async (params: {
   conversationId: string;
-  messageId: string;
   authorId: string;
   timeuuid: string;
 }): Promise<void> => {
@@ -515,15 +514,16 @@ export const deleteMessage = async (params: {
   }
 
   const result = await cassandra.execute(
-    `SELECT author_id, is_deleted FROM messages_by_conversation
-     WHERE conversation_id = ? AND created_at = ? AND message_id = ?`,
-    [toUuid(params.conversationId), toTimeUuid(params.timeuuid), toUuid(params.messageId)],
+    `SELECT message_id, author_id, is_deleted FROM messages_by_conversation
+     WHERE conversation_id = ? AND created_at = ?`,
+    [toUuid(params.conversationId), toTimeUuid(params.timeuuid)],
     { prepare: true }
   );
 
   if (result.rowLength === 0) {
     throw new DmError(404, "Message not found");
   }
+  const messageId = result.first().get("message_id").toString();
   if (result.first().get("is_deleted") === true) {
     return;
   }
@@ -540,7 +540,7 @@ export const deleteMessage = async (params: {
       deletedAt,
       toUuid(params.conversationId),
       toTimeUuid(params.timeuuid),
-      toUuid(params.messageId),
+      toUuid(messageId),
     ],
     { prepare: true }
   );
@@ -550,11 +550,11 @@ export const deleteMessage = async (params: {
     type: "dm:message:delete",
     conversationId: params.conversationId,
     participantIds,
-    messageId: params.messageId,
+    messageId,
     authorId: params.authorId,
     timeuuid: params.timeuuid,
     message: {
-      messageId: params.messageId,
+      messageId,
       timeuuid: params.timeuuid,
       authorId: params.authorId,
     },

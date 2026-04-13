@@ -217,9 +217,9 @@ describe("Messages", () => {
     const { messageId, timeuuid } = sendRes.body.message;
 
     const editRes = await request(app)
-      .patch(`/dms/${convId}/messages/${messageId}`)
+      .patch(`/dms/${convId}/messages/${encodeURIComponent(timeuuid)}`)
       .set("Cookie", userA.cookie)
-      .send({ content: "Edited content", timeuuid });
+      .send({ content: "Edited content" });
 
     expect(editRes.status).toBe(200);
     expect(editRes.body.message.content).toBe("Edited content");
@@ -230,12 +230,12 @@ describe("Messages", () => {
       .post(`/dms/${convId}/messages`)
       .set("Cookie", userA.cookie)
       .send({ content: "Alice's message" });
-    const { messageId, timeuuid } = sendRes.body.message;
+    const { timeuuid } = sendRes.body.message;
 
     const editRes = await request(app)
-      .patch(`/dms/${convId}/messages/${messageId}`)
+      .patch(`/dms/${convId}/messages/${encodeURIComponent(timeuuid)}`)
       .set("Cookie", userB.cookie)
-      .send({ content: "Hacked!", timeuuid });
+      .send({ content: "Hacked!" });
 
     expect(editRes.status).toBe(403);
   });
@@ -248,9 +248,8 @@ describe("Messages", () => {
     const { messageId, timeuuid } = sendRes.body.message;
 
     const delRes = await request(app)
-      .delete(`/dms/${convId}/messages/${messageId}`)
-      .set("Cookie", userA.cookie)
-      .query({ timeuuid });
+      .delete(`/dms/${convId}/messages/${encodeURIComponent(timeuuid)}`)
+      .set("Cookie", userA.cookie);
 
     expect(delRes.status).toBe(204);
 

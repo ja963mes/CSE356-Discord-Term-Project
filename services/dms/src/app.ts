@@ -3,6 +3,7 @@
 import express from "express";
 import cookieParser from "cookie-parser";
 import { randomUUID } from "crypto";
+import { types } from "cassandra-driver";
 import { z } from "zod";
 import { requireAuth } from "./middleware/session";
 import { presignUpload } from "./minio";
@@ -83,11 +84,6 @@ const listMessagesSchema = z.object({
 
 const editMessageSchema = z.object({
   content: z.string().min(1).max(4000),
-  timeuuid: z.string().min(1),
-});
-
-const deleteMessageSchema = z.object({
-  timeuuid: z.string().min(1),
 });
 
 app.get("/dms", requireAuth, async (req, res, next) => {
@@ -167,14 +163,19 @@ app.get("/dms/:id/messages", requireAuth, async (req, res, next) => {
   }
 });
 
-app.patch("/dms/:id/messages/:msgId", requireAuth, async (req, res, next) => {
+app.patch("/dms/:id/messages/:timeuuid", requireAuth, async (req, res, next) => {
   try {
     const conversationId = z.string().uuid().parse(req.params.id);
-    const messageId = z.string().uuid().parse(req.params.msgId);
-    const { content, timeuuid } = editMessageSchema.parse(req.body);
+    let timeuuid: string;
+    try {
+      timeuuid = types.TimeUuid.fromString(String(req.params.timeuuid)).toString();
+    } catch {
+      res.status(400).json({ error: "invalid timeuuid" });
+      return;
+    }
+    const { content } = editMessageSchema.parse(req.body);
     const message = await editMessage({
       conversationId,
-      messageId,
       authorId: req.user.internal_id,
       timeuuid,
       content,
@@ -185,14 +186,18 @@ app.patch("/dms/:id/messages/:msgId", requireAuth, async (req, res, next) => {
   }
 });
 
-app.delete("/dms/:id/messages/:msgId", requireAuth, async (req, res, next) => {
+app.delete("/dms/:id/messages/:timeuuid", requireAuth, async (req, res, next) => {
   try {
     const conversationId = z.string().uuid().parse(req.params.id);
-    const messageId = z.string().uuid().parse(req.params.msgId);
-    const { timeuuid } = deleteMessageSchema.parse(req.query);
+    let timeuuid: string;
+    try {
+      timeuuid = types.TimeUuid.fromString(String(req.params.timeuuid)).toString();
+    } catch {
+      res.status(400).json({ error: "invalid timeuuid" });
+      return;
+    }
     await deleteMessage({
       conversationId,
-      messageId,
       authorId: req.user.internal_id,
       timeuuid,
     });

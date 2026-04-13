@@ -308,19 +308,28 @@ export async function getDmParticipantReadStates(conversationId: string, request
   });
 }
 
-export async function ensureDmMessageExists(conversationId: string, messageId: string, timeuuid: string): Promise<boolean> {
+export async function getDmMessageIdForTimeuuid(conversationId: string, timeuuid: string): Promise<string | null> {
   const result = await dmsCassandra.execute(
     `SELECT message_id FROM ${dmsKs}.messages_by_conversation WHERE conversation_id = ? AND created_at = ?`,
     [toUuid(conversationId), toTimeUuid(timeuuid)],
     { prepare: true, consistency: readConsistency }
   );
-  const row = result.rows[0];
-  return row?.get("message_id")?.toString() === messageId;
+  return result.rows[0]?.get("message_id")?.toString() ?? null;
 }
 
-export async function markDmRead(userId: string, conversationId: string, messageId: string, timeuuid: string): Promise<boolean> {
+export async function markDmRead(
+  userId: string,
+  conversationId: string,
+  timeuuid: string,
+  messageIdHint?: string
+): Promise<boolean> {
   if (!(await isDmParticipant(conversationId, userId))) {
     throw new Error("forbidden");
+  }
+
+  const messageId = messageIdHint ?? (await getDmMessageIdForTimeuuid(conversationId, timeuuid));
+  if (!messageId) {
+    return false;
   }
 
   const current = await cassandra.execute(

@@ -6,8 +6,8 @@ import { cassandra, messagesCassandra } from "./cassandra";
 import { requireAuth } from "./middleware/session";
 import {
   assertChannelAccess,
-  ensureDmMessageExists,
   ensureMessageExists,
+  getDmMessageIdForTimeuuid,
   getChannelState,
   getChannelStatesForCommunity,
   getDmParticipantReadStates,
@@ -28,6 +28,10 @@ const querySchema = z.object({
 
 const markReadSchema = z.object({
   messageId: z.string().uuid(),
+  timeuuid: z.string().min(1),
+});
+
+const markDmReadSchema = z.object({
   timeuuid: z.string().min(1),
 });
 
@@ -128,20 +132,20 @@ app.post("/read-state/dms/:conversationId/read", requireAuth, async (req, res) =
     res.status(400).json({ error: "conversationId (UUID) is required" });
     return;
   }
-  const body = markReadSchema.safeParse(req.body);
+  const body = markDmReadSchema.safeParse(req.body);
   if (!body.success) {
-    res.status(400).json({ error: "messageId and timeuuid are required" });
+    res.status(400).json({ error: "timeuuid is required" });
     return;
   }
 
-  const exists = await ensureDmMessageExists(parsed.data, body.data.messageId, body.data.timeuuid);
-  if (!exists) {
+  const messageId = await getDmMessageIdForTimeuuid(parsed.data, body.data.timeuuid);
+  if (!messageId) {
     res.status(404).json({ error: "Message not found" });
     return;
   }
 
   try {
-    await markDmRead(req.user!.internal_id, parsed.data, body.data.messageId, body.data.timeuuid);
+    await markDmRead(req.user!.internal_id, parsed.data, body.data.timeuuid, messageId);
   } catch {
     res.status(403).json({ error: "Forbidden" });
     return;
@@ -153,7 +157,7 @@ app.post("/read-state/dms/:conversationId/read", requireAuth, async (req, res) =
     conversationId: parsed.data,
     participantIds,
     userId: req.user!.internal_id,
-    messageId: body.data.messageId,
+    messageId,
     timeuuid: body.data.timeuuid,
   }));
 
