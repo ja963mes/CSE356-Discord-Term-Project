@@ -63,6 +63,5 @@ jobs:
             npm run build --workspace dms-service
             npm run build --workspace read-state-service
             npm run build --workspace frontend
-            npm run db:migrate
             sudo systemctl restart discord-auth discord-communities discord-create-community discord-messages discord-realtime discord-dms
             sudo systemctl reload nginx

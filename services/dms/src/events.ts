@@ -47,9 +47,11 @@ export type DmEvent =
       conversationId: string;
       participantIds: string[];
       messageId: string;
+      id: string;
       authorId: string;
       timeuuid: string;
       message: {
+        id: string;
         messageId: string;
         timeuuid: string;
         authorId: string;
