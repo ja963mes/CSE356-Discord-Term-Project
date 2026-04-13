@@ -84,7 +84,7 @@ export default function DmChatView({
   const markLatestRead = useCallback(async (message: DmMessage | null | undefined) => {
     if (!message?.timeuuid || lastMarkedRef.current === message.timeuuid) return;
     try {
-      await markConversationRead(conversationId, message.timeuuid);
+      await markConversationRead(conversationId, message.timeuuid, message.messageId);
       lastMarkedRef.current = message.timeuuid;
       setReadStateByUserId((prev) => ({ ...prev, [currentUserId]: message.timeuuid }));
       onReadStateUpdated?.(conversationId, message.messageId, message.timeuuid);
