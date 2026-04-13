@@ -27,7 +27,12 @@ upstream vite_dev {
 
 server {
     listen 80;
-    server_name 130.245.136.45;
+    listen 443 ssl;
+    server_name 130.245.136.45 group-6.cse356.compas.cs.stonybrook.edu;
+
+    ssl_certificate /etc/letsencrypt/live/group-6.cse356.compas.cs.stonybrook.edu/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/group-6.cse356.compas.cs.stonybrook.edu/privkey.pem;
+
     # For HTTPS, add a second server block or use certbot --nginx.
 
     # Presigned-upload JSON bodies; raise if you increase attachment limits in app code.
