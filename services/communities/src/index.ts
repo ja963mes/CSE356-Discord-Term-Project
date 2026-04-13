@@ -8,6 +8,20 @@ import { requireAuth } from "./middleware/session";
 import { communities, communityMembers, channels, channelMembers, users } from "./db/schema";
 import { publishCommunityEvent } from "./events";
 import { httpLogger, logger, logRouteError } from "./logger";
+import {
+  bumpAllForUserCommunity,
+  bumpCommunityEpochs,
+  cacheTtl,
+  channelsCacheKey,
+  getCachedJson,
+  getCommunityChEpoch,
+  getCommunityMemEpoch,
+  getUserCommunityEpoch,
+  membersCacheKey,
+  searchCacheKey,
+  setCachedJson,
+  userCommunitiesCacheKey,
+} from "./readCache";
 
 function isCommunityAdminRole(role: string): boolean {
   return role === "owner" || role === "admin";
@@ -48,6 +62,13 @@ app.get("/search-communities", async (req, res) => {
   }
 
   try {
+    const ck = searchCacheKey(q, limit);
+    const hit = await getCachedJson<{ query: string; communities: Array<{ id: string; name: string; created_at: string }> }>(ck);
+    if (hit) {
+      res.json(hit);
+      return;
+    }
+
     const pattern = `%${q}%`;
     const rows = await db
       .select({
@@ -60,7 +81,9 @@ app.get("/search-communities", async (req, res) => {
       .orderBy(desc(communities.created_at))
       .limit(limit);
 
-    res.json({ query: q, communities: rows });
+    const payload = { query: q, communities: rows };
+    void setCachedJson(ck, cacheTtl.search, payload);
+    res.json(payload);
   } catch (e) {
     logRouteError("GET /search-communities failed", e, { reqId: req.id, q });
     res.status(500).json({ error: "Failed to search communities" });
@@ -71,6 +94,16 @@ app.get("/search-communities", async (req, res) => {
 app.get("/communities", requireAuth, async (req: Request, res: Response) => {
   const userId = req.user!.internal_id;
   try {
+    const epoch = await getUserCommunityEpoch(userId);
+    const ck = userCommunitiesCacheKey(userId, epoch);
+    const hit = await getCachedJson<{
+      communities: Array<{ id: string; name: string; created_at: string; role: string }>;
+    }>(ck);
+    if (hit) {
+      res.json(hit);
+      return;
+    }
+
     const rows = await db
       .select({
         id: communities.id,
@@ -82,7 +115,9 @@ app.get("/communities", requireAuth, async (req: Request, res: Response) => {
       .innerJoin(communityMembers, eq(communities.id, communityMembers.community_id))
       .where(eq(communityMembers.user_id, userId));
 
-    res.json({ communities: rows });
+    const payload = { communities: rows };
+    void setCachedJson(ck, cacheTtl.userCommunities, payload);
+    res.json(payload);
   } catch (e) {
     logRouteError("GET /communities failed", e, { reqId: req.id, userId });
     res.status(500).json({ error: "Failed to list communities" });
@@ -132,6 +167,8 @@ app.post("/communities/:communityId/join", requireAuth, async (req: Request, res
       joinedAt: newMember.joined_at.toISOString(),
     });
 
+    void bumpAllForUserCommunity(userId, communityId);
+
     res.status(201).json({ message: "Joined community" });
   } catch (e) {
     logRouteError("POST /communities/:communityId/join failed", e, { reqId: req.id, userId, communityId });
@@ -180,6 +217,8 @@ app.post("/communities/:communityId/leave", requireAuth, async (req: Request, re
       userId,
     });
 
+    void bumpAllForUserCommunity(userId, communityId);
+
     res.json({ message: "Left community" });
   } catch (e) {
     logRouteError("POST /communities/:communityId/leave failed", e, { reqId: req.id, userId, communityId });
@@ -201,6 +240,23 @@ app.get("/communities/:communityId/channels", requireAuth, async (req: Request, 
 
     if (!membership) {
       res.status(403).json({ error: "Not a member of this community" });
+      return;
+    }
+
+    const chEpoch = await getCommunityChEpoch(communityId);
+    const ck = channelsCacheKey(communityId, userId, chEpoch);
+    const hit = await getCachedJson<{
+      channels: Array<{
+        id: string;
+        name: string;
+        type: string;
+        position: number;
+        is_private: boolean;
+        joined: boolean;
+      }>;
+    }>(ck);
+    if (hit) {
+      res.json(hit);
       return;
     }
 
@@ -231,7 +287,9 @@ app.get("/communities/:communityId/channels", requireAuth, async (req: Request, 
       joined: channel_member_user_id != null,
     }));
 
-    res.json({ channels: channelsOut });
+    const payload = { channels: channelsOut };
+    void setCachedJson(ck, cacheTtl.channels, payload);
+    res.json(payload);
   } catch (e) {
     logRouteError("GET /communities/:communityId/channels failed", e, { reqId: req.id, userId, communityId });
     res.status(500).json({ error: "Failed to list channels" });
@@ -255,6 +313,22 @@ app.get("/communities/:communityId/members", requireAuth, async (req: Request, r
       return;
     }
 
+    const memEpoch = await getCommunityMemEpoch(communityId);
+    const mk = membersCacheKey(communityId, memEpoch);
+    const memHit = await getCachedJson<{
+      members: Array<{
+        user_id: string;
+        username: string;
+        display_name: string;
+        role: string;
+        joined_at: string;
+      }>;
+    }>(mk);
+    if (memHit) {
+      res.json(memHit);
+      return;
+    }
+
     const rows = await db
       .select({
         user_id: communityMembers.user_id,
@@ -275,11 +349,14 @@ app.get("/communities/:communityId/members", requireAuth, async (req: Request, r
         username: row.username,
         display_name: displayName,
         role: row.role,
-        joined_at: row.joined_at,
+        joined_at:
+          row.joined_at instanceof Date ? row.joined_at.toISOString() : String(row.joined_at),
       };
     });
 
-    res.json({ members });
+    const memPayload = { members };
+    void setCachedJson(mk, cacheTtl.members, memPayload);
+    res.json(memPayload);
   } catch (e) {
     logRouteError("GET /communities/:communityId/members failed", e, { reqId: req.id, userId, communityId });
     res.status(500).json({ error: "Failed to list members" });
@@ -355,6 +432,8 @@ app.post("/communities/:communityId/channels", requireAuth, async (req: Request,
       },
     });
 
+    void bumpCommunityEpochs(communityId, { ch: true });
+
     res.status(201).json({ channel: created });
   } catch (e) {
     logRouteError("POST /communities/:communityId/channels failed", e, { reqId: req.id, userId, communityId });
@@ -419,6 +498,9 @@ app.patch("/communities/:communityId/channels/:channelId", requireAuth, async (r
     }
 
     const [updated] = await db.select().from(channels).where(eq(channels.id, channelId)).limit(1);
+
+    void bumpCommunityEpochs(communityId, { ch: true });
+
     res.json({ channel: updated });
   } catch (e) {
     logRouteError("PATCH /communities/:communityId/channels/:channelId failed", e, { reqId: req.id, userId, communityId, channelId });
@@ -461,6 +543,9 @@ app.post("/communities/:communityId/channels/:channelId/join", requireAuth, asyn
     }
 
     await db.insert(channelMembers).values({ channel_id: channelId, user_id: userId }).onConflictDoNothing();
+
+    void bumpCommunityEpochs(communityId, { ch: true });
+
     res.status(201).json({ message: "Joined channel" });
   } catch (e) {
     logRouteError("POST .../channels/:channelId/join failed", e, { reqId: req.id, userId, communityId, channelId });
@@ -510,6 +595,8 @@ app.post("/communities/:communityId/channels/:channelId/leave", requireAuth, asy
       res.status(404).json({ error: "Not a member of this channel" });
       return;
     }
+
+    void bumpCommunityEpochs(communityId, { ch: true });
 
     res.json({ message: "Left channel" });
   } catch (e) {
@@ -659,6 +746,9 @@ app.post("/communities/:communityId/channels/:channelId/members", requireAuth, a
         is_private: ch.is_private,
       },
     });
+
+    void bumpCommunityEpochs(communityId, { ch: true });
+
     res.status(201).json({ message: "Added to channel", status: "added" });
   } catch (e) {
     logRouteError("POST .../channels/:channelId/members failed", e, { reqId: req.id, userId, communityId, channelId, targetUserId });
@@ -720,6 +810,9 @@ app.delete("/communities/:communityId/channels/:channelId/members/:targetUserId"
       channelId,
       userId: targetUserId,
     });
+
+    void bumpCommunityEpochs(communityId, { ch: true });
+
     res.status(204).send();
   } catch (e) {
     logRouteError("DELETE .../channels/:channelId/members/:targetUserId failed", e, {
@@ -779,6 +872,8 @@ app.delete("/communities/:communityId/channels/:channelId", requireAuth, async (
       communityId,
       channelId,
     });
+
+    void bumpCommunityEpochs(communityId, { ch: true });
 
     res.status(204).send();
   } catch (e) {
