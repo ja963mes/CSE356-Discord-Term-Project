@@ -7,6 +7,8 @@ import { env } from "./env";
 import { requireAuth } from "./middleware/session";
 import { communities, communityMembers, channels, channelMembers, users } from "./db/schema";
 import { publishCommunityEvent } from "./events";
+import { logError, logInfo } from "./logger";
+import { requestLog } from "./middleware/requestLog";
 
 function isCommunityAdminRole(role: string): boolean {
   return role === "owner" || role === "admin";
@@ -25,6 +27,7 @@ async function addUserToAllPublicChannels(communityId: string, userId: string): 
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
+app.use(requestLog);
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "communities-service" });
@@ -60,7 +63,7 @@ app.get("/search-communities", async (req, res) => {
 
     res.json({ query: q, communities: rows });
   } catch (e) {
-    console.error(e);
+    logError("GET /search-communities failed", e, { reqId: req.reqId, q });
     res.status(500).json({ error: "Failed to search communities" });
   }
 });
@@ -82,7 +85,7 @@ app.get("/communities", requireAuth, async (req: Request, res: Response) => {
 
     res.json({ communities: rows });
   } catch (e) {
-    console.error(e);
+    logError("GET /communities failed", e, { reqId: req.reqId, userId });
     res.status(500).json({ error: "Failed to list communities" });
   }
 });
@@ -132,7 +135,7 @@ app.post("/communities/:communityId/join", requireAuth, async (req: Request, res
 
     res.status(201).json({ message: "Joined community" });
   } catch (e) {
-    console.error(e);
+    logError("POST /communities/:communityId/join failed", e, { reqId: req.reqId, userId, communityId });
     res.status(500).json({ error: "Failed to join community" });
   }
 });
@@ -180,7 +183,7 @@ app.post("/communities/:communityId/leave", requireAuth, async (req: Request, re
 
     res.json({ message: "Left community" });
   } catch (e) {
-    console.error(e);
+    logError("POST /communities/:communityId/leave failed", e, { reqId: req.reqId, userId, communityId });
     res.status(500).json({ error: "Failed to leave community" });
   }
 });
@@ -231,7 +234,7 @@ app.get("/communities/:communityId/channels", requireAuth, async (req: Request, 
 
     res.json({ channels: channelsOut });
   } catch (e) {
-    console.error(e);
+    logError("GET /communities/:communityId/channels failed", e, { reqId: req.reqId, userId, communityId });
     res.status(500).json({ error: "Failed to list channels" });
   }
 });
@@ -279,7 +282,7 @@ app.get("/communities/:communityId/members", requireAuth, async (req: Request, r
 
     res.json({ members });
   } catch (e) {
-    console.error(e);
+    logError("GET /communities/:communityId/members failed", e, { reqId: req.reqId, userId, communityId });
     res.status(500).json({ error: "Failed to list members" });
   }
 });
@@ -355,7 +358,7 @@ app.post("/communities/:communityId/channels", requireAuth, async (req: Request,
 
     res.status(201).json({ channel: created });
   } catch (e) {
-    console.error(e);
+    logError("POST /communities/:communityId/channels failed", e, { reqId: req.reqId, userId, communityId });
     res.status(500).json({ error: "Failed to create channel" });
   }
 });
@@ -419,7 +422,7 @@ app.patch("/communities/:communityId/channels/:channelId", requireAuth, async (r
     const [updated] = await db.select().from(channels).where(eq(channels.id, channelId)).limit(1);
     res.json({ channel: updated });
   } catch (e) {
-    console.error(e);
+    logError("PATCH /communities/:communityId/channels/:channelId failed", e, { reqId: req.reqId, userId, communityId, channelId });
     res.status(500).json({ error: "Failed to update channel" });
   }
 });
@@ -461,7 +464,7 @@ app.post("/communities/:communityId/channels/:channelId/join", requireAuth, asyn
     await db.insert(channelMembers).values({ channel_id: channelId, user_id: userId }).onConflictDoNothing();
     res.status(201).json({ message: "Joined channel" });
   } catch (e) {
-    console.error(e);
+    logError("POST .../channels/:channelId/join failed", e, { reqId: req.reqId, userId, communityId, channelId });
     res.status(500).json({ error: "Failed to join channel" });
   }
 });
@@ -511,7 +514,7 @@ app.post("/communities/:communityId/channels/:channelId/leave", requireAuth, asy
 
     res.json({ message: "Left channel" });
   } catch (e) {
-    console.error(e);
+    logError("POST .../channels/:channelId/leave failed", e, { reqId: req.reqId, userId, communityId, channelId });
     res.status(500).json({ error: "Failed to leave channel" });
   }
 });
@@ -577,7 +580,7 @@ app.get("/communities/:communityId/channels/:channelId/members", requireAuth, as
 
     res.json({ members });
   } catch (e) {
-    console.error(e);
+    logError("GET .../channels/:channelId/members failed", e, { reqId: req.reqId, userId, communityId, channelId });
     res.status(500).json({ error: "Failed to list channel members" });
   }
 });
@@ -659,7 +662,7 @@ app.post("/communities/:communityId/channels/:channelId/members", requireAuth, a
     });
     res.status(201).json({ message: "Added to channel", status: "added" });
   } catch (e) {
-    console.error(e);
+    logError("POST .../channels/:channelId/members failed", e, { reqId: req.reqId, userId, communityId, channelId, targetUserId });
     res.status(500).json({ error: "Failed to add channel member" });
   }
 });
@@ -720,7 +723,13 @@ app.delete("/communities/:communityId/channels/:channelId/members/:targetUserId"
     });
     res.status(204).send();
   } catch (e) {
-    console.error(e);
+    logError("DELETE .../channels/:channelId/members/:targetUserId failed", e, {
+      reqId: req.reqId,
+      userId,
+      communityId,
+      channelId,
+      targetUserId,
+    });
     res.status(500).json({ error: "Failed to remove channel member" });
   }
 });
@@ -774,12 +783,12 @@ app.delete("/communities/:communityId/channels/:channelId", requireAuth, async (
 
     res.status(204).send();
   } catch (e) {
-    console.error(e);
+    logError("DELETE /communities/:communityId/channels/:channelId failed", e, { reqId: req.reqId, userId, communityId, channelId });
     res.status(500).json({ error: "Failed to delete channel" });
   }
 });
 
 const port = Number(env.COMMUNITIES_PORT);
 app.listen(port, () => {
-  console.log(`Communities service running on port ${port}`);
+  logInfo("service.started", { port });
 });

@@ -4,6 +4,11 @@ declare global {
     interface User {
       internal_id: string;
     }
+
+    interface Request {
+      /** Correlation id set by `requestLog` middleware. */
+      reqId?: string;
+    }
   }
 }
 

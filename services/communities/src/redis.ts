@@ -1,7 +1,8 @@
 import Redis from "ioredis";
 import { env } from "./env";
+import { logError, logInfo } from "./logger";
 
 export const redis = new Redis(env.REDIS_URL);
 
-redis.on("connect", () => console.log("[communities] Redis connected"));
-redis.on("error", (err) => console.error("[communities] Redis error:", err));
+redis.on("connect", () => logInfo("redis.connected"));
+redis.on("error", (err) => logError("redis.error", err));
