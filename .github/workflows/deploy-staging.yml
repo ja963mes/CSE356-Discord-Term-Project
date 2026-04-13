@@ -1,0 +1,68 @@
+# Deploy to your Linode app host over SSH.
+#
+# Required repo secrets:
+#   SSH_HOST, SSH_USER, SSH_PRIVATE_KEY, DEPLOY_PATH
+# Recommended:
+#   SSH_KNOWN_HOSTS  → output of: ssh-keyscan -H YOUR_IP
+# Optional:
+#   DEPLOY_BRANCH    → defaults to main-dev if unset (set secret to override)
+#
+# The `deploy` user on the server needs: git pull in DEPLOY_PATH, npm, and
+# passwordless sudo for systemctl restart/reload (see docs/STAGING-ROLLOUT.md).
+# Add `sudo systemctl restart discord-read-state` below if that unit exists on the host.
+
+name: CI and deploy staging
+
+on:
+  push:
+    branches: [main-dev]
+  pull_request:
+    branches: [main-dev]
+  workflow_dispatch:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - run: npm ci
+      - run: npm run build --workspace frontend
+
+  deploy:
+    needs: ci
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main-dev')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          command_timeout: 30m
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.DEPLOY_PATH }}"
+            BRANCH='${{ secrets.DEPLOY_BRANCH }}'
+            if [ -z "$BRANCH" ]; then BRANCH=main-dev; fi
+            git fetch origin
+            git checkout "$BRANCH"
+            git pull --ff-only origin "$BRANCH"
+            npm ci
+            npm run build --workspace auth-service
+            npm run build --workspace communities-service
+            npm run build --workspace create-community-service
+            npm run build --workspace messages-service
+            npm run build --workspace realtime-service
+            npm run build --workspace dms-service
+            npm run build --workspace read-state-service
+            npm run build --workspace frontend
+            npm run db:migrate
+            sudo systemctl restart discord-auth discord-communities discord-create-community discord-messages discord-realtime discord-dms
+            sudo systemctl reload nginx
