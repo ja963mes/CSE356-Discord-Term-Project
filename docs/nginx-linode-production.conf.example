@@ -63,16 +63,23 @@ upstream backend_read_state {
     keepalive 16;
 }
 
+limit_req_zone $binary_remote_addr zone=auth_limit:10m rate=100r/s;
+
 # REPLACE: your public hostname(s) or staging IP
 server {
     listen 80;
-    server_name YOUR_DOMAIN_OR_IP;
+    listen 443 ssl;
+    server_name 130.245.136.45 group-6.cse356.compas.cs.stonybrook.edu;
+
+    ssl_certificate /etc/letsencrypt/live/group-6.cse356.compas.cs.stonybrook.edu/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/group-6.cse356.compas.cs.stonybrook.edu/privkey.pem;
 
     client_max_body_size 25m;
 
     # --- API routes (prefix order matches staging; /search-communities before /search) ---
 
     location ^~ /auth {
+        limit_req zone=auth_limit burst=200 nodelay;
         proxy_pass http://backend_auth;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
