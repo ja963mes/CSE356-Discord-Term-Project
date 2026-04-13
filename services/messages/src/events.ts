@@ -34,9 +34,11 @@ export type ChannelMessageEvent =
       channelId: string;
       communityId: string;
       messageId: string;
+      id: string;
       timeuuid: string;
       authorId: string;
       message: {
+        id: string;
         messageId: string;
         timeuuid: string;
         authorId: string;

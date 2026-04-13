@@ -551,9 +551,11 @@ export const deleteMessage = async (params: {
     conversationId: params.conversationId,
     participantIds,
     messageId,
+    id: messageId,
     authorId: params.authorId,
     timeuuid: params.timeuuid,
     message: {
+      id: messageId,
       messageId,
       timeuuid: params.timeuuid,
       authorId: params.authorId,

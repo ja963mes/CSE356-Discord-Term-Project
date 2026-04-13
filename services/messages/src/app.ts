@@ -309,9 +309,11 @@ app.delete("/messages/:channelId/:timeuuid", requireAuth, async (req: Request, r
     channelId,
     communityId: access.channel.community_id,
     messageId: existing.messageId,
+    id: existing.messageId,
     timeuuid: timeuuidParam,
     authorId: userId,
     message: {
+      id: existing.messageId,
       messageId: existing.messageId,
       timeuuid: timeuuidParam,
       authorId: userId,
