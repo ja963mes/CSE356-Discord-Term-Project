@@ -82,10 +82,10 @@ export default function DmChatView({
   }, []);
 
   const markLatestRead = useCallback(async (message: DmMessage | null | undefined) => {
-    if (!message?.messageId || !message.timeuuid || lastMarkedRef.current === message.messageId) return;
+    if (!message?.timeuuid || lastMarkedRef.current === message.timeuuid) return;
     try {
-      await markConversationRead(conversationId, message.messageId, message.timeuuid);
-      lastMarkedRef.current = message.messageId;
+      await markConversationRead(conversationId, message.timeuuid);
+      lastMarkedRef.current = message.timeuuid;
       setReadStateByUserId((prev) => ({ ...prev, [currentUserId]: message.timeuuid }));
       onReadStateUpdated?.(conversationId, message.messageId, message.timeuuid);
     } catch {
@@ -177,7 +177,7 @@ export default function DmChatView({
     const msg = messages.find((m) => m.messageId === messageId);
     if (!msg?.timeuuid) return;
     try {
-      const updated = await editMessage(conversationId, messageId, text, msg.timeuuid);
+      const updated = await editMessage(conversationId, text, msg.timeuuid);
       setMessages((prev) => prev.map((m) => (m.messageId === updated.messageId ? updated : m)));
       setEditingId(null);
       setEditText("");
@@ -189,7 +189,7 @@ export default function DmChatView({
   const handleDelete = async (msg: DmMessage) => {
     if (!msg.timeuuid) return;
     try {
-      await deleteMessage(conversationId, msg.messageId, msg.timeuuid);
+      await deleteMessage(conversationId, msg.timeuuid);
       setMessages((prev) =>
         prev.map((m) =>
           m.messageId === msg.messageId ? { ...m, deleted: true, content: "", attachmentKeys: [], attachmentUrls: [] } : m
