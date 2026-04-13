@@ -311,6 +311,11 @@ app.delete("/messages/:channelId/:timeuuid", requireAuth, async (req: Request, r
     messageId: existing.messageId,
     timeuuid: timeuuidParam,
     authorId: userId,
+    message: {
+      messageId: existing.messageId,
+      timeuuid: timeuuidParam,
+      authorId: userId,
+    },
   });
 
   res.status(204).send();

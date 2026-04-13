@@ -18,7 +18,7 @@ import {
   listCommunities,
   removeChannelMember,
 } from "../api/discord";
-import { getMe, getDmUsers, logout, Me, DmUser } from "../api/auth";
+import { getMe, getDmUsers, logout, Me, DmUser, displayNameForDmUser } from "../api/auth";
 import { getDmReadState, listConversations } from "../api/dms";
 import { IncomingMessage, useWebSocket } from "../hooks/useWebSocket";
 import { useActivityDetection } from "../hooks/useActivityDetection";
@@ -433,7 +433,7 @@ export default function ChatPage() {
       map[me.internal_id] = me.profile.displayName || me.username;
     }
     for (const u of dmUsers) {
-      map[u.internal_id] = u.profile.displayName || u.username;
+      map[u.internal_id] = displayNameForDmUser(u);
     }
     return map;
   }, [me, dmUsers]);
@@ -827,8 +827,8 @@ export default function ChatPage() {
           <div className="flex-1 overflow-hidden">
             <UserPresence
               userId={me?.internal_id ?? ""}
-              displayName={me?.profile.displayName ?? "..."}
-              avatarUrl={me?.profile.avatar ?? undefined}
+              displayName={me?.profile?.displayName ?? me?.username ?? "..."}
+              avatarUrl={me?.profile?.avatar ?? undefined}
               presence={getPresence(me?.internal_id ?? "")}
               size="sm"
             />
@@ -927,7 +927,7 @@ export default function ChatPage() {
                   <div className="flex flex-col gap-0.5">
                     <UserPresence
                       userId={m.user_id}
-                      displayName={m.display_name}
+                      displayName={m.display_name ?? m.username ?? "User"}
                       presence={getPresence(m.user_id)}
                       size="sm"
                     />
