@@ -216,7 +216,7 @@ export default function ChatPage() {
     }
   }, [applyCommunityReadState]);
 
-  const refreshCommunities = useCallback(async (opts?: { preferSelectId?: string }) => {
+  const refreshCommunities = useCallback(async (opts?: { preferSelectId?: string; mergeCommunity?: Community }) => {
     const list = await listCommunities();
     if (list === null) {
       setUsingLiveCommunities(false);
@@ -232,16 +232,19 @@ export default function ChatPage() {
       return;
     }
     setUsingLiveCommunities(true);
-    setCommunities(list);
-    void refreshAllCommunityReadState(list);
+    const merge = opts?.mergeCommunity;
+    const nextList =
+      merge?.id && !list.some((c) => c.id === merge.id) ? [merge, ...list] : list;
+    setCommunities(nextList);
+    void refreshAllCommunityReadState(nextList);
     const prefer = opts?.preferSelectId;
-    if (prefer && list.some((c) => c.id === prefer)) {
-      const c = list.find((x) => x.id === prefer)!;
+    if (prefer && nextList.some((c) => c.id === prefer)) {
+      const c = nextList.find((x) => x.id === prefer)!;
       setSelectedCommunityId(c.id);
       setGuildName(c.name);
-    } else if (list.length > 0) {
-      setSelectedCommunityId(list[0].id);
-      setGuildName(list[0].name);
+    } else if (nextList.length > 0) {
+      setSelectedCommunityId(nextList[0].id);
+      setGuildName(nextList[0].name);
     } else {
       setSelectedCommunityId(null);
       setGuildName("No community yet");
@@ -533,7 +536,7 @@ export default function ChatPage() {
         onBack={() => setCommunityModal("menu")}
         onClose={closeCommunityModals}
         onCreated={async (created) => {
-          await refreshCommunities({ preferSelectId: created.id });
+          await refreshCommunities({ preferSelectId: created.id, mergeCommunity: created });
         }}
       />
       <JoinCommunityPlaceholderModal

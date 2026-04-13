@@ -6,6 +6,7 @@ import { db } from "./db";
 import { env } from "./env";
 import { requireAuth } from "./middleware/session";
 import { communities, communityMembers, channels, channelMembers } from "./db/schema";
+import { bumpCommunitiesReadCacheAfterCreate } from "./invalidateCommunitiesCache";
 
 const MAX_COMMUNITIES_PER_USER = 100;
 
@@ -72,7 +73,17 @@ app.post("/create-community", requireAuth, async (req: Request, res: Response) =
       return c;
     });
 
-    res.status(201).json({ community: result });
+    void bumpCommunitiesReadCacheAfterCreate(userId, result.id);
+
+    res.status(201).json({
+      community: {
+        id: result.id,
+        name: result.name,
+        created_at:
+          result.created_at instanceof Date ? result.created_at.toISOString() : String(result.created_at),
+        role: "owner" as const,
+      },
+    });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Failed to create community" });
