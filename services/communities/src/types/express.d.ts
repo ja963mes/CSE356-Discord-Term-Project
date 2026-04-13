@@ -6,8 +6,8 @@ declare global {
     }
 
     interface Request {
-      /** Correlation id set by `requestLog` middleware. */
-      reqId?: string;
+      /** Request id set by `pino-http` (`genReqId`). */
+      id?: string;
     }
   }
 }

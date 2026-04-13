@@ -1,14 +1,15 @@
-/** Structured logging for communities-service (single prefix, optional JSON fields). */
+import { randomUUID } from "crypto";
+import pino from "pino";
+import pinoHttp from "pino-http";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { env } from "./env";
 
-const PREFIX = "[communities]";
-
-function safeJson(meta: Record<string, unknown>): string {
-  try {
-    return JSON.stringify(meta);
-  } catch {
-    return "{}";
-  }
-}
+/** Root logger for communities-service (JSON lines to stdout; systemd/journald friendly). */
+export const logger = pino({
+  name: "communities-service",
+  level: env.LOG_LEVEL,
+  redact: ["req.headers.cookie", "req.headers.authorization"],
+});
 
 /** Postgres / Drizzle errors often expose these fields. */
 function pgHints(err: unknown): Record<string, unknown> | undefined {
@@ -21,32 +22,26 @@ function pgHints(err: unknown): Record<string, unknown> | undefined {
   return Object.keys(out).length ? out : undefined;
 }
 
-export function logInfo(message: string, meta?: Record<string, unknown>): void {
-  if (meta && Object.keys(meta).length > 0) {
-    console.log(`${PREFIX} ${message}`, safeJson(meta));
-  } else {
-    console.log(`${PREFIX} ${message}`);
-  }
-}
-
-export function logWarn(message: string, meta?: Record<string, unknown>): void {
-  if (meta && Object.keys(meta).length > 0) {
-    console.warn(`${PREFIX} ${message}`, safeJson(meta));
-  } else {
-    console.warn(`${PREFIX} ${message}`);
-  }
-}
-
 /**
- * Log an error with optional route/context. Pass the caught value as `err`.
- * Includes Postgres hint fields when present (unique violations, FK, etc.).
+ * Route-level errors: pass caught value as `err` for Pino's error serializer.
+ * Merges Postgres hint fields when present.
  */
-export function logError(message: string, err: unknown, meta?: Record<string, unknown>): void {
+export function logRouteError(message: string, err: unknown, meta?: Record<string, unknown>): void {
   const pg = pgHints(err);
-  const combined = { ...meta, ...(pg ? { pg } : {}) };
-  if (Object.keys(combined).length > 0) {
-    console.error(`${PREFIX} ${message}`, safeJson(combined), err);
-  } else {
-    console.error(`${PREFIX} ${message}`, err);
-  }
+  logger.error({ err, ...meta, ...(pg ? { pg } : {}) }, message);
 }
+
+/** One line per HTTP request (method, url, status, responseTime, optional userId). */
+export const httpLogger = pinoHttp({
+  logger,
+  genReqId: (req: IncomingMessage) => {
+    const h = req.headers["x-request-id"];
+    if (typeof h === "string" && h.length > 0) return h;
+    return randomUUID();
+  },
+  customProps: (req: IncomingMessage, _res: ServerResponse) => {
+    const r = req as IncomingMessage & { user?: { internal_id?: string } };
+    const userId = r.user?.internal_id;
+    return userId ? { userId } : {};
+  },
+});
