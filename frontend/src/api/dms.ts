@@ -139,10 +139,19 @@ export async function getConversationReadState(conversationId: string): Promise<
   return data.readState;
 }
 
-export async function markConversationRead(conversationId: string, timeuuid: string): Promise<void> {
+/** Include `messageId` when available so older read-state deployments (pre–timeuuid-only API) still accept the body. */
+export async function markConversationRead(
+  conversationId: string,
+  timeuuid: string,
+  messageId?: string
+): Promise<void> {
+  const body =
+    messageId !== undefined && messageId !== ""
+      ? { timeuuid, messageId }
+      : { timeuuid };
   await fetchApi(`/read-state/dms/${conversationId}/read`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ timeuuid }),
+    body: JSON.stringify(body),
   });
 }

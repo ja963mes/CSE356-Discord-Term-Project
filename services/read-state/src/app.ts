@@ -31,8 +31,10 @@ const markReadSchema = z.object({
   timeuuid: z.string().min(1),
 });
 
+/** `messageId` optional for forward compatibility; `timeuuid` is authoritative for resolving the row. */
 const markDmReadSchema = z.object({
   timeuuid: z.string().min(1),
+  messageId: z.string().uuid().optional(),
 });
 
 const conversationIdSchema = z.string().uuid();
@@ -138,9 +140,13 @@ app.post("/read-state/dms/:conversationId/read", requireAuth, async (req, res) =
     return;
   }
 
-  const messageId = await getDmMessageIdForTimeuuid(parsed.data, body.data.timeuuid);
+  let messageId = await getDmMessageIdForTimeuuid(parsed.data, body.data.timeuuid);
   if (!messageId) {
     res.status(404).json({ error: "Message not found" });
+    return;
+  }
+  if (body.data.messageId !== undefined && body.data.messageId !== messageId) {
+    res.status(400).json({ error: "messageId does not match timeuuid" });
     return;
   }
 
