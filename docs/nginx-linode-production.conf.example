@@ -1,0 +1,220 @@
+# Nginx — production (static SPA + API + WebSocket)
+#
+# Same path order as docs/nginx-linode-staging.conf.example and frontend/vite.config.ts.
+# Differs from staging: serves built frontend from disk (not Vite :5173) and uses
+# upstream keepalive pools to reduce TCP churn under load.
+#
+# Backend services (127.0.0.1):
+#   3001 auth   3002 communities   3003 messages   3004 search
+#   3005 realtime (/ws)   3006 create-community   3007 dms   3008 read-state
+#
+# --- Deploy on the server (summary) ---
+# 1. Build frontend: cd repo && npm ci && npm run build --workspace frontend
+#    (output: frontend/dist)
+# 2. Copy this file: sudo cp .../docs/nginx-linode-production.conf.example \
+#       /etc/nginx/sites-available/discord-production
+# 3. Edit the file: set server_name, root (absolute path to frontend/dist), optional comment /search
+# 4. Enable: sudo ln -sf /etc/nginx/sites-available/discord-production /etc/nginx/sites-enabled/
+#    (remove or disable conflicting default site if needed)
+# 5. sudo nginx -t && sudo systemctl reload nginx
+# 6. TLS: sudo certbot --nginx -d your.domain  (or add the HTTPS server block below manually)
+#
+# --- TLS (after HTTP works) ---
+# Option A: certbot --nginx (recommended) — it can add ssl_* and a redirect from :80.
+# Option B: Uncomment the second server block below and set ssl_certificate paths, then add
+#   a minimal :80 server that only does return 301 https://$host$request_uri;
+
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+# Keepalive pools to Node upstreams (HTTP API only; /ws uses Upgrade and stays separate)
+upstream backend_auth {
+    server 127.0.0.1:3001;
+    keepalive 32;
+}
+upstream backend_communities {
+    server 127.0.0.1:3002;
+    keepalive 32;
+}
+upstream backend_messages {
+    server 127.0.0.1:3003;
+    keepalive 32;
+}
+upstream backend_search {
+    server 127.0.0.1:3004;
+    keepalive 16;
+}
+upstream backend_realtime {
+    server 127.0.0.1:3005;
+    keepalive 8;
+}
+upstream backend_create_community {
+    server 127.0.0.1:3006;
+    keepalive 16;
+}
+upstream backend_dms {
+    server 127.0.0.1:3007;
+    keepalive 32;
+}
+upstream backend_read_state {
+    server 127.0.0.1:3008;
+    keepalive 16;
+}
+
+# REPLACE: your public hostname(s) or staging IP
+server {
+    listen 80;
+    server_name YOUR_DOMAIN_OR_IP;
+
+    client_max_body_size 25m;
+
+    # --- API routes (prefix order matches staging; /search-communities before /search) ---
+
+    location ^~ /auth {
+        proxy_pass http://backend_auth;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ^~ /create-community {
+        proxy_pass http://backend_create_community;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ^~ /communities {
+        proxy_pass http://backend_communities;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ^~ /channels {
+        proxy_pass http://backend_communities;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ^~ /messages {
+        proxy_pass http://backend_messages;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ^~ /attachments {
+        proxy_pass http://backend_messages;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ^~ /search-communities {
+        proxy_pass http://backend_communities;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Comment out if search-service / ES is not running (avoids 502 on /search)
+    location ^~ /search {
+        proxy_pass http://backend_search;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ^~ /dms {
+        proxy_pass http://backend_dms;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ^~ /read-state {
+        proxy_pass http://backend_read_state;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # WebSocket: do not use the keepalive Connection "" pattern here
+    location ^~ /ws {
+        proxy_pass http://backend_realtime;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400;
+    }
+
+    # --- Static SPA (Vite build) — REPLACE root with your deploy path ---
+    root /opt/CSE356-Discord-Term-Project/frontend/dist;
+    index index.html;
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript application/xml image/svg+xml;
+    gzip_min_length 256;
+}
+
+# --- Optional HTTPS (uncomment and fix paths after: sudo certbot certonly --nginx -d YOUR_DOMAIN) ---
+#
+# server {
+#     listen 443 ssl http2;
+#     server_name YOUR_DOMAIN_OR_IP;
+#
+#     ssl_certificate     /etc/letsencrypt/live/YOUR_DOMAIN/fullchain.pem;
+#     ssl_certificate_key /etc/letsencrypt/live/YOUR_DOMAIN/privkey.pem;
+#     include /etc/letsencrypt/options-ssl-nginx.conf;
+#     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+#
+#     client_max_body_size 25m;
+#     # Paste the same location blocks as the :80 server above (auth through /ws + root/try_files + gzip)
+# }
+#
+# server {
+#     listen 80;
+#     server_name YOUR_DOMAIN_OR_IP;
+#     return 301 https://$host$request_uri;
+# }
