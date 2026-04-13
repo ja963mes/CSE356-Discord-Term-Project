@@ -8,7 +8,9 @@
 #   DEPLOY_BRANCH    → defaults to main-dev if unset (set secret to override)
 #
 # The `deploy` user on the server needs: git pull in DEPLOY_PATH, npm, and
-# passwordless sudo for systemctl restart/reload (see docs/STAGING-ROLLOUT.md).
+# passwordless sudo for systemctl restart/reload and `chown` on DEPLOY_PATH
+# (fixes EACCES on npm ci if node_modules was ever written as root).
+# See docs/github-actions-cicd.md.
 # Add `sudo systemctl restart discord-read-state` below if that unit exists on the host.
 
 name: CI and deploy staging
@@ -54,6 +56,7 @@ jobs:
             git fetch origin
             git checkout "$BRANCH"
             git pull --ff-only origin "$BRANCH"
+            sudo chown -R "$(whoami):$(whoami)" .
             npm ci
             npm run build --workspace auth-service
             npm run build --workspace communities-service
