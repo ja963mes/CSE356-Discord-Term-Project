@@ -9,15 +9,22 @@
 #   3005 realtime (/ws)   3006 create-community   3007 dms   3008 read-state
 #
 # --- Deploy on the server (summary) ---
-# 1. Build frontend: cd repo && npm ci && npm run build --workspace frontend
-#    (output: frontend/dist)
-# 2. Copy this file: sudo cp .../docs/nginx-linode-production.conf.example \
+# Static files: default `root` below is /var/www/discord-frontend (not under /root or /opt).
+# Nginx reads files as www-data; home dirs like /root are often unreadable → 403/500 if you
+# point root at ~/.../frontend/dist without fixing permissions.
+#
+# 1. One-time: sudo mkdir -p /var/www/discord-frontend
+#    sudo chown root:www-data /var/www/discord-frontend && sudo chmod 750 /var/www/discord-frontend
+# 2. Build: cd repo && npm ci && npm run build --workspace frontend
+# 3. Publish build to nginx root (re-run after every frontend deploy):
+#    sudo rsync -a --delete /path/to/repo/frontend/dist/ /var/www/discord-frontend/
+#    sudo chmod -R g+rX /var/www/discord-frontend
+# 4. Copy this file: sudo cp .../docs/nginx-linode-production.conf.example \
 #       /etc/nginx/sites-available/discord-production
-# 3. Edit the file: set server_name, root (absolute path to frontend/dist), optional comment /search
-# 4. Enable: sudo ln -sf /etc/nginx/sites-available/discord-production /etc/nginx/sites-enabled/
-#    (remove or disable conflicting default site if needed)
-# 5. sudo nginx -t && sudo systemctl reload nginx
-# 6. TLS: sudo certbot --nginx -d your.domain  (or add the HTTPS server block below manually)
+# 5. Edit: server_name, optional comment /search block if search not running
+# 6. Enable: sudo ln -sf /etc/nginx/sites-available/discord-production /etc/nginx/sites-enabled/
+# 7. sudo nginx -t && sudo systemctl reload nginx
+# 8. TLS: sudo certbot --nginx -d your.domain  (or add the HTTPS server block below manually)
 #
 # --- TLS (after HTTP works) ---
 # Option A: certbot --nginx (recommended) — it can add ssl_* and a redirect from :80.
@@ -186,11 +193,16 @@ server {
         proxy_read_timeout 86400;
     }
 
-    # --- Static SPA (Vite build) — REPLACE root with your deploy path ---
-    root /opt/CSE356-Discord-Term-Project/frontend/dist;
+    # --- Static SPA (Vite build) — default docroot for www-data ---
+    # Keep built files in /var/www/... and rsync from repo after `npm run build --workspace frontend`.
+    # Must contain index.html. Named @spa avoids "rewrite cycle" (500) if index.html is missing.
+    root /var/www/discord-frontend;
     index index.html;
     location / {
-        try_files $uri $uri/ /index.html;
+        try_files $uri $uri/ @spa;
+    }
+    location @spa {
+        rewrite ^ /index.html break;
     }
 
     gzip on;
