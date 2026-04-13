@@ -187,10 +187,17 @@ server {
     }
 
     # --- Static SPA (Vite build) — REPLACE root with your deploy path ---
+    # Must contain index.html (npm run build --workspace frontend).
+    # Do NOT use bare `try_files ... /index.html` without that file: nginx will return
+    # "rewrite or internal redirection cycle" (500). Named @spa + rewrite break serves
+    # index.html once; wrong root → 404 instead of an infinite loop.
     root /opt/CSE356-Discord-Term-Project/frontend/dist;
     index index.html;
     location / {
-        try_files $uri $uri/ /index.html;
+        try_files $uri $uri/ @spa;
+    }
+    location @spa {
+        rewrite ^ /index.html break;
     }
 
     gzip on;
