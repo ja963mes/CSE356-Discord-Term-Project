@@ -33,7 +33,12 @@ export async function ensureIndex(): Promise<void> {
     await esClient.indices.create({ index: INDEX, ...INDEX_SETTINGS });
     console.log(`[search] Created ES index "${INDEX}"`);
   } else {
-    console.log(`[search] ES index "${INDEX}" already exists`);
+    // Always update mapping so new/changed fields are applied
+    await esClient.indices.putMapping({
+      index: INDEX,
+      ...INDEX_SETTINGS.mappings,
+    });
+    console.log(`[search] ES index "${INDEX}" already exists — mapping updated`);
   }
 }
 
@@ -56,6 +61,7 @@ export async function indexMessage(doc: MessageDoc): Promise<void> {
     index: INDEX,
     id: doc.message_id,
     document: doc,
+    refresh: "wait_for",
   });
 }
 
@@ -65,6 +71,7 @@ export async function updateContent(messageId: string, content: string, editedAt
       index: INDEX,
       id: messageId,
       doc: { content, updated_at: editedAt },
+      refresh: "wait_for",
     });
   } catch (err: any) {
     if (err?.meta?.statusCode === 404) return;
@@ -78,6 +85,7 @@ export async function markDeleted(messageId: string): Promise<void> {
       index: INDEX,
       id: messageId,
       doc: { is_deleted: true, content: "" },
+      refresh: "wait_for",
     });
   } catch (err: any) {
     if (err?.meta?.statusCode === 404) return;
