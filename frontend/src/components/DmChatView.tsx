@@ -247,7 +247,7 @@ export default function DmChatView({
       );
     } else if (e.type === "dm:message:delete") {
       const raw = e.message as Record<string, unknown> | undefined;
-      const deletedId = String(raw?.messageId ?? e.messageId ?? "");
+      const deletedId = String(raw?.id ?? raw?.messageId ?? e.id ?? e.messageId ?? "");
       setMessages((prev) =>
         prev.map((m) =>
           m.messageId === deletedId ? { ...m, deleted: true, content: "", attachmentKeys: [], attachmentUrls: [] } : m

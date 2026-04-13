@@ -155,8 +155,12 @@ export default function ChannelChatView({
       );
     } else if (e.type === "channel:message:delete") {
       const raw = e.message as Record<string, unknown> | undefined;
-      const messageId = String(raw?.messageId ?? e.messageId ?? "");
-      setMessages((prev) => prev.filter((m) => m.id !== messageId));
+      const messageId = String(raw?.id ?? raw?.messageId ?? e.id ?? e.messageId ?? "");
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === messageId ? { ...m, deleted: true, content: "", attachmentKeys: [], attachmentUrls: [] } : m
+        )
+      );
     }
   }, [wsEvent, channelId, markLatestRead]);
 
@@ -214,7 +218,13 @@ export default function ChannelChatView({
   // Delete message
   const handleDelete = async (msg: Message) => {
     const ok = await deleteChannelMessage(channelId, msg.timeuuid);
-    if (ok) setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+    if (ok) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === msg.id ? { ...m, deleted: true, content: "", attachmentKeys: [], attachmentUrls: [] } : m
+        )
+      );
+    }
   };
 
   // File picker
@@ -325,7 +335,7 @@ export default function ChannelChatView({
                   <span className="text-[10px] text-on-surface-variant">
                     {new Date(m.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                   </span>
-                  {isOwn && !isEditing && (
+                  {isOwn && !isEditing && !m.deleted && (
                     <div className="hidden group-hover:flex items-center gap-1 ml-auto">
                       <button
                         type="button"
@@ -347,7 +357,9 @@ export default function ChannelChatView({
                   )}
                 </div>
 
-                {isEditing ? (
+                {m.deleted ? (
+                  <p className="text-sm italic text-on-surface-variant mt-1">{m.author} has deleted this message</p>
+                ) : isEditing ? (
                   <div className="flex gap-2 mt-1 items-center">
                     <input
                       className="flex-1 bg-surface-container-lowest border-none rounded-lg px-3 py-1.5 text-sm text-on-surface focus:ring-1 focus:ring-primary"
