@@ -40,8 +40,8 @@ const PROVIDER_ICON: Record<string, React.ReactNode> = {
 const ALL_PROVIDERS = ["google", "github", "oidc"];
 
 export default function ProfileSettingsModal({ me, presence, onClose, onSend, onUpdated }: Props) {
-  const [displayName, setDisplayName] = useState(me.profile.displayName);
-  const [avatarPreview, setAvatarPreview] = useState<string | null>(me.profile.avatar);
+  const [displayName, setDisplayName] = useState(me.profile?.displayName ?? me.username ?? "");
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(me.profile?.avatar ?? null);
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [isAway, setIsAway] = useState(presence.status === "away");
   const [awayMessage, setAwayMessage] = useState(presence.awayMessage ?? "");
@@ -108,16 +108,17 @@ export default function ProfileSettingsModal({ me, presence, onClose, onSend, on
     setSuccess(false);
     setSaving(true);
     try {
-      let newAvatar = me.profile.avatar;
+      const prof = me.profile ?? { displayName: "", avatar: null as string | null };
+      let newAvatar = prof.avatar ?? null;
 
-      if (displayName !== me.profile.displayName) {
+      if (displayName !== (prof.displayName ?? "")) {
         await updateProfile(displayName);
       }
       if (avatarFile) {
         newAvatar = await uploadAvatar(avatarFile);
       }
 
-      onUpdated({ profile: { ...me.profile, displayName, avatar: newAvatar } });
+      onUpdated({ profile: { ...prof, displayName, avatar: newAvatar } });
 
       if (isAway) {
         onSend({ type: "away", message: awayMessage });
@@ -210,7 +211,7 @@ export default function ProfileSettingsModal({ me, presence, onClose, onSend, on
                   <img src={avatarPreview} alt="Avatar" className="w-16 h-16 rounded-full object-cover" />
                 ) : (
                   <div className="w-16 h-16 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant font-bold text-xl">
-                    {displayName.slice(0, 1).toUpperCase()}
+                    {(displayName.trim() || me.username || "?").slice(0, 1).toUpperCase()}
                   </div>
                 )}
                 <button

@@ -27,8 +27,11 @@ interface Props {
   onReadStateUpdated?: (conversationId: string, messageId: string, timeuuid: string) => void;
 }
 
-function authorLabel(authorId: string, displayNameByUserId: Record<string, string>): string {
-  return displayNameByUserId[authorId] ?? `${authorId.slice(0, 8)}…`;
+function authorLabel(authorId: string | undefined | null, displayNameByUserId: Record<string, string>): string {
+  if (authorId == null || authorId === "") return "Unknown";
+  const fromMap = displayNameByUserId[authorId];
+  if (typeof fromMap === "string" && fromMap.trim() !== "") return fromMap;
+  return `${authorId.slice(0, 8)}…`;
 }
 
 export default function DmChatView({

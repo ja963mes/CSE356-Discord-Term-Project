@@ -624,7 +624,7 @@ export default function ChatPage() {
                           : "flex items-center justify-center rounded-[2rem] bg-[#171a1f] text-gray-400 w-12 h-12 hover:bg-[#5865F2] hover:text-white cursor-pointer transition-all"
                       }
                     >
-                      <span className="text-sm font-bold">{c.name.slice(0, 2).toUpperCase()}</span>
+                      <span className="text-sm font-bold">{(c.name ?? "?").slice(0, 2).toUpperCase()}</span>
                     </button>
                     {communityUnreadById[c.id] ? (
                       <span className="absolute -right-0.5 top-1/2 -translate-y-1/2 h-2.5 w-2.5 rounded-full bg-[#5865F2]" aria-label="Unread channels" />
