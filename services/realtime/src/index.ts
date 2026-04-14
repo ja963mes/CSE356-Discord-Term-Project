@@ -30,16 +30,27 @@ import {
   subscribeAllMembersForChannel,
 } from "./subscriptions";
 
+// Unique ID for this instance — used to namespace presence:conns fields
+// so multiple instances don't stomp on each other's connection data at startup
+const instanceId = randomUUID();
+console.log(`[startup] instanceId=${instanceId}`);
+
 const redis = new Redis(env.REDIS_URL);
 redis.on("connect", async () => {
   console.log("Redis connected");
-  // Clear all stale presence connection data from previous server sessions
-  // Activity and presence are only relevant while the server is running, so it's safe to clear them on startup
+  // Clear only this instance's stale connection fields from previous runs.
+  // Other instances' fields are left intact so their presence tracking is unaffected.
   const keys = await redis.keys("presence:conns:*");
-  if (keys.length > 0) {
-    await redis.del(...keys);
-    console.log(`[startup] cleared ${keys.length} stale presence entries`);
+  let cleared = 0;
+  for (const key of keys) {
+    const fields = await redis.hkeys(key);
+    const stale = fields.filter((f) => f.startsWith(`${instanceId}:`));
+    if (stale.length > 0) {
+      await redis.hdel(key, ...stale);
+      cleared += stale.length;
+    }
   }
+  if (cleared > 0) console.log(`[startup] cleared ${cleared} stale presence fields for instanceId=${instanceId}`);
 });
 redis.on("error", (err) => console.error("Redis error:", err));
 
@@ -50,8 +61,27 @@ redisSub.on("error", (err) => console.error("Redis sub error:", err));
 // Track active connections: connId -> { ws, userId }
 const connections = new Map<string, { ws: WebSocket; userId: string }>();
 
-// Track last known presence per user to detect transitions in the idle check
-const lastKnownPresence = new Map<string, PresenceStatus>();
+// Last known presence stored in Redis so multiple instances agree on state
+async function getLastKnownPresence(userId: string): Promise<PresenceStatus> {
+  return ((await redis.get(`presence:last:${userId}`)) as PresenceStatus | null) ?? "offline";
+}
+async function setLastKnownPresence(userId: string, status: PresenceStatus): Promise<void> {
+  await redis.set(`presence:last:${userId}`, status, "EX", 86400);
+}
+
+// Fan-out helpers: 1 Redis call instead of N (one per connection)
+async function fanOutToGuild(communityId: string, payload: string): Promise<void> {
+  const userIds = new Set(await redis.smembers(`presence:guild:${communityId}`));
+  for (const { ws, userId } of connections.values()) {
+    if (userIds.has(userId) && ws.readyState === WebSocket.OPEN) ws.send(payload);
+  }
+}
+async function fanOutToChannel(channelId: string, payload: string): Promise<void> {
+  const userIds = new Set(await redis.smembers(`presence:channel:${channelId}`));
+  for (const { ws, userId } of connections.values()) {
+    if (userIds.has(userId) && ws.readyState === WebSocket.OPEN) ws.send(payload);
+  }
+}
 
 async function getAwayMessage(userId: string): Promise<string | undefined> {
   return (await redis.get(`presence:away:${userId}`)) ?? undefined;
@@ -69,7 +99,7 @@ async function updateAndBroadcast(userId: string, prevStatus: PresenceStatus): P
   if (newStatus !== prevStatus) {
     console.log(`[presence] userId=${userId} ${prevStatus} → ${newStatus}`);
     await broadcastPresenceChange(redis, userId, newStatus, awayMessage);
-    lastKnownPresence.set(userId, newStatus);
+    await setLastKnownPresence(userId, newStatus);
   }
 }
 
@@ -114,14 +144,14 @@ wss.on("connection", async (ws, req) => {
 
   connections.set(connId, { ws, userId });
   await Promise.all([
-    registerConnection(redis, userId, connId),
+    registerConnection(redis, userId, connId, instanceId),
     subscribeUser(redis, userId),
   ]);
 
   console.log(`[connect] userId=${userId} connId=${connId} total=${connections.size}`);
   await updateAndBroadcast(userId, prevStatus);
   const { status: currentStatus, awayMessage: currentAwayMessage } = await buildPresencePayload(userId);
-  lastKnownPresence.set(userId, currentStatus);
+  await setLastKnownPresence(userId, currentStatus);
 
   // Send current presence snapshot to the newly connected client
   setImmediate(async () => {
@@ -166,7 +196,7 @@ wss.on("connection", async (ws, req) => {
 
     if (msg.type === "ping") {
       // Keep activity updated on pings
-      await updateActivity(redis, userId, connId);
+      await updateActivity(redis, userId, connId, instanceId);
     } else if (msg.type === "subscribe_channel") {
       const channelId = (msg as { channelId?: string }).channelId;
       if (typeof channelId === "string" && channelId.length > 0) {
@@ -176,7 +206,7 @@ wss.on("connection", async (ws, req) => {
       // Manually set away status with an optional message that other users can see
       await setAway(redis, userId, (msg.message as string) ?? "");
       const { status: awayStatus, awayMessage: awayMsg } = await buildPresencePayload(userId);
-      lastKnownPresence.set(userId, awayStatus);
+      await setLastKnownPresence(userId, awayStatus);
       await broadcastPresenceChange(redis, userId, awayStatus, awayMsg);
       return;
     } else if (msg.type === "back") {
@@ -193,7 +223,7 @@ wss.on("connection", async (ws, req) => {
   ws.on("close", async () => {
     const prev = await computePresence(redis, userId);
     connections.delete(connId);
-    await removeConnection(redis, userId, connId);
+    await removeConnection(redis, userId, connId, instanceId);
     console.log(`[disconnect] userId=${userId} connId=${connId} total=${connections.size}`);
     const stillConnected = [...connections.values()].some((c) => c.userId === userId);
     // Broadcast BEFORE unsubscribing — targets are looked up from context sets,
@@ -217,9 +247,9 @@ setInterval(async () => {
   for (const { userId } of connections.values()) {
     if (checkedUsers.has(userId)) continue;
     checkedUsers.add(userId);
-    const prev = lastKnownPresence.get(userId) ?? "offline";
+    const prev = await getLastKnownPresence(userId);
     const { status: newStatus, awayMessage } = await buildPresencePayload(userId);
-    lastKnownPresence.set(userId, newStatus);
+    await setLastKnownPresence(userId, newStatus);
     if (newStatus !== prev) {
       console.log(`[presence] userId=${userId} ${prev} → ${newStatus}`);
       await broadcastPresenceChange(redis, userId, newStatus, awayMessage);
@@ -258,14 +288,7 @@ redisSub.on("message", (channel, message) => {
         await subscribeCommunity(redis, communityId, userId);
         await subscribeAllChannelsForUserInCommunity(redis, userId, communityId);
         // Forward event to all connected members of this community
-        const payload = JSON.stringify(event);
-        for (const { ws, userId: connUserId } of connections.values()) {
-          // Send to all members of the community (those subscribed to it)
-          const contexts = await redis.smembers(`presence:contexts:${connUserId}`);
-          if (contexts.includes(`guild:${communityId}`) && ws.readyState === WebSocket.OPEN) {
-            ws.send(payload);
-          }
-        }
+        await fanOutToGuild(communityId, JSON.stringify(event));
         // Broadcast the new member's presence to all related users (shard-safe via Redis pub/sub)
         const { status: newMemberStatus, awayMessage: newMemberAway } = await buildPresencePayload(userId);
         await broadcastPresenceChange(redis, userId, newMemberStatus, newMemberAway);
@@ -302,28 +325,12 @@ redisSub.on("message", (channel, message) => {
       if (channelId && ch?.is_private !== true) {
         void subscribeAllMembersForChannel(redis, channelId);
       }
-      const payload = JSON.stringify(event);
-      void (async () => {
-        for (const { ws, userId: connUserId } of connections.values()) {
-          const contexts = await redis.smembers(`presence:contexts:${connUserId}`);
-          if (contexts.includes(`guild:${communityId}`) && ws.readyState === WebSocket.OPEN) {
-            ws.send(payload);
-          }
-        }
-      })();
+      void fanOutToGuild(communityId, JSON.stringify(event));
     }
 
     if (event.type === "community:channel:delete") {
       const communityId = event.communityId as string;
-      const payload = JSON.stringify(event);
-      void (async () => {
-        for (const { ws, userId: connUserId } of connections.values()) {
-          const contexts = await redis.smembers(`presence:contexts:${connUserId}`);
-          if (contexts.includes(`guild:${communityId}`) && ws.readyState === WebSocket.OPEN) {
-            ws.send(payload);
-          }
-        }
-      })();
+      void fanOutToGuild(communityId, JSON.stringify(event));
     }
 
     if (event.type === "community:member:leave") {
@@ -331,13 +338,7 @@ redisSub.on("message", (channel, message) => {
       const userId = event.userId as string;
       void (async () => {
         await unsubscribeCommunity(redis, communityId, userId);
-        const payload = JSON.stringify(event);
-        for (const { ws, userId: connUserId } of connections.values()) {
-          const contexts = await redis.smembers(`presence:contexts:${connUserId}`);
-          if (contexts.includes(`guild:${communityId}`) && ws.readyState === WebSocket.OPEN) {
-            ws.send(payload);
-          }
-        }
+        await fanOutToGuild(communityId, JSON.stringify(event));
       })();
     }
 
@@ -378,15 +379,7 @@ redisSub.on("message", (channel, message) => {
     const channelId = event.channelId as string;
     if (!channelId) return;
 
-    const payload = JSON.stringify(event);
-    void (async () => {
-      for (const { ws, userId: connUserId } of connections.values()) {
-        const contexts = await redis.smembers(`presence:contexts:${connUserId}`);
-        if (contexts.includes(`channel:${channelId}`) && ws.readyState === WebSocket.OPEN) {
-          ws.send(payload);
-        }
-      }
-    })();
+    void fanOutToChannel(channelId, JSON.stringify(event));
     return;
   }
 
