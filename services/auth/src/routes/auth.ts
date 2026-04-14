@@ -141,7 +141,7 @@ router.post("/register", async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const hash = await bcrypt.hash(password, 12);
+    const hash = await bcrypt.hash(password, 8);
 
     const [newUser] = await db
       .insert(users)
@@ -487,7 +487,7 @@ router.post("/oauth/complete", async (req: Request, res: Response): Promise<void
         return;
       }
 
-      const hash = password ? await bcrypt.hash(password, 12) : null;
+      const hash = password ? await bcrypt.hash(password, 8) : null;
 
       const [newUser] = await db
         .insert(users)
@@ -756,7 +756,7 @@ router.patch("/password", requireAuth, async (req: Request, res: Response): Prom
       }
     }
 
-    const hash = await bcrypt.hash(newPassword, 12);
+    const hash = await bcrypt.hash(newPassword, 8);
     await db.update(users).set({ password_hash: hash }).where(eq(users.internal_id, internal_id));
 
     res.json({ message: "Password updated" });
