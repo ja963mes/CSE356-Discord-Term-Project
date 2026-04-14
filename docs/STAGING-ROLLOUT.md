@@ -308,7 +308,7 @@ There are three example configs:
 - **Full proxy (default for staging):** [`nginx-linode-staging.conf.example`](./nginx-linode-staging.conf.example)  
   Proxies all API prefixes including `messages`, `attachments`, `dms`, and `/ws`. **Comment out** the `/search` block if you are not running `search-service` (see Scope).
 - **Production (static + keepalive):** [`nginx-linode-production.conf.example`](./nginx-linode-production.conf.example)  
-  Serves built `frontend/dist` with `try_files` (no Vite), same API prefixes as staging, upstream keepalive pools to reduce load under traffic, gzip for static assets, optional HTTPS snippet. **Edit** `server_name`, `root`, and comment `/search` if unused.
+  Serves static files from **`/var/www/discord-frontend`** (rsync `frontend/dist` there after each build so `www-data` can read them; avoid pointing `root` at `/root/...`). Same API prefixes as staging, upstream keepalive, gzip, optional HTTPS snippet. **Edit** `server_name` and comment `/search` if unused.
 - **Services-only (legacy / special cases):** [`nginx-linode-services-only.conf.example`](./nginx-linode-services-only.conf.example)  
   Proxies only `auth`, `communities`, `create-community`, and `realtime` — use only if you intentionally keep messages/DMs off the host.
 
