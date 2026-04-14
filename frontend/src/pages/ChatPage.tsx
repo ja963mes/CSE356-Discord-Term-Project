@@ -123,6 +123,26 @@ export default function ChatPage() {
   } = useDmEvents(me);
   const { members, setMembers, channels, setChannels, handleCommunityMessage } = useCommunityEvents();
 
+  /** Refs for stable read in callbacks — avoids effect loops when unread maps update (see handleChannelReadStateUpdated). */
+  const channelsRef = useRef(channels);
+  const channelUnreadByIdRef = useRef(channelUnreadById);
+  const channelMentionCountByIdRef = useRef(channelMentionCountById);
+  const channelLastReadByIdRef = useRef(channelLastReadById);
+  useEffect(() => {
+    channelsRef.current = channels;
+    channelUnreadByIdRef.current = channelUnreadById;
+    channelMentionCountByIdRef.current = channelMentionCountById;
+    channelLastReadByIdRef.current = channelLastReadById;
+  });
+
+  const channelReadRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (channelReadRefreshTimerRef.current) clearTimeout(channelReadRefreshTimerRef.current);
+    },
+    []
+  );
+
   const [latestChannelEvent, setLatestChannelEvent] = useState<IncomingMessage | null>(null);
 
   const handleMessage = useCallback((msg: IncomingMessage) => {
@@ -291,6 +311,13 @@ export default function ChatPage() {
     setSelectedChannelId(firstText.id);
   }, [channels, selectedChannelId, selectedCommunityId, viewMode]);
 
+  /** Ensure realtime Redis has `channel:<id>` for WS fan-out (fixes join-after-connect and edge cases). */
+  useEffect(() => {
+    if (!usingLiveCommunities || viewMode !== "channel" || !selectedChannelId) return;
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(selectedChannelId)) return;
+    send({ type: "subscribe_channel", channelId: selectedChannelId });
+  }, [usingLiveCommunities, viewMode, selectedChannelId, send]);
+
   useEffect(() => {
     if (viewMode === "dm" && selectedDmId) {
       setDmUnreadById((prev) => {
@@ -356,7 +383,7 @@ export default function ChatPage() {
     if (!channelId || !communityId || authorId === me.internal_id) return;
 
     const isOpen = activePanel === "server" && viewMode === "channel" && selectedChannelId === channelId;
-    const lastRead = channelLastReadById[channelId] ?? null;
+    const lastRead = channelLastReadByIdRef.current[channelId] ?? null;
     const isUnread = !isOpen && (!lastRead || lastRead !== timeuuid);
 
     if (isUnread) {
@@ -372,9 +399,13 @@ export default function ChatPage() {
     }
 
     if (communityId === selectedCommunityId) {
-      void refreshCommunityReadState(communityId);
+      if (channelReadRefreshTimerRef.current) clearTimeout(channelReadRefreshTimerRef.current);
+      channelReadRefreshTimerRef.current = setTimeout(() => {
+        channelReadRefreshTimerRef.current = null;
+        void refreshCommunityReadState(communityId);
+      }, 400);
     }
-  }, [activePanel, channelLastReadById, me, latestChannelEvent, refreshCommunityReadState, selectedChannelId, selectedCommunityId, viewMode]);
+  }, [activePanel, me, latestChannelEvent, refreshCommunityReadState, selectedChannelId, selectedCommunityId, viewMode]);
 
   const handleChannelReadStateUpdated = useCallback((channelId: string, _messageId: string, timeuuid: string) => {
     setChannelUnreadById((prev) => {
@@ -391,14 +422,18 @@ export default function ChatPage() {
     });
     if (selectedCommunityId) {
       setCommunityUnreadById((prev) => {
-        const nextValue = channels.some((channel) =>
-          channel.id !== channelId && ((channelUnreadById[channel.id] ?? false) || (channelMentionCountById[channel.id] ?? 0) > 0)
+        const chans = channelsRef.current;
+        const unread = channelUnreadByIdRef.current;
+        const mention = channelMentionCountByIdRef.current;
+        const nextValue = chans.some(
+          (channel) =>
+            channel.id !== channelId && ((unread[channel.id] ?? false) || (mention[channel.id] ?? 0) > 0)
         );
         if (prev[selectedCommunityId] === nextValue) return prev;
         return { ...prev, [selectedCommunityId]: nextValue };
       });
     }
-  }, [channelMentionCountById, channelUnreadById, channels, selectedCommunityId]);
+  }, [selectedCommunityId]);
 
   const handleDmReadStateUpdated = useCallback((conversationId: string, _messageId: string, timeuuid: string) => {
     setDmUnreadById((prev) => {

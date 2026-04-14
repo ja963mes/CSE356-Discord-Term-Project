@@ -16,7 +16,19 @@ import {
   PresenceStatus,
 } from "./presence";
 import { broadcastPresenceChange, PRESENCE_BROADCAST_CHANNEL, PresenceBroadcastMessage } from "./broadcast";
-import { subscribeUser, unsubscribeUser, subscribeDm, unsubscribeDm, subscribeCommunity, unsubscribeCommunity, subscribeChannel, unsubscribeChannel, getPresenceTargets } from "./subscriptions";
+import {
+  subscribeUser,
+  unsubscribeUser,
+  subscribeDm,
+  unsubscribeDm,
+  subscribeCommunity,
+  unsubscribeCommunity,
+  subscribeChannel,
+  unsubscribeChannel,
+  getPresenceTargets,
+  subscribeAllChannelsForUserInCommunity,
+  subscribeAllMembersForChannel,
+} from "./subscriptions";
 
 const redis = new Redis(env.REDIS_URL);
 redis.on("connect", async () => {
@@ -155,6 +167,11 @@ wss.on("connection", async (ws, req) => {
     if (msg.type === "ping") {
       // Keep activity updated on pings
       await updateActivity(redis, userId, connId);
+    } else if (msg.type === "subscribe_channel") {
+      const channelId = (msg as { channelId?: string }).channelId;
+      if (typeof channelId === "string" && channelId.length > 0) {
+        await subscribeChannel(redis, channelId, userId);
+      }
     } else if (msg.type === "away") {
       // Manually set away status with an optional message that other users can see
       await setAway(redis, userId, (msg.message as string) ?? "");
@@ -239,6 +256,7 @@ redisSub.on("message", (channel, message) => {
       void (async () => {
         // Update Redis subscription sets
         await subscribeCommunity(redis, communityId, userId);
+        await subscribeAllChannelsForUserInCommunity(redis, userId, communityId);
         // Forward event to all connected members of this community
         const payload = JSON.stringify(event);
         for (const { ws, userId: connUserId } of connections.values()) {
@@ -277,7 +295,25 @@ redisSub.on("message", (channel, message) => {
       })();
     }
 
-    if (event.type === "community:channel:create" || event.type === "community:channel:delete") {
+    if (event.type === "community:channel:create") {
+      const communityId = event.communityId as string;
+      const ch = event.channel as { id?: string; is_private?: boolean } | undefined;
+      const channelId = ch?.id;
+      if (channelId && ch?.is_private !== true) {
+        void subscribeAllMembersForChannel(redis, channelId);
+      }
+      const payload = JSON.stringify(event);
+      void (async () => {
+        for (const { ws, userId: connUserId } of connections.values()) {
+          const contexts = await redis.smembers(`presence:contexts:${connUserId}`);
+          if (contexts.includes(`guild:${communityId}`) && ws.readyState === WebSocket.OPEN) {
+            ws.send(payload);
+          }
+        }
+      })();
+    }
+
+    if (event.type === "community:channel:delete") {
       const communityId = event.communityId as string;
       const payload = JSON.stringify(event);
       void (async () => {
