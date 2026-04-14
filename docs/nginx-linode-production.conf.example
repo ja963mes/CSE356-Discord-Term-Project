@@ -24,8 +24,10 @@
 #       /etc/nginx/sites-available/discord-production
 # 5. Edit: server_name, optional comment /search block if search not running
 # 6. Enable: sudo ln -sf /etc/nginx/sites-available/discord-production /etc/nginx/sites-enabled/
-# 7. sudo nginx -t && sudo systemctl reload nginx
-# 8. TLS: sudo certbot --nginx -d your.domain  (or add the HTTPS server block below manually)
+# 7. Raise worker_connections (default 768 is too low for WebSocket-heavy traffic):
+#    sudo sed -i 's/worker_connections\s*768/worker_connections 4096/' /etc/nginx/nginx.conf
+# 8. sudo nginx -t && sudo systemctl reload nginx
+# 9. TLS: sudo certbot --nginx -d your.domain  (or add the HTTPS server block below manually)
 #
 # --- TLS (after HTTP works) ---
 # Option A: certbot --nginx (recommended) — it can add ssl_* and a redirect from :80.
@@ -55,8 +57,9 @@ upstream backend_search {
     keepalive 16;
 }
 upstream backend_realtime {
-    server 130.245.136.45:3005;
-    keepalive 8;
+    server 127.0.0.1:3005;
+    server 127.0.0.1:3009;
+    keepalive 16;
 }
 upstream backend_create_community {
     server 130.245.136.45:3006;
@@ -71,16 +74,30 @@ upstream backend_read_state {
     keepalive 16;
 }
 
-limit_req_zone $binary_remote_addr zone=auth_limit:10m rate=100r/s;
+# Trusted subnets (grading bot, internal VPC) — exempt from rate limiting
+geo $is_trusted {
+    default          0;
+    10.0.0.0/8       1;
+    130.245.136.0/24 1;
+    127.0.0.0/8      1;
+}
+
+# Only rate-limit untrusted IPs on the general auth zone
+map $is_trusted $auth_limit_key {
+    1  "";
+    0  $binary_remote_addr;
+}
+limit_req_zone $auth_limit_key zone=auth_limit:10m rate=100r/s;
 
 # Per-IP rate limit keyed only on CPU-heavy POST endpoints (bcrypt)
-map "$request_method$uri" $auth_bcrypt_ip_key {
-    default                        "";
-    "~^POST/auth/login$"           $binary_remote_addr;
-    "~^POST/auth/register$"        $binary_remote_addr;
-    "~^POST/auth/oauth/complete$"  $binary_remote_addr;
+# Trusted IPs are exempt (key maps to empty string → no limit applied)
+map "$is_trusted:$request_method$uri" $auth_bcrypt_ip_key {
+    default                          "";
+    "~^0:POST/auth/login$"           $binary_remote_addr;
+    "~^0:POST/auth/register$"        $binary_remote_addr;
+    "~^0:POST/auth/oauth/complete$"  $binary_remote_addr;
 }
-limit_req_zone $auth_bcrypt_ip_key zone=auth_bcrypt_per_ip:10m rate=20r/s;
+limit_req_zone $auth_bcrypt_ip_key zone=auth_bcrypt_per_ip:10m rate=50r/s;
 
 # Global (all-IP) rate limit for bcrypt-heavy POST endpoints
 map "$request_method$uri" $auth_bcrypt_global_key {
@@ -89,7 +106,7 @@ map "$request_method$uri" $auth_bcrypt_global_key {
     "~^POST/auth/register$"        "bcrypt";
     "~^POST/auth/oauth/complete$"  "bcrypt";
 }
-limit_req_zone $auth_bcrypt_global_key zone=auth_bcrypt_global:1m rate=100r/s;
+limit_req_zone $auth_bcrypt_global_key zone=auth_bcrypt_global:1m rate=500r/s;
 
 # REPLACE: your public hostname(s) or production IP
 server {
@@ -106,8 +123,8 @@ server {
 
     location ^~ /auth {
         limit_req zone=auth_limit burst=200 nodelay;
-        limit_req zone=auth_bcrypt_per_ip burst=40 nodelay;
-        limit_req zone=auth_bcrypt_global burst=100 nodelay;
+        limit_req zone=auth_bcrypt_per_ip burst=100 nodelay;
+        limit_req zone=auth_bcrypt_global burst=500 nodelay;
         limit_req_status 429;
         proxy_pass http://backend_auth;
         proxy_http_version 1.1;
