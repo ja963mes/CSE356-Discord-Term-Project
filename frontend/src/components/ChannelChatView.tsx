@@ -56,16 +56,23 @@ export default function ChannelChatView({
   const atBottomRef = useRef(true);
   const lastMarkedRef = useRef<string | null>(null);
 
+  /** Parent often passes a new callback when unread maps change; keep stable deps so we do not re-fetch in a loop. */
+  const onReadStateUpdatedRef = useRef(onReadStateUpdated);
+  useEffect(() => {
+    onReadStateUpdatedRef.current = onReadStateUpdated;
+  }, [onReadStateUpdated]);
+
   const markLatestRead = useCallback(async (message: Message | null | undefined) => {
     if (!message?.id || !message.timeuuid || lastMarkedRef.current === message.id) return;
     const ok = await markChannelRead(channelId, message.id, message.timeuuid);
     if (!ok) return;
     lastMarkedRef.current = message.id;
-    onReadStateUpdated?.(channelId, message.id, message.timeuuid);
-  }, [channelId, onReadStateUpdated]);
+    onReadStateUpdatedRef.current?.(channelId, message.id, message.timeuuid);
+  }, [channelId]);
 
-  // Load initial messages when channel changes
+  // Load initial messages when channel changes (deps: channelId only — avoid refetch storms when parent callbacks change)
   useEffect(() => {
+    let cancelled = false;
     setMessages([]);
     setOldestTimeuuid(null);
     setHasMore(true);
@@ -76,14 +83,27 @@ export default function ChannelChatView({
 
     getMessages(channelId)
       .then((msgs) => {
+        if (cancelled) return;
         setMessages(msgs);
         if (msgs.length > 0) setOldestTimeuuid(msgs[0].timeuuid);
         if (msgs.length < 50) setHasMore(false);
-        void markLatestRead(msgs[msgs.length - 1] ?? null);
+        const last = msgs[msgs.length - 1] ?? null;
+        if (last?.id && last?.timeuuid) {
+          void markChannelRead(channelId, last.id, last.timeuuid).then((ok) => {
+            if (!ok || cancelled) return;
+            lastMarkedRef.current = last.id;
+            onReadStateUpdatedRef.current?.(channelId, last.id, last.timeuuid);
+          });
+        }
         setTimeout(() => bottomRef.current?.scrollIntoView(), 50);
       })
-      .catch(() => setMessages([]));
-  }, [channelId, markLatestRead]);
+      .catch(() => {
+        if (!cancelled) setMessages([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [channelId]);
 
   // Infinite scroll — load older messages
   const loadOlder = useCallback(async () => {
