@@ -19,6 +19,7 @@ import {
   buildOidcAuthUrl,
   handleOidcCallback,
 } from "../config/oauth";
+import { isUniqueConstraintViolation } from "../pgErrors";
 
 
 const avatarStorage = multer.diskStorage({
@@ -155,6 +156,10 @@ router.post("/register", async (req: Request, res: Response): Promise<void> => {
     await createSession(res, newUser.internal_id);
     res.status(201).json({ message: "Registered successfully", internal_id: newUser.internal_id });
   } catch (err) {
+    if (isUniqueConstraintViolation(err, "users_username_unique")) {
+      res.status(409).json({ error: "Username already taken" });
+      return;
+    }
     console.error(err);
     res.status(500).json({ error: "Internal server error" });
   }
@@ -547,6 +552,10 @@ router.post("/oauth/complete", async (req: Request, res: Response): Promise<void
       res.status(400).json({ error: "action must be 'create' or 'link'" });
     }
   } catch (err) {
+    if (isUniqueConstraintViolation(err, "users_username_unique")) {
+      res.status(409).json({ error: "Username already taken" });
+      return;
+    }
     console.error(err);
     res.status(500).json({ error: "Internal server error" });
   }
