@@ -166,6 +166,46 @@ export async function unsubscribeChannel(redis: Redis, channelId: string, userId
   await pipeline.exec();
 }
 
+/**
+ * After joining a community while already connected over WebSocket, DB has new `channel_members`
+ * rows but `subscribeUser` already ran — add Redis channel contexts for every channel in this guild.
+ */
+export async function subscribeAllChannelsForUserInCommunity(
+  redis: Redis,
+  userId: string,
+  communityId: string
+): Promise<void> {
+  try {
+    const result = await pg.query<{ channel_id: string }>(
+      `SELECT cm.channel_id
+       FROM channel_members cm
+       INNER JOIN channels ch ON ch.id = cm.channel_id
+       WHERE cm.user_id = $1 AND ch.community_id = $2`,
+      [userId, communityId]
+    );
+    for (const row of result.rows) {
+      await subscribeChannel(redis, row.channel_id, userId);
+    }
+  } catch (err) {
+    console.error("[subscriptions] subscribeAllChannelsForUserInCommunity failed:", err);
+  }
+}
+
+/** When a public channel is created, all members get `channel_members` rows — sync Redis for live message fan-out. */
+export async function subscribeAllMembersForChannel(redis: Redis, channelId: string): Promise<void> {
+  try {
+    const result = await pg.query<{ user_id: string }>(
+      `SELECT user_id FROM channel_members WHERE channel_id = $1`,
+      [channelId]
+    );
+    for (const row of result.rows) {
+      await subscribeChannel(redis, channelId, row.user_id);
+    }
+  } catch (err) {
+    console.error("[subscriptions] subscribeAllMembersForChannel failed:", err);
+  }
+}
+
 // --- DB helpers (only called on connect) ---
 
 async function fetchCommunityIds(userId: string): Promise<string[]> {

@@ -291,6 +291,13 @@ export default function ChatPage() {
     setSelectedChannelId(firstText.id);
   }, [channels, selectedChannelId, selectedCommunityId, viewMode]);
 
+  /** Ensure realtime Redis has `channel:<id>` for WS fan-out (fixes join-after-connect and edge cases). */
+  useEffect(() => {
+    if (!usingLiveCommunities || viewMode !== "channel" || !selectedChannelId) return;
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(selectedChannelId)) return;
+    send({ type: "subscribe_channel", channelId: selectedChannelId });
+  }, [usingLiveCommunities, viewMode, selectedChannelId, send]);
+
   useEffect(() => {
     if (viewMode === "dm" && selectedDmId) {
       setDmUnreadById((prev) => {
