@@ -62,6 +62,5 @@ jobs:
             npm run build --workspace realtime-service
             npm run build --workspace dms-service
             npm run build --workspace read-state-service
-            npm run build --workspace frontend
             sudo systemctl restart discord-auth discord-communities discord-create-community discord-messages discord-realtime discord-realtime-2 discord-dms
             sudo systemctl reload nginx
