@@ -42,32 +42,43 @@ router.get("/search/messages", requireAuth, async (req: Request, res: Response) 
   let scopeIds: string[];
 
   if (scope === "community") {
-    const communityId = String(req.query.communityId ?? "");
-    if (!communityId || !isUuid(communityId)) {
-      res.status(400).json({ error: "communityId (UUID) is required for community scope" });
+    const communityIdRaw = req.query.communityId ? String(req.query.communityId) : "";
+    const communityId = communityIdRaw && isUuid(communityIdRaw) ? communityIdRaw : null;
+
+    if (communityIdRaw && !communityId) {
+      res.status(400).json({ error: "communityId must be a valid UUID" });
       return;
     }
 
-    // Verify user is a community member
-    const [membership] = await db
-      .select({ user_id: communityMembers.user_id })
-      .from(communityMembers)
-      .where(and(eq(communityMembers.community_id, communityId), eq(communityMembers.user_id, userId)))
-      .limit(1);
+    if (communityId) {
+      // Scoped to a specific community — verify membership
+      const [membership] = await db
+        .select({ user_id: communityMembers.user_id })
+        .from(communityMembers)
+        .where(and(eq(communityMembers.community_id, communityId), eq(communityMembers.user_id, userId)))
+        .limit(1);
 
-    if (!membership) {
-      res.status(403).json({ error: "You are not a member of this community" });
-      return;
+      if (!membership) {
+        res.status(403).json({ error: "You are not a member of this community" });
+        return;
+      }
+
+      const userChannels = await db
+        .select({ channel_id: channelMembers.channel_id })
+        .from(channelMembers)
+        .innerJoin(channels, eq(channels.id, channelMembers.channel_id))
+        .where(and(eq(channels.community_id, communityId), eq(channelMembers.user_id, userId)));
+
+      scopeIds = userChannels.map((r) => r.channel_id);
+    } else {
+      // No communityId — search across all communities the user has access to
+      const userChannels = await db
+        .select({ channel_id: channelMembers.channel_id })
+        .from(channelMembers)
+        .where(eq(channelMembers.user_id, userId));
+
+      scopeIds = userChannels.map((r) => r.channel_id);
     }
-
-    // Get all channels the user can access in this community
-    const userChannels = await db
-      .select({ channel_id: channelMembers.channel_id })
-      .from(channelMembers)
-      .innerJoin(channels, eq(channels.id, channelMembers.channel_id))
-      .where(and(eq(channels.community_id, communityId), eq(channelMembers.user_id, userId)));
-
-    scopeIds = userChannels.map((r) => r.channel_id);
 
     if (scopeIds.length === 0) {
       res.json({ query: q, total: 0, results: [] });
@@ -78,7 +89,7 @@ router.get("/search/messages", requireAuth, async (req: Request, res: Response) 
       query: q,
       scopeIds,
       scopeType: "channel",
-      communityId,
+      communityId: communityId ?? undefined,
       authorId,
       before,
       after,
