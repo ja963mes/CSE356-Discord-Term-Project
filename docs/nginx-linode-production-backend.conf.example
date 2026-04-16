@@ -30,8 +30,10 @@ upstream backend_search {
 }
 upstream backend_realtime {
     server 127.0.0.1:3005;
-    keepalive 8;
+    server 127.0.0.1:3009;
+    keepalive 16;
 }
+
 upstream backend_create_community {
     server 127.0.0.1:3006;
     keepalive 16;
