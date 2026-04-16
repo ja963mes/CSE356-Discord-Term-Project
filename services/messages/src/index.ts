@@ -2,6 +2,7 @@ import { env } from "./env";
 import { initializeCassandra } from "./cassandra";
 import { initializeBucket } from "./minio";
 import { app } from "./app";
+import { logger } from "./logger";
 
 const port = Number(env.MESSAGES_PORT ?? env.PORT);
 
@@ -11,6 +12,6 @@ void (async () => {
     initializeBucket(),
   ]);
   app.listen(port, () => {
-    console.log(`Messages service running on port ${port} (Cassandra keyspace=${env.MESSAGES_CASSANDRA_KEYSPACE})`);
+    logger.info({ port, keyspace: env.MESSAGES_CASSANDRA_KEYSPACE }, "messages-service listening");
   });
 })();

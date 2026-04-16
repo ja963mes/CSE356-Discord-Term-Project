@@ -20,7 +20,7 @@ import {
   handleOidcCallback,
 } from "../config/oauth";
 import { isUniqueConstraintViolation } from "../pgErrors";
-
+import { logRouteError } from "../logger";
 
 const avatarStorage = multer.diskStorage({
   destination: (_req, _file, cb) => {
@@ -161,7 +161,9 @@ router.post("/register", async (req: Request, res: Response): Promise<void> => {
       res.status(409).json({ error: "Username already taken" });
       return;
     }
-    console.error(err);
+    logRouteError("POST /auth/register failed", err, {
+      username: typeof username === "string" ? username : undefined,
+    });
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -196,7 +198,9 @@ router.post("/login", async (req: Request, res: Response): Promise<void> => {
     await createSession(res, user.internal_id);
     res.status(200).json({ message: "Logged in successfully", internal_id: user.internal_id });
   } catch (err) {
-    console.error(err);
+    logRouteError("POST /auth/login failed", err, {
+      username: typeof username === "string" ? username : undefined,
+    });
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -290,7 +294,7 @@ router.get("/google/callback", async (req: Request, res: Response): Promise<void
       );
     }
   } catch (err) {
-    console.error(err);
+    logRouteError("GET /auth/google/callback failed", err, {});
     res.status(500).json({ error: "OAuth error" });
   }
 });
@@ -377,7 +381,7 @@ router.get("/github/callback", async (req: Request, res: Response): Promise<void
       );
     }
   } catch (err) {
-    console.error(err);
+    logRouteError("GET /auth/github/callback failed", err, {});
     res.status(500).json({ error: "OAuth error" });
   }
 });
@@ -401,7 +405,7 @@ router.get("/oidc", async (_req: Request, res: Response): Promise<void> => {
     const url = await buildOidcAuthUrl(state, nonce);
     res.redirect(url);
   } catch (err) {
-    console.error(err);
+    logRouteError("GET /auth/oidc init failed", err, {});
     res.status(500).json({ error: "OIDC initialization error" });
   }
 });
@@ -454,7 +458,7 @@ router.get("/oidc/callback", async (req: Request, res: Response): Promise<void> 
       );
     }
   } catch (err) {
-    console.error(err);
+    logRouteError("GET /auth/oidc/callback failed", err, {});
     res.status(500).json({ error: "OIDC callback error" });
   }
 });
@@ -558,7 +562,10 @@ router.post("/oauth/complete", async (req: Request, res: Response): Promise<void
       res.status(409).json({ error: "Username already taken" });
       return;
     }
-    console.error(err);
+    logRouteError("POST /auth/oauth/complete failed", err, {
+      action: typeof action === "string" ? action : undefined,
+      username: typeof username === "string" ? username : undefined,
+    });
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -595,7 +602,7 @@ router.get("/link/oidc", requireAuth, async (req: Request, res: Response): Promi
     const url = await buildOidcAuthUrl(state, nonce);
     res.redirect(url);
   } catch (err) {
-    console.error(err);
+    logRouteError("GET /auth/link/oidc failed", err, {});
     res.status(500).json({ error: "OIDC initialization error" });
   }
 });
@@ -618,7 +625,7 @@ router.get("/dm-users", requireAuth, async (req: Request, res: Response): Promis
 
     res.json({ users: allUsers.filter((u) => u.internal_id !== internal_id) });
   } catch (err) {
-    console.error(err);
+    logRouteError("GET /auth/dm-users failed", err, { internal_id });
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -646,7 +653,7 @@ router.get("/me", requireAuth, async (req: Request, res: Response): Promise<void
       has_password: !!user.password_hash,
     });
   } catch (err) {
-    console.error(err);
+    logRouteError("GET /auth/me failed", err, { internal_id });
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -682,7 +689,7 @@ router.patch("/profile", requireAuth, async (req: Request, res: Response): Promi
 
     res.json({ message: "Profile updated", profile: updatedProfile });
   } catch (err) {
-    console.error(err);
+    logRouteError("PATCH /auth/profile failed", err, { internal_id });
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -728,7 +735,7 @@ router.post("/profile/avatar", requireAuth, uploadAvatar.single("avatar"), async
 
     res.json({ message: "Avatar uploaded", avatarUrl });
   } catch (err) {
-    console.error(err);
+    logRouteError("POST /auth/profile/avatar failed", err, { internal_id });
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -773,7 +780,7 @@ router.patch("/password", requireAuth, async (req: Request, res: Response): Prom
 
     res.json({ message: "Password updated" });
   } catch (err) {
-    console.error(err);
+    logRouteError("PATCH /auth/password failed", err, { internal_id });
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -789,7 +796,7 @@ router.get("/identities", requireAuth, async (req: Request, res: Response): Prom
 
     res.json({ identities: rows });
   } catch (err) {
-    console.error(err);
+    logRouteError("GET /auth/identities failed", err, { internal_id });
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -829,7 +836,7 @@ router.delete("/identities/:provider", requireAuth, async (req: Request, res: Re
 
     res.json({ message: "Provider unlinked" });
   } catch (err) {
-    console.error(err);
+    logRouteError("DELETE /auth/identities/:provider failed", err, { internal_id, provider });
     res.status(500).json({ error: "Internal server error" });
   }
 });
