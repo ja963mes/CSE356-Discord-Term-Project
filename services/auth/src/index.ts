@@ -41,6 +41,21 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "auth-service" });
 });
 
+app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error("[unhandled express error]", err);
+  res.status(500).json({ error: "Internal server error" });
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("[uncaughtException]", err);
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection]", reason);
+  process.exit(1);
+});
+
 app.listen(Number(env.PORT), () => {
   console.log(`Auth service running on port ${env.PORT}`);
 });
