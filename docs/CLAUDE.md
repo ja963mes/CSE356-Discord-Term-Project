@@ -125,7 +125,7 @@ Channel lifecycle and ACLs live on the **communities service (3002)** — no sep
 - `services/auth/src/index.ts` has duplicate `GET /` handlers — first one (requireAuth) wins, unauthenticated users get 401 JSON instead of redirect
 - Stub services return hardcoded data; frontend falls back to sample data if services are down
 - `passport` is installed but not actively used (sessions bypass it)
-- Staging nginx examples live in `docs/nginx-linode-*.conf.example` (see README proxy map)
+- Nginx: use **`docs/nginx-linode-production-frontend.conf.example`** + **`docs/nginx-linode-production-backend.conf.example`** only; older single-file examples in `docs/` are **deprecated** (see `docs/README.md`, `docs/PROD-SPLIT-NGINX.md`)
 - RabbitMQ not yet integrated (needed for inter-service events)
 
 ## Frontend Proxy Config (vite.config.ts)

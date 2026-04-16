@@ -11,10 +11,10 @@ Project documentation lives under **`docs/`** (except the root [`README.md`](../
 | [`DEV-28-Channels-scaffold-communities-service.md`](./DEV-28-Channels-scaffold-communities-service.md) | Channels on communities service (migration 0006, APIs, follow-ups) |
 | [`sharding-and-replication.md`](./sharding-and-replication.md) | Cassandra/Postgres sharding notes; future **per-domain search** (splintered by microservice) |
 | [`STAGING-ROLLOUT.md`](./STAGING-ROLLOUT.md) | Staging runbook: full stack except search; systemd, nginx, migrations, smoke tests |
-| [`nginx-linode-staging.conf.example`](./nginx-linode-staging.conf.example) | Example Nginx reverse proxy (same path order as Vite; WebSocket `/ws`; comment `/search` if unused) |
-| [`nginx-linode-production-frontend.conf.example`](./nginx-linode-production-frontend.conf.example) | Production frontend VM: serves static `frontend/dist` and proxies all API/WS prefixes to backend VM nginx |
-| [`nginx-linode-production-backend.conf.example`](./nginx-linode-production-backend.conf.example) | Production backend VM: API/WS-only reverse proxy to local services (returns 404 for `/`) |
-| [`nginx-linode-services-only.conf.example`](./nginx-linode-services-only.conf.example) | Narrow services-only example for partial stacks (not full split-production baseline) |
+| [`ANSIBLE-SETUP.md`](./ANSIBLE-SETUP.md) | Lightweight Ansible scaffold for split frontend/backend VM deploys |
+| [`nginx-linode-production-frontend.conf.example`](./nginx-linode-production-frontend.conf.example) | **Supported:** frontend VM — static `frontend/dist` + proxy API/WS to backend VM nginx ([`PROD-SPLIT-NGINX.md`](./PROD-SPLIT-NGINX.md)) |
+| [`nginx-linode-production-backend.conf.example`](./nginx-linode-production-backend.conf.example) | **Supported:** backend VM — API/WS reverse proxy to local Node ports (404 for `/`) |
+| Deprecated nginx examples (reference only) | [`nginx-linode-staging.conf.example`](./nginx-linode-staging.conf.example), [`nginx-linode-production.conf.example`](./nginx-linode-production.conf.example), [`nginx-linode-services-only.conf.example`](./nginx-linode-services-only.conf.example) — **do not use for new deployments**; use the frontend + backend pair above. |
 
 ---
 

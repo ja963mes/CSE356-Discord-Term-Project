@@ -13,7 +13,7 @@ Services to run on staging (Node processes):
 - `dms` (3007) — direct messages (Cassandra)
 - optional but recommended: static or proxied `frontend`
 
-**Intentionally omitted on staging:** **`search` (3004)**. The search stub is small, but **Elasticsearch** (see `docker-compose.yml`) is heavy on RAM/CPU; we do not run ES or `search-service` on the staging VM. The UI falls back when `/search` is unavailable. Nginx: comment out the `/search` `location` in [`nginx-linode-staging.conf.example`](./nginx-linode-staging.conf.example) if nothing listens on `3004`.
+**Intentionally omitted on staging:** **`search` (3004)**. The search stub is small, but **Elasticsearch** (see `docker-compose.yml`) is heavy on RAM/CPU; we do not run ES or `search-service` on the staging VM. The UI falls back when `/search` is unavailable. Nginx: comment out the `/search` `location` in [`nginx-linode-production-backend.conf.example`](./nginx-linode-production-backend.conf.example) (or your merged config) if nothing listens on `3004`.
 
 Longer-term, full-text search is expected to **splinter per domain** (messages, DMs, directory, etc.) along microservice boundaries rather than one central search service—see [Search (today vs eventual splintering)](./sharding-and-replication.md#search-today-vs-eventual-splintering) in `docs/sharding-and-replication.md`.
 
@@ -303,21 +303,20 @@ This does **not** restart on reboot; prefer systemd for stability.
 
 In staging, avoid binding raw service ports publicly; prefer one ingress host with path routing.
 
-There are three example configs:
+**Supported nginx baselines (split frontend + backend):** see [`PROD-SPLIT-NGINX.md`](./PROD-SPLIT-NGINX.md).
 
-- **Full proxy (default for staging):** [`nginx-linode-staging.conf.example`](./nginx-linode-staging.conf.example)  
+- **Backend VM / API ingress (staging or production):** [`nginx-linode-production-backend.conf.example`](./nginx-linode-production-backend.conf.example)  
   Proxies all API prefixes including `messages`, `attachments`, `dms`, and `/ws`. **Comment out** the `/search` block if you are not running `search-service` (see Scope).
-- **Production split VMs (recommended):**
-  - Frontend VM: [`nginx-linode-production-frontend.conf.example`](./nginx-linode-production-frontend.conf.example)
-  - Backend VM: [`nginx-linode-production-backend.conf.example`](./nginx-linode-production-backend.conf.example)
-- **Production single-host (legacy combined):** [`nginx-linode-production.conf.example`](./nginx-linode-production.conf.example)
-  Serves static files from **`/var/www/discord-frontend`** (rsync `frontend/dist` there after each build so `www-data` can read them; avoid pointing `root` at `/root/...`). Same API prefixes as staging, upstream keepalive, gzip, optional HTTPS snippet. **Edit** `server_name` and comment `/search` if unused.
-- **Services-only (legacy / special cases):** [`nginx-linode-services-only.conf.example`](./nginx-linode-services-only.conf.example)  
-  Proxies only `auth`, `communities`, `create-community`, and `realtime` — use only if you intentionally keep messages/DMs off the host.
+- **Frontend VM (optional on staging):** [`nginx-linode-production-frontend.conf.example`](./nginx-linode-production-frontend.conf.example)  
+  Serves static `frontend/dist` and proxies API/WS to the backend VM. Point `BACKEND_UPSTREAM` at your API host.
+
+**Single staging box without a separate frontend VM:** run Node services locally on the box, use the **backend** example as the only nginx site (API + `/ws`), and run the SPA from **Vite on your laptop** against that host; *or* merge the `location` blocks from the frontend + backend examples into one `server` block (keep the same path order as `frontend/vite.config.ts`).
+
+**Deprecated (reference only, do not copy for new installs):** [`nginx-linode-staging.conf.example`](./nginx-linode-staging.conf.example), [`nginx-linode-production.conf.example`](./nginx-linode-production.conf.example), [`nginx-linode-services-only.conf.example`](./nginx-linode-services-only.conf.example) — superseded by the frontend + backend pair.
 
 - API paths proxy to `127.0.0.1:3001`–`3007` as in the README proxy table (including `/attachments` → messages on `3003`).
 - `server_name` should be `130.245.136.45` (or your domain).
-- `/` defaults to the Vite dev server on `5173`; switch that block to `root` + `try_files` if you serve `frontend/dist` instead.
+- The **backend** example does not serve the SPA at `/` (404). Run the UI from **Vite** (`5173`) during dev, or use the **frontend** example (static `root` + `try_files`) when serving `frontend/dist`.
 - After TLS (certbot or another terminator), ensure `X-Forwarded-Proto` reflects HTTPS so OAuth redirects stay correct.
 
 Validate + reload:
