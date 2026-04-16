@@ -4,7 +4,6 @@ import pinoHttp from "pino-http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { env } from "./env";
 
-/** Client IP when behind nginx (avoids logging full header blobs). */
 function clientIp(req: IncomingMessage): string | undefined {
   const xff = req.headers["x-forwarded-for"];
   const real = req.headers["x-real-ip"];
@@ -13,7 +12,6 @@ function clientIp(req: IncomingMessage): string | undefined {
   return req.socket?.remoteAddress ?? undefined;
 }
 
-/** Slim HTTP access fields — full req/res headers are too noisy for journalctl/tail. */
 function serializeReq(req: IncomingMessage): Record<string, unknown> {
   const r = req as IncomingMessage & { id?: string };
   return {
@@ -28,9 +26,8 @@ function serializeRes(res: ServerResponse): Record<string, unknown> {
   return { statusCode: res.statusCode };
 }
 
-/** Root logger for communities-service (JSON lines to stdout; systemd/journald friendly). */
 export const logger = pino({
-  name: "communities-service",
+  name: "messages-service",
   level: env.LOG_LEVEL,
   redact: ["req.headers.cookie", "req.headers.authorization"],
   serializers: {
@@ -52,7 +49,6 @@ export const logger = pino({
     : {}),
 });
 
-/** Postgres / driver errors often expose these fields (libpq / node-pg). */
 function pgHints(err: unknown): Record<string, unknown> | undefined {
   if (!err || typeof err !== "object") return undefined;
   const o = err as Record<string, unknown>;
@@ -68,7 +64,6 @@ function pgHints(err: unknown): Record<string, unknown> | undefined {
     "severity",
     "where",
     "hint",
-    "position",
   ]) {
     if (k in o && o[k] != null) out[k] = o[k];
   }
@@ -86,20 +81,14 @@ function errnoMeta(err: unknown): Record<string, unknown> | undefined {
   return out;
 }
 
-/**
- * Route-level errors: structured for journalctl / grep (`pg.*`, `errnoCode`, stack).
- * Keeps `err` for Pino's built-in Error serializer when value is an Error.
- */
 export function logRouteError(message: string, err: unknown, meta?: Record<string, unknown>): void {
   const pg = pgHints(err);
   const sys = errnoMeta(err);
   logger.error({ err, ...meta, ...(pg ? { pg } : {}), ...(sys ?? {}) }, message);
 }
 
-/** One line per HTTP request (method, url, status, responseTime, optional userId). */
 export const httpLogger = pinoHttp({
   logger,
-  /** pino-http builds a child logger; without this it uses verbose std-serializers for req/res. */
   serializers: {
     req: serializeReq,
     res: serializeRes,

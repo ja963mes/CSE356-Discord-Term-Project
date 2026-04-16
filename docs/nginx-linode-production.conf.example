@@ -1,6 +1,14 @@
+# =============================================================================
+# DEPRECATED — do not use for new deployments (retained for reference only).
+# Production is defined as split VMs only:
+#   - Frontend VM: nginx-linode-production-frontend.conf.example
+#   - Backend VM:  nginx-linode-production-backend.conf.example
+# Guide: PROD-SPLIT-NGINX.md
+# =============================================================================
+#
 # Nginx — production (static SPA + API + WebSocket)
 #
-# Same path order as docs/nginx-linode-staging.conf.example and frontend/vite.config.ts.
+# Same path order as the deprecated staging example and frontend/vite.config.ts.
 # Differs from staging: serves built frontend from disk (not Vite :5173) and uses
 # upstream keepalive pools to reduce TCP churn under load.
 #

@@ -1,6 +1,7 @@
 /// <reference path="./types/express.d.ts" />
-import express, { Request, Response } from "express";
+import express, { Request, Response, NextFunction } from "express";
 import cookieParser from "cookie-parser";
+import { httpLogger, logRouteError } from "./logger";
 import { eq, and } from "drizzle-orm";
 import { db } from "./db";
 import { requireAuth } from "./middleware/session";
@@ -21,6 +22,7 @@ import { types } from "cassandra-driver";
 export const app = express();
 app.use(express.json());
 app.use(cookieParser());
+app.use(httpLogger);
 
 const MAX_CONTENT = 4000;
 const DEFAULT_LIMIT = 50;
@@ -67,12 +69,12 @@ async function assertChannelAccess(
   return { ok: true, channel: { id: ch.id, community_id: ch.community_id } };
 }
 
-app.get("/health", async (_req, res) => {
+app.get("/health", async (req, res) => {
   try {
     await cassandra.execute("SELECT release_version FROM system.local");
     res.json({ status: "ok", service: "messages-service", storage: "cassandra" });
   } catch (e) {
-    console.error(e);
+    logRouteError("GET /health cassandra ping failed", e, { reqId: req.id });
     res.status(503).json({ status: "degraded", service: "messages-service", storage: "cassandra_unreachable" });
   }
 });
@@ -321,4 +323,17 @@ app.delete("/messages/:channelId/:timeuuid", requireAuth, async (req: Request, r
   });
 
   res.status(204).send();
+});
+
+app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+  if (res.headersSent) {
+    next(err);
+    return;
+  }
+  logRouteError("Unhandled route error", err, {
+    reqId: req.id,
+    method: req.method,
+    path: req.path,
+  });
+  res.status(500).json({ error: "Internal server error" });
 });

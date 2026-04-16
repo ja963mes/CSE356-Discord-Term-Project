@@ -1,6 +1,6 @@
-## DAO Pattern (Pilot)
+## DAO pattern (communities service)
 
-This folder is the Postgres DAO pilot for `communities-service`.
+Postgres access for **`communities-service`** is centralized here so HTTP handlers stay thin.
 
 - `communitiesDao.ts`: community directory/community table reads
 - `communityMembersDao.ts`: membership checks + member listings

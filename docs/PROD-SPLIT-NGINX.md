@@ -1,6 +1,8 @@
-# Production Nginx Setup (Split Frontend + Backend VMs)
+# Production nginx (split frontend + backend VMs)
 
-This guide is for a two-VM production topology:
+**Supported** nginx baselines for production (and the pattern staging should mirror when using two roles). Index of all docs: **[README.md](./README.md)**.
+
+This guide is for a **two-VM** topology:
 
 - **Frontend VM**: serves static `frontend/dist` and terminates TLS for the public domain.
 - **Backend VM**: runs Node services and nginx that proxies service paths to local ports.
@@ -187,4 +189,16 @@ From browser/devtools:
 From frontend VM logs:
 
 - No sustained `upstream timed out` in `/var/log/nginx/error.log`.
+
+---
+
+## 7) Deprecated nginx examples (do not use for new installs)
+
+These files remain in `docs/` for historical reference only; each file begins with a **DEPRECATED** banner:
+
+- `nginx-linode-staging.conf.example` — old single-host “full staging” proxy
+- `nginx-linode-production.conf.example` — old single-host “static + API” combined production
+- `nginx-linode-services-only.conf.example` — old partial-stack proxy
+
+**Use only** `nginx-linode-production-frontend.conf.example` and `nginx-linode-production-backend.conf.example` for new deployments. For a single machine, merge `location` blocks from both (same path order as `frontend/vite.config.ts`) or run API nginx + Vite elsewhere.
 

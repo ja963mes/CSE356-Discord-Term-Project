@@ -1,288 +1,221 @@
-# Discord Clone (CSE 356) — Monorepo
+# CSE 356 — Discord-style messaging (monorepo)
 
-Monorepo containing multiple backend services plus a React frontend. The primary backend service in this repo is the authentication service (Express) with session auth backed by Redis and PostgreSQL.
+Node **microservices** (Express + TypeScript), a **React (Vite)** client, and shared data stores (**PostgreSQL**, **Redis**, **Cassandra**, **Elasticsearch**, **MinIO**). Auth, guilds, channels, DMs, message search, WebSockets, and read-state are implemented in this repo—see **[docs/IMPLEMENTATION.md](./docs/IMPLEMENTATION.md)** for a factual checklist.
 
-Implementation scope and how this compares to the full architecture (nginx, Cassandra messages, Elasticsearch, DMs over WebSockets/SSE, etc.) is documented in **[docs/IMPLEMENTATION.md](./docs/IMPLEMENTATION.md)**. An index of all project docs (including the Cursor-oriented guide and feature write-ups) is in **[docs/README.md](./docs/README.md)**.
+| Doc | Purpose |
+|-----|---------|
+| **[docs/README.md](./docs/README.md)** | Documentation index |
+| **[docs/CLAUDE.md](./docs/CLAUDE.md)** | Stack map, conventions, proxy table (for editors / AI) |
+| **[docs/STAGING-ROLLOUT.md](./docs/STAGING-ROLLOUT.md)** | Staging VM runbook |
+| **[docs/PROD-SPLIT-NGINX.md](./docs/PROD-SPLIT-NGINX.md)** | Production: **frontend VM + backend VM** nginx |
 
-## Architecture
+---
 
-The diagram below reflects **local development** (`npm run dev:all`): the browser loads the React app from the Vite dev server (**5173**), which **proxies** API paths to the matching backend port (see `frontend/vite.config.ts`). In production you would typically put a reverse proxy in front of the same routes.
+## Architecture (local dev)
 
-**Data:** Auth, communities, and create-community share **PostgreSQL** (Drizzle migrations under `services/auth/drizzle/`). The **messages** service stores **channel** history in **Cassandra** (`messages_by_channel`, default keyspace **`messaging`** via **`MESSAGES_CASSANDRA_KEYSPACE`**) while still using Postgres for channel metadata and ACL checks via **`channel_members`**. Session cookies are validated via **Redis** on those services. The **DM** service uses a separate Cassandra keyspace for DM data (see [DEV-27](./docs/DEV-27-Direct-conversations-dm-service-setup.md)). **Search** and **realtime** are still stubs for non-persistent behavior.
+With **`npm run dev:all`**, the browser loads the app from **Vite :5173**, which **proxies** API paths to localhost services (same path order as `frontend/vite.config.ts`).
 
 ```mermaid
 flowchart TB
-  subgraph dev [Client — dev]
-    Browser[Browser]
-    Vite[Vite dev server :5173]
-    Browser -->|loads SPA| Vite
+  subgraph client [Browser]
+    Browser[SPA]
   end
 
-  subgraph backends [Node microservices]
-    Auth[auth :3001]
-    Comm[communities :3002]
-    Msg[messages :3003]
-    Srch[search :3004]
-    Rt[realtime :3005]
+  Vite[Vite :5173]
+
+  subgraph svc [Node services]
+    A[auth :3001]
+    C[communities :3002]
+    M[messages :3003]
+    S[search :3004]
+    R[realtime :3005]
     CC[create-community :3006]
-    Dms[dms :3007]
+    D[dms :3007]
+    RS[read-state :3008]
   end
-
-  Vite --> Auth
-  Vite --> Comm
-  Vite --> Msg
-  Vite --> Srch
-  Vite --> Rt
-  Vite --> CC
-  Vite --> Dms
 
   subgraph data [Data stores]
     PG[(PostgreSQL)]
     RD[(Redis)]
     CAS[(Cassandra)]
+    ES[(Elasticsearch)]
+    S3[(MinIO)]
   end
 
-  Auth --> PG
-  Auth --> RD
-  Comm --> PG
-  Comm --> RD
+  Browser --> Vite
+  Vite --> A
+  Vite --> C
+  Vite --> M
+  Vite --> S
+  Vite --> R
+  Vite --> CC
+  Vite --> D
+  Vite --> RS
+
+  A --> PG
+  A --> RD
+  C --> PG
+  C --> RD
   CC --> PG
   CC --> RD
-  Msg --> PG
-  Msg --> CAS
-  Msg --> RD
-  Dms --> CAS
-  Dms --> RD
+  M --> PG
+  M --> CAS
+  M --> RD
+  M --> S3
+  D --> CAS
+  D --> RD
+  S --> PG
+  S --> RD
+  S --> ES
+  R --> RD
+  RS --> PG
+  RS --> CAS
+  RS --> RD
 ```
 
-**Proxy map (same order as Vite config matters for overlapping prefixes):**
+**Proxy map (prefix → default target):**
 
-| Browser path prefix | Target |
-|----------------------|--------|
-| `/auth` | :3001 |
-| `/create-community` | :3006 |
-| `/communities`, `/channels`, `/search-communities` | :3002 |
-| `/messages`, `/attachments` | :3003 |
-| `/search` | :3004 |
-| `/ws` (WebSocket) | :3005 |
-| `/dms` | :3007 |
+| Prefix | Port | Service area |
+|--------|------|----------------|
+| `/auth` | 3001 | Sessions, OAuth |
+| `/create-community` | 3006 | Create guild |
+| `/communities`, `/channels`, `/search-communities` | 3002 | Guilds, channels, directory search |
+| `/messages`, `/attachments` | 3003 | Channel messages, presign |
+| `/search` | 3004 | Message search (ES) |
+| `/dms` | 3007 | Direct messages |
+| `/read-state` | 3008 | Read / unread state |
+| `/ws` | 3005 | WebSocket (upgrade) |
 
-**Future scaling:** Notes on sharding by community, replication, and routing are in **[docs/sharding-and-replication.md](./docs/sharding-and-replication.md)**.
+Scaling and sharding notes: **[docs/sharding-and-replication.md](./docs/sharding-and-replication.md)**.
+
+---
 
 ## Prerequisites
 
-- **Node.js** v18+
-- **PostgreSQL** reachable from the app (often `localhost:5433` when using Docker Compose; `5432` for a local-only install)
-- **Redis** running on `localhost:6379`
-- **Cassandra** on `localhost:9042` for channel messages and DMs (included in `docker compose up`)
-- **Docker** + Docker Compose (optional but recommended for Postgres + Redis + Cassandra), **or** install dependencies via Homebrew
+- **Node.js** 18+
+- **npm** (workspaces at repo root)
+- **Docker** + Docker Compose (recommended for Postgres, PgBouncer, Redis, ES, MinIO)
+- **Cassandra** on `127.0.0.1:9042` for messages / DMs / read-state (enable the compose service if present, or install locally)
 
-## Quick Start
+---
 
-### 1. Start Postgres, Redis, and Cassandra
+## Quick start
 
-**Option A — Docker Compose (one command)**  
+### 1) Dependencies via Compose
+
 From the repo root:
 
 ```bash
 docker compose up -d
 ```
 
-This starts Postgres on host **5433**, Redis on **6379**, and Cassandra on **9042** (see [`docker-compose.yml`](./docker-compose.yml)). Copy [`.env.example`](./.env.example) to `.env` and set `DATABASE_URL` to use port **5433** for the DB. Channel messages (`messages` service) and DMs expect Cassandra reachable at **`127.0.0.1:9042`** by default (see optional `CASSANDRA_*` variables in `.env.example`).  
-**Note:** Cassandra/Elasticsearch memory caps in this repo are intended as **staging/local safety limits** on small machines, not production sizing recommendations.
-Stop with `docker compose down`.
+Match **`.env`** to your ports (see **[`.env.example`](./.env.example)**). Postgres is usually exposed on **5433**; apps often use **PgBouncer** on **6432** for `DATABASE_URL`.
 
-**Option B — Docker without Compose**
-
-```bash
-docker run -d --name postgres-auth -p 5432:5432 -e POSTGRES_PASSWORD=123456789 -e POSTGRES_DB=auth_db postgres:16-alpine
-docker run -d --name redis-auth -p 6379:6379 redis:7-alpine
-```
-
-**Option C — no Docker**  
-Install and run Postgres and Redis locally (e.g. `brew install postgresql redis` and `brew services start …`).
-
-If you already have Postgres/Redis installed locally, just make sure they're running.
-
-### 2. Install dependencies
+### 2) Install and migrate
 
 ```bash
 npm install
-```
-
-### 3. Set up environment variables
-
-Get the `.env` file from a team member and place it in the project root.
-Important: keep service ports distinct in `.env`:
-- `PORT=3001` (auth)
-- `COMMUNITIES_PORT=3002`
-- `CREATE_COMMUNITY_PORT=3006`
-
-### 4. Run database migrations
-
-```bash
 npm run db:migrate
 ```
 
-### 5. Start services
+### 3) Run the stack
 
-Start the auth service (required for login):
-
-```bash
-npm run dev:auth
-```
-
-Start the React frontend:
-
-```bash
-npm run dev:frontend
-```
-
-The frontend will be running at **http://localhost:5173**.
-
-- Login (wireframe UI): http://localhost:5173/login
-- Chat (wireframe UI): http://localhost:5173/
-
-Optional stub services for the wireframes:
-
-- `npm run dev:create-community` (port 3006)
-- `npm run dev:communities` (port 3002)
-- `npm run dev:messages` (port 3003)
-- `npm run dev:search` (port 3004)
-- `npm run dev:realtime` (port 3005)
-
-Note: the frontend includes fallback sample data, so it can render even if some stub services are not running.
-
-## Using a shared staging backend (frontend local, services remote)
-
-If `auth`, `communities`, `create-community`, and `realtime` are already running on the staging box (**`130.245.136.45`**), you can run only the frontend locally and proxy API calls to staging.
-
-- **Frontend → staging (recommended)**:
-
-```bash
-npm run dev:frontend:staging
-```
-
-This routes `/auth`, `/communities`, `/create-community`, and `/ws` (WebSocket) to the staging host by default.
-
-If you prefer, you can run Vite with explicit env vars:
-
-```bash
-VITE_API_ORIGIN=http://130.245.136.45 npm run dev:frontend
-```
-
-### Default local dev behavior (important)
-
-- `npm run dev` proxies APIs to **staging** (`130.245.136.45`).
-- `npm run dev:all` is the exception: it is **local-only** and forces the frontend to proxy APIs to **localhost** so the full local stack works end-to-end.
-
-- **Frontend → staging, but keep some services on localhost** — set origins explicitly, for example:
-
-```bash
-VITE_API_ORIGIN=http://130.245.136.45 \
-VITE_MESSAGES_ORIGIN=http://localhost:3003 \
-VITE_DMS_ORIGIN=http://localhost:3007 \
-npm run dev:frontend
-```
-
-Run `docker compose up -d cassandra` and `npm run dev:messages` / `npm run dev:dms` locally when you need those off staging.
-
-## Local vs staging environments (`ENV_FILE`)
-
-Backend services load the repo-root `.env` by default, but you can override it with:
-
-```bash
-ENV_FILE=.env.staging npm run dev:auth
-```
-
-This repo includes a template at `docs/env.staging.example`.
-
-### Communities (guilds / servers)
-
-Users can **create** and **join** communities. A **community** is a named space with a **membership list** and **channels** (text/voice rows in the DB). A user may belong to many communities but may **create at most 100**.
-
-**Create-community** (port **3006**, `services/create-community/`) is a separate service for **creating** communities: it enforces the **100 communities per user** limit, inserts the community row, adds the creator as **owner**, and seeds a default **#general** text channel.
-
-**Communities** (port **3002**, `services/communities/`) handles listing, joining, leaving, **channels** (public/private, `channel_members`, admin-only create/update), members, and **public directory search** (`GET /search-communities`) for the “Join a server” modal. It uses the same PostgreSQL database as auth (see migrations under `services/auth/drizzle/`). Authenticated routes validate the **session cookie** (`session_token`) against Redis; directory search is public (no membership filter). New channel columns and `channel_members` ship with migration **`0006_*`** — run `npm run db:migrate` after pulling.
-
-**Joining from search** uses **`POST /communities/:communityId/join`** (same service). Optional future work (invites, deep links) can live under `services/join/` without changing this path.
-
-| Method | Path | Service | Purpose |
-|--------|------|---------|---------|
-| `POST` | `/create-community` | create-community (3006) | Create a community (body: `{ "name": "..." }`) |
-| `GET` | `/communities` | communities (3002) | List communities the current user is in (each includes `role`: owner / admin / member) |
-| `POST` | `/communities/:communityId/join` | communities (3002) | Join a community |
-| `POST` | `/communities/:communityId/leave` | communities (3002) | Leave a community (removes membership) |
-| `GET` | `/search-communities?q=...` | communities (3002) | Search public communities by name |
-| `GET` | `/communities/:communityId/channels` | communities (3002) | List channels visible to caller (`is_private`, `joined`) |
-| `POST` | `/communities/:communityId/channels` | communities (3002) | Create channel — body `{ "name", "type?", "is_private?", "position?" }` (owner/admin) |
-| `PATCH` | `/communities/:communityId/channels/:channelId` | communities (3002) | Update `name` / `is_private` / `position` (owner/admin) |
-| `POST` | `/communities/:communityId/channels/:channelId/join` | communities (3002) | Join a **public** channel |
-| `POST` | `/communities/:communityId/channels/:channelId/leave` | communities (3002) | Leave channel (drops `channel_members`); admins cannot leave private channels they manage |
-| `GET` | `/communities/:communityId/channels/:channelId/members` | communities (3002) | List members with visibility for a **private** channel (owner/admin) |
-| `POST` | `/communities/:communityId/channels/:channelId/members` | communities (3002) | Add one **community member** to a **private** channel — body `{ "user_id" }` (owner/admin, no role-based bulk add) |
-| `DELETE` | `/communities/:communityId/channels/:channelId/members/:userId` | communities (3002) | Remove one member’s visibility access from a **private** channel (owner/admin; cannot remove yourself) |
-| `DELETE` | `/communities/:communityId/channels/:channelId` | communities (3002) | Delete channel (owner/admin; cannot delete the last channel in a guild) |
-| `GET` | `/communities/:communityId/members` | communities (3002) | Members with display names and roles |
-| `GET` | `/messages?channelId=&before=&limit=` | messages (3003) | List channel messages (session; must be in `channel_members`) |
-| `POST` | `/messages` | messages (3003) | Post message — body `{ "channelId", "content" }` (same ACL as GET) |
-
-The Vite dev server proxies `/create-community` to port **3006**, `/communities` and `/search-communities` to port **3002**, `/messages` to **3003** (see `frontend/vite.config.ts`).
-
-**Channels (DEV-28):** Implementation notes, API summary, and follow-up work are in [docs/DEV-28-Channels-scaffold-communities-service.md](./docs/DEV-28-Channels-scaffold-communities-service.md).
-
-### Start everything at once (recommended for full-stack local dev)
-
-Runs auth, all stub services, and the frontend together (uses [concurrently](https://www.npmjs.com/package/concurrently)):
+**Full local stack** (all services + frontend proxying to localhost):
 
 ```bash
 npm run dev:all
 ```
 
-## Available Scripts
+Open **http://localhost:5173**.
 
-| Command | Description |
-|---|---|
-| `npm run dev:all` | Start auth + stubs + frontend in parallel |
-| `npm run dev` | Start React frontend (port 5173) |
-| `npm run dev:auth` | Start authentication service (port 3001) |
-| `npm run dev:frontend` | Start React frontend (port 5173) |
-| `npm run dev:create-community` | Start create-community service (port 3006) |
-| `npm run dev:communities` | Start communities service (port 3002) |
-| `npm run dev:messages` | Start messages service — channel chat API (port 3003) |
-| `npm run dev:search` | Start search stub service (port 3004) |
-| `npm run dev:realtime` | Start realtime stub service (port 3005) |
-| `npm run dev:dms` | Start DM service (port 3007) |
-| `npm run db:generate` | Generate a new migration (auth service) |
-| `npm run db:migrate` | Apply pending migrations (auth service) |
+**Frontend only, APIs on staging** (default `npm run dev`):
 
-## Project Structure
+```bash
+npm run dev
+# same as: npm run dev:frontend:staging
+```
+
+Override API host:
+
+```bash
+VITE_API_ORIGIN=http://127.0.0.1 npm run dev:frontend
+```
+
+**Compose + full stack in one go:**
+
+```bash
+npm run dev:local
+```
+
+---
+
+## npm scripts
+
+| Script | Description |
+|--------|-------------|
+| `npm run dev` | Frontend → staging API (`VITE_API_ORIGIN` default) |
+| `npm run dev:all` | Auth, communities, messages, search, realtime, create-community, dms, read-state, frontend → **localhost** |
+| `npm run dev:local` | `docker compose up -d` then `dev:all` |
+| `npm run dev:auth` … `npm run dev:read-state` | Individual services |
+| `npm run dev:frontend` | Vite only (use with `VITE_API_ORIGIN`) |
+| `npm run db:migrate` / `npm run db:generate` | Drizzle migrations (auth workspace) |
+| `npm run build` | Auth + frontend production build |
+| `npm run k6:routes` | k6 smoke: health + `search-communities` (requires [k6](https://k6.io/docs/get-started/installation/)) |
+| `npm run k6:search-messages` | k6 authenticated message search (needs env; see `k6/search-messages-latency.js`) |
+| `npm run diagnostics:local` | Local diagnostics script |
+
+---
+
+## Communities & channels (quick reference)
+
+Create/join/list guilds and channels on **:3002**; create flow on **:3006**. Full route table lives in **[docs/DEV-28-Channels-scaffold-communities-service.md](./docs/DEV-28-Channels-scaffold-communities-service.md)**.
+
+---
+
+## Project layout
 
 ```
-docs/                 # Project documentation (see docs/README.md)
+docs/                 # All long-form docs + nginx examples
+k6/                   # Load / latency smoke tests
+ansible/              # Optional split-VM deploy playbook
 services/
-  auth/
-    src/
-    public/
-    drizzle/
-  create-community/
-  communities/
-  messages/
-  search/
-  realtime/
-  dms/
-frontend/
-  src/
+  auth/               # 3001
+  communities/      # 3002
+  messages/           # 3003
+  search/             # 3004
+  realtime/           # 3005
+  create-community/   # 3006
+  dms/                # 3007
+  read-state/         # 3008
+frontend/             # Vite 5173
 ```
+
+---
+
+## Environment
+
+- Copy **`.env.example`** → **`.env`** (or get a team `.env`).
+- Per-machine overrides: **`ENV_FILE=/path/to/.env.other`** when starting a service.
+- Staging template reference: **[docs/env.staging.example](./docs/env.staging.example)**.
+
+---
+
+## Git workflow
+
+Integration branch: **`main-dev`**. Default feature flow: work on **`nick`**, open PRs **`nick` → `main-dev`**. Details: **[docs/branching.md](./docs/branching.md)**.
+
+---
 
 ## Troubleshooting
 
-- **Redis connection errors** — Make sure Redis is running: `docker ps` or `redis-cli ping`
-- **Database migration fails** — Make sure Postgres is running and `auth_db` exists:
-  - Docker Compose: `docker exec discord-clone-postgres psql -U postgres -d auth_db -c "SELECT 1"`
-  - Docker run: `docker exec postgres-auth psql -U postgres -d auth_db -c "SELECT 1"`
-- **Database migration fails** — Make sure Postgres is running and `auth_db` exists:
-  - Docker Compose: `docker exec discord-clone-postgres psql -U postgres -d auth_db -c "SELECT 1"`
-  - Docker run: `docker exec postgres-auth psql -U postgres -d auth_db -c "SELECT 1"`
-- **`docker compose`: `5432: bind: address already in use`** — The compose file defaults to **5433** on the host for Postgres; if you still see this, you may have set `POSTGRES_PORT=5432` while something else uses 5432. Remove `POSTGRES_PORT` from `.env` or set `POSTGRES_PORT=5433`, and align `DATABASE_URL` with the host port.
-- **Port already in use (app)** — Change `PORT` in `.env` or kill the existing process (auth defaults to 3001)
+- **Redis** — `redis-cli ping` or check the compose service.
+- **Postgres / migrate** — ensure `auth_db` exists and `DATABASE_URL` / `DATABASE_URL_DIRECT` match compose ports (**5433** direct, **6432** PgBouncer when enabled).
+- **Port bind errors** — align `POSTGRES_PORT` / `DATABASE_URL` with nothing else bound on that host port.
+- **Cassandra** — messages and DMs expect Cassandra; if compose has Cassandra disabled, run Cassandra separately or uncomment the service in `docker-compose.yml`.
+- **App port in use** — change the relevant `*_PORT` in `.env` or free the port.
+
+---
+
+## License / course
+
+Private course project; see team agreement for reuse.

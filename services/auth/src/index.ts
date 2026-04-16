@@ -1,15 +1,17 @@
 /// <reference path="./types/express.d.ts" />
-import express from "express";
+import express, { Request, Response, NextFunction } from "express";
 import cookieParser from "cookie-parser";
 import path from "path";
 import { env } from "./config/env";
 import authRouter from "./routes/auth";
 import { requireAuth } from "./middleware/session";
+import { httpLogger, logRouteError, logger } from "./logger";
 
 const app = express();
 
 app.use(express.json());
 app.use(cookieParser());
+app.use(httpLogger);
 
 app.use("/auth/avatars", express.static(path.join(__dirname, "../uploads/avatars")));
 
@@ -41,6 +43,19 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "auth-service" });
 });
 
+app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+  if (res.headersSent) {
+    next(err);
+    return;
+  }
+  logRouteError("Unhandled auth service error", err, {
+    reqId: req.id,
+    method: req.method,
+    path: req.path,
+  });
+  res.status(500).json({ error: "Internal server error" });
+});
+
 app.listen(Number(env.PORT), () => {
-  console.log(`Auth service running on port ${env.PORT}`);
+  logger.info({ port: env.PORT }, "auth-service listening");
 });

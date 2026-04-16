@@ -1,3 +1,14 @@
+# =============================================================================
+# DEPRECATED — do not use for new deployments (retained for reference only).
+# Supported baselines:
+#   - Frontend VM: nginx-linode-production-frontend.conf.example
+#   - Backend VM:  nginx-linode-production-backend.conf.example
+# Guide: PROD-SPLIT-NGINX.md
+# Single-box staging: prefer backend config for API ingress + run the SPA
+# from Vite on your laptop, or merge `location` blocks from both canonical
+# examples into one `server` (keep the same path order as frontend/vite.config.ts).
+# =============================================================================
+#
 # Nginx — reverse proxy for full staging (matches frontend/vite.config.ts path order)
 #
 # Copy to /etc/nginx/sites-available/discord-staging, symlink sites-enabled,

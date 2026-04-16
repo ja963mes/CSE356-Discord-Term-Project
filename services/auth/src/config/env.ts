@@ -32,6 +32,9 @@ const envSchema = z.object({
   OIDC_CLIENT_ID: z.string().default("web-service"),
   OIDC_CLIENT_SECRET: z.string().default("web-service-secret"),
   OIDC_CALLBACK_URL: z.string().default("http://localhost:3001/auth/oidc/callback"),
+
+  LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).default("info"),
+  LOG_PRETTY: z.coerce.boolean().default(false),
 });
 
 export const env = envSchema.parse(process.env);

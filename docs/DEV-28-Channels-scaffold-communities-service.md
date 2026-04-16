@@ -11,7 +11,7 @@ Channel **metadata**, **public/private visibility**, and **`channel_members`** a
 
 ## Architecture decision
 
-- **Rationale:** `community_id` on `channels` is a data dependency, not a requirement for an extra process. Keeping channel APIs on **communities** reduces operational surface area while the messages and realtime layers are still stubs.
+- **Rationale:** `community_id` on `channels` is a data dependency, not a requirement for an extra process. Keeping channel APIs on **communities** reduces operational surface area; **messages** and **realtime** are separate services today (see root `README.md` / `IMPLEMENTATION.md`).
 - **Future:** A dedicated channels service can be split out later if scaling or ownership boundaries require it; [CLAUDE.md](./CLAUDE.md) §4 records product rules and remaining cross-cutting work.
 
 ---

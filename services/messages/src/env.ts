@@ -34,6 +34,9 @@ const envSchema = z.object({
   MINIO_BUCKET: z.string().default("discord-attachments"),
   /** Base URL for serving attachments. Override with nginx proxy URL in production. */
   ATTACHMENT_BASE_URL: z.string().default("http://localhost:9000/discord-attachments"),
+  /** Pino: trace | debug | info | warn | error | fatal */
+  LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).default("info"),
+  LOG_PRETTY: z.coerce.boolean().default(false),
 });
 
 export const env = envSchema.parse(process.env);

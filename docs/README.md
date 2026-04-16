@@ -1,21 +1,53 @@
-# Documentation index
+# Documentation
 
-Project documentation lives under **`docs/`** (except the root [`README.md`](../README.md), which is the main entry point for the repo).
-
-| Document | Description |
-|----------|-------------|
-| [`branching.md`](./branching.md) | Git: PRs from `nick` → `main-dev`; syncing after merge |
-| [`CLAUDE.md`](./CLAUDE.md) | Cursor / AI-oriented project guide: stack, monorepo layout, spec checklist, conventions, proxy map |
-| [`IMPLEMENTATION.md`](./IMPLEMENTATION.md) | What is implemented vs course expectations (auth, stubs, frontend) |
-| [`DEV-27-Direct-conversations-dm-service-setup.md`](./DEV-27-Direct-conversations-dm-service-setup.md) | DM service (Cassandra, port 3007), endpoints, local setup |
-| [`DEV-28-Channels-scaffold-communities-service.md`](./DEV-28-Channels-scaffold-communities-service.md) | Channels on communities service (migration 0006, APIs, follow-ups) |
-| [`sharding-and-replication.md`](./sharding-and-replication.md) | Cassandra/Postgres sharding notes; future **per-domain search** (splintered by microservice) |
-| [`STAGING-ROLLOUT.md`](./STAGING-ROLLOUT.md) | Staging runbook: full stack except search; systemd, nginx, migrations, smoke tests |
-| [`nginx-linode-staging.conf.example`](./nginx-linode-staging.conf.example) | Example Nginx reverse proxy (same path order as Vite; WebSocket `/ws`; comment `/search` if unused) |
-| [`nginx-linode-production-frontend.conf.example`](./nginx-linode-production-frontend.conf.example) | Production frontend VM: serves static `frontend/dist` and proxies all API/WS prefixes to backend VM nginx |
-| [`nginx-linode-production-backend.conf.example`](./nginx-linode-production-backend.conf.example) | Production backend VM: API/WS-only reverse proxy to local services (returns 404 for `/`) |
-| [`nginx-linode-services-only.conf.example`](./nginx-linode-services-only.conf.example) | Narrow services-only example for partial stacks (not full split-production baseline) |
+Everything below lives in **`docs/`** except the root **[README.md](../README.md)** (clone, scripts, architecture overview).
 
 ---
 
-The root [`CLAUDE.md`](../CLAUDE.md) file is a short pointer to [`docs/CLAUDE.md`](./CLAUDE.md) so tooling that expects a file at the repo root still resolves.
+## Start here
+
+| Document | Description |
+|----------|-------------|
+| **[IMPLEMENTATION.md](./IMPLEMENTATION.md)** | What is implemented vs typical expectations (services, data stores, nginx, tooling) |
+| **[CLAUDE.md](./CLAUDE.md)** | Editor / AI guide: stack, layout, proxy map, conventions, spec backlog |
+| **[branching.md](./branching.md)** | Git: `nick` → `main-dev`, staying up to date |
+
+---
+
+## Deploy & operations
+
+| Document | Description |
+|----------|-------------|
+| **[STAGING-ROLLOUT.md](./STAGING-ROLLOUT.md)** | Staging VM: services, systemd, nginx, migrations, smoke checks |
+| **[PROD-SPLIT-NGINX.md](./PROD-SPLIT-NGINX.md)** | **Production:** two-VM nginx — frontend (static + TLS) + backend (API + `/ws`) |
+| **[nginx-linode-production-frontend.conf.example](./nginx-linode-production-frontend.conf.example)** | **Supported** frontend VM site config |
+| **[nginx-linode-production-backend.conf.example](./nginx-linode-production-backend.conf.example)** | **Supported** backend VM site config |
+| **[ANSIBLE-SETUP.md](./ANSIBLE-SETUP.md)** | Ansible scaffold for split-VM deploy (`ansible/`) |
+
+**Deprecated (reference only — do not use for new installs):**  
+[nginx-linode-staging.conf.example](./nginx-linode-staging.conf.example), [nginx-linode-production.conf.example](./nginx-linode-production.conf.example), [nginx-linode-services-only.conf.example](./nginx-linode-services-only.conf.example) — superseded by the frontend + backend pair above ([§7 in PROD-SPLIT-NGINX](./PROD-SPLIT-NGINX.md)).
+
+---
+
+## Features & deep dives
+
+| Document | Description |
+|----------|-------------|
+| **[DEV-27-Direct-conversations-dm-service-setup.md](./DEV-27-Direct-conversations-dm-service-setup.md)** | DM service (`/dms`), Cassandra, port 3007 |
+| **[DEV-28-Channels-scaffold-communities-service.md](./DEV-28-Channels-scaffold-communities-service.md)** | Channels on communities service (migration 0006, APIs) |
+| **[sharding-and-replication.md](./sharding-and-replication.md)** | Cassandra message partitioning; future Postgres / search notes |
+
+---
+
+## Tooling in-repo
+
+| Path | Description |
+|------|-------------|
+| **[../k6/](../k6/)** | k6 latency smoke tests; `npm run k6:routes` / `npm run k6:search-messages` |
+| **[../ansible/README.md](../ansible/README.md)** | Ansible quick start |
+
+---
+
+## Root pointers
+
+- **[../CLAUDE.md](../CLAUDE.md)** — short link into **`docs/CLAUDE.md`** for tools that expect a repo-root file.
