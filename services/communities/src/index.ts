@@ -49,7 +49,7 @@ app.get("/health", (_req, res) => {
  */
 app.get("/search-communities", async (req, res) => {
   const qRaw = String(req.query.q ?? "");
-  const q = qRaw.trim();
+  const q = qRaw.trim().replace(/\s+/g, " ");
   const limitRaw = req.query.limit;
   const limit = Math.min(Number(limitRaw ?? 25) || 25, 100);
 

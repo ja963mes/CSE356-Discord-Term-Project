@@ -3,6 +3,7 @@ import { db } from "../db";
 import { communities, communityMembers } from "../db/schema";
 import { CommunityDirectoryRow, UserCommunityRow } from "./types";
 
+// ILIKE '%q%': pair with migration 0010 (pg_trgm GIN on communities.name).
 export async function searchByName(query: string, limit: number): Promise<CommunityDirectoryRow[]> {
   const pattern = `%${query}%`;
   return db
