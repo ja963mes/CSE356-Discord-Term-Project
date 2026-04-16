@@ -1,6 +1,8 @@
-# Production Nginx Setup (Split Frontend + Backend VMs)
+# Production nginx (split frontend + backend VMs)
 
-This guide is for a two-VM production topology:
+**Supported** nginx baselines for production (and the pattern staging should mirror when using two roles). Index of all docs: **[README.md](./README.md)**.
+
+This guide is for a **two-VM** topology:
 
 - **Frontend VM**: serves static `frontend/dist` and terminates TLS for the public domain.
 - **Backend VM**: runs Node services and nginx that proxies service paths to local ports.

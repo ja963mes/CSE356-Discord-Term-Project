@@ -1,6 +1,6 @@
 # Sharding and replication
 
-This document describes **how we partition data today** (Cassandra channel messages) and **design intent** for future PostgreSQL sharding when communities are spread across instances.
+Companion to **[IMPLEMENTATION.md](./IMPLEMENTATION.md)** (what exists today). This doc covers **how channel messages are partitioned in Cassandra** now and **design intent** for future PostgreSQL sharding when communities span multiple database instances.
 
 ## Channel messages (Cassandra) — implemented
 

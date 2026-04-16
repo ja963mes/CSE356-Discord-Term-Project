@@ -1,4 +1,6 @@
-# DEV-27 — Direct Conversations DM Service Setup
+# DEV-27 — Direct conversations (DM service)
+
+> **Port:** `3007` (`services/dms`). **Storage:** Cassandra for DM payloads; **Redis** for session auth on protected routes.
 
 ## Overview
 

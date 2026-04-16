@@ -1,19 +1,19 @@
-# Staging rollout runbook (full stack minus search)
+# Staging rollout runbook
 
-Use this runbook to deploy and validate the chat path in a staging environment before production.
+Use this runbook to deploy and validate the chat path on a **staging VM** before production.
 
 ## Scope
 
-Services to run on staging (Node processes):
+Typical Node processes on staging:
 - `auth` (3001) — session + identity
 - `communities` (3002) — guild/channels/ACL
 - `create-community` (3006)
 - `messages` (3003) — channel history in Cassandra + ACL checks
-- `realtime` (3005) — WebSocket fan-out/presence
+- `realtime` (3005) — WebSocket fan-out
 - `dms` (3007) — direct messages (Cassandra)
-- optional but recommended: static or proxied `frontend`
-
-**Intentionally omitted on staging:** **`search` (3004)**. The search stub is small, but **Elasticsearch** (see `docker-compose.yml`) is heavy on RAM/CPU; we do not run ES or `search-service` on the staging VM. The UI falls back when `/search` is unavailable. Nginx: comment out the `/search` `location` in [`nginx-linode-production-backend.conf.example`](./nginx-linode-production-backend.conf.example) (or your merged config) if nothing listens on `3004`.
+- `read-state` (3008) — read / unread (when you run the full stack)
+- **Optional:** `search` (3004) + **Elasticsearch** — often **skipped on small VMs** (RAM/CPU). If ES is not running, comment out the `/search` `location` in [`nginx-linode-production-backend.conf.example`](./nginx-linode-production-backend.conf.example); the UI may degrade search-only features.
+- **Optional but recommended:** static or proxied `frontend`
 
 Longer-term, full-text search is expected to **splinter per domain** (messages, DMs, directory, etc.) along microservice boundaries rather than one central search service—see [Search (today vs eventual splintering)](./sharding-and-replication.md#search-today-vs-eventual-splintering) in `docs/sharding-and-replication.md`.
 

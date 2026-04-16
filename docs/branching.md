@@ -1,16 +1,22 @@
 # Branch workflow
 
-- **Integration:** `main-dev` — this is the branch shared with teammates and the usual deploy/autograder target.
-- **Day-to-day work:** `nick` — **open PRs from `nick` → `main-dev`** (this is the default integration path).
+| Branch | Role |
+|--------|------|
+| **`main-dev`** | Shared integration; typical deploy / autograder target |
+| **`nick`** | Default long-lived dev branch — open PRs **`nick` → `main-dev`** |
 
-GitHub only builds a PR when `nick` is **ahead of** `main-dev` (at least one commit). If both branches point at the same commit, add your changes on `nick` and push, then open the PR.
+GitHub only shows a meaningful PR diff when your branch is **ahead of the base** (at least one commit). If `nick` and `main-dev` match, commit on `nick`, push, then open or update the PR.
 
-**Before you open or update a PR**, bring `main-dev` into `nick` so your branch includes the latest integration history and you resolve conflicts locally:
+### Before you open or update a PR
+
+Merge latest integration into your branch and fix conflicts locally:
 
 ```bash
 git fetch origin && git checkout nick && git merge origin/main-dev && git push origin nick
 ```
 
-After a PR is merged into `main-dev`, run the same merge (or repeat it) so `nick` stays current.
+After a merge to `main-dev`, repeat so `nick` stays current.
 
-Alternatively, use a short-lived branch from `main-dev` (e.g. `feat/…`) and PR that into `main-dev` instead.
+### Alternative
+
+Short-lived branches from `main-dev` (e.g. `feat/…`) with PRs into `main-dev` work the same way.

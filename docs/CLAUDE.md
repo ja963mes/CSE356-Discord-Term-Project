@@ -8,13 +8,14 @@ A cloud-hosted, real-time text messaging app (Discord clone) built as a microser
 ## Monorepo Structure
 ```
 services/
-  auth/             # Port 3001 - Auth (COMPLETE: local + OAuth Google/GitHub/OIDC)
+  auth/             # Port 3001 - Auth (local + OAuth Google/GitHub/OIDC)
   create-community/ # Port 3006 - Create community (100/user cap, seeds #general)
-  communities/    # Port 3002 - Guilds, directory search, channels (CRUD + ACLs on this service)
-  messages/         # Port 3003 - Channel messages (Cassandra history; Postgres ACL + session)
-  search/           # Port 3004 - Full-text search (stub)
-  realtime/         # Port 3005 - WebSocket (stub)
-  dms/              # Port 3007 - Direct messages service
+  communities/      # Port 3002 - Guilds, directory search, channels (CRUD + ACLs); Postgres DAOs under src/dao/
+  messages/         # Port 3003 - Channel messages (Cassandra history; Postgres ACL + session; MinIO presign)
+  search/           # Port 3004 - Message search (Elasticsearch + Postgres scope for membership)
+  realtime/         # Port 3005 - WebSocket /ws fan-out
+  dms/              # Port 3007 - Direct messages (Cassandra)
+  read-state/       # Port 3008 - Read receipts / unread (Postgres + Cassandra + Redis)
 frontend/           # Port 5173 - React Vite app
 ```
 
@@ -23,20 +24,24 @@ frontend/           # Port 5173 - React Vite app
 npm run dev:auth          # Start auth service
 npm run dev:communities   # Start communities service
 npm run dev:messages      # Start messages service
-npm run dev:search        # Start search service
+npm run dev:search        # Start search service (Elasticsearch for message search)
 npm run dev:realtime      # Start realtime service
+npm run dev:read-state    # Start read-state service
 npm run dev:frontend      # Start frontend
 npm run db:generate       # Generate Drizzle migrations
 npm run db:migrate        # Run migrations
 ```
 
 ## What's Already Done
-- **Auth service** (`services/auth/`): local login/register, OAuth (Google, GitHub, OIDC), Redis-backed sessions, Drizzle schema + migrations (shared DB)
-- **Create-community** (`services/create-community/`): enforce 100 communities/user, create row + owner membership + default `#general` channel
-- **Communities service** (`services/communities/`): list/join/leave, members, `GET /search-communities`, **channels** (`is_private`, `channel_members`, admin-only create/PATCH, join/leave, admin add-member for private)
-- **Frontend**: Discord-style UI, login, API clients with fallbacks
-- **Messages** (`services/messages/`): `GET/POST /messages` with Redis session + `channel_members` + `community_members` checks; persists channel body to **Cassandra** `messages_by_channel`
-- **Stub / partial**: search, realtime; **dms** service in progress
+- **Auth** (`services/auth/`): local login/register, OAuth (Google, GitHub, OIDC), Redis sessions, Drizzle + migrations (shared Postgres)
+- **Create-community** (`services/create-community/`): 100 communities/user cap, seeds `#general`, owner membership
+- **Communities** (`services/communities/`): list/join/leave, members, `GET /search-communities`, channels (public/private, `channel_members`, admin CRUD); **Postgres DAO layer** under `src/dao/`
+- **Messages** (`services/messages/`): `GET/POST /messages`, ACLs, Cassandra history, attachment presign (MinIO)
+- **Search** (`services/search/`): Elasticsearch-backed `GET /search/messages` with membership-scoped channel IDs
+- **Realtime** (`services/realtime/`): WebSocket `/ws` for delivery fan-out
+- **DMs** (`services/dms/`): DM REST API backed by Cassandra (see DEV-27)
+- **Read-state** (`services/read-state/`): read/unread service on :3008
+- **Frontend**: React UI, Vite proxy map aligned with services
 
 ## What Still Needs to Be Built (by spec section)
 
@@ -49,9 +54,8 @@ npm run db:migrate        # Run migrations
 - `offline`: no connections
 
 ### 3. Communities
-- CRUD: create (max 100 per user), join, leave communities
-- Membership list with presence info shown in UI
-- DB schema: `communities`, `community_members` tables
+- **Implemented:** create (100/user cap via create-community), join, leave, membership listing; Postgres `communities` / `community_members` (see migrations).
+- **Polish / product:** richer presence in member list, invites — see §2 and frontend backlog.
 
 ### 4. Channels (within communities) — requirements & status
 
@@ -92,19 +96,12 @@ Channel lifecycle and ACLs live on the **communities service (3002)** — no sep
 - Edit & delete own messages (real-time propagation)
 
 ### 7. Search
-- Full-text search scoped to a community or a single DM conversation
-- Community search: include public channels + private channels user has access to
-- Filters: author, time range
-- Results: newest-first, include content/author/timestamp/jump-to-context info
-- Must reflect edits and deletions in near-real-time
-- Consider Elasticsearch or PostgreSQL `tsvector`
+- **Implemented (messages):** Elasticsearch + `search` service; community and DM scopes with filters (see service routes).
+- **Ongoing / product:** directory search remains `GET /search-communities` on communities; near-real-time index freshness tied to indexer/subscriber behavior.
 
 ### 8. Read State
-- Per-user, per-channel/DM (not per-device)
-- Mark channel/DM as unread when new message arrives after user's read position
-- Direct conversations: show read receipts (who has read)
-- Channels: only show unread/read badge (no individual positions exposed)
-- DB schema: `read_state` table (user_id, context_id, last_read_message_id)
+- **Service:** `read-state` on :3008 (see repo for current storage mix: Cassandra / Postgres as implemented).
+- **Spec gaps:** per-device vs global semantics, full read-receipt UX for all surfaces — align with course spec as needed.
 
 ## Key Architecture Decisions
 - **Sessions**: Opaque UUID tokens in Redis (`session:<token>` → `internal_id`), cookie `session_token`
@@ -112,7 +109,7 @@ Channel lifecycle and ACLs live on the **communities service (3002)** — no sep
 - **OAuth state**: Redis `oauth_state:<state>` (10 min TTL), temp profile `oauth_temp:<token>`
 - **DB tables**: `users` (internal_id UUID PK, username, email, password_hash, profile JSONB), `identities` (provider + provider_uid unique)
 - **Channels vs communities**: Shared Postgres; **channel CRUD + ACLs on communities (3002)** (see §4). **Messages service (3003)** enforces `channel_members` + `community_members` and stores message rows in **Cassandra** (partition `channel_id`).
-- **WebSocket**: The `realtime` service needs to become a real WebSocket server (single persistent connection per client)
+- **WebSocket**: Single connection per client to `realtime` on `/ws` (proxied from Vite); see service for protocol/events
 - **`jsonwebtoken`** is installed but unused — sessions are Redis-backed UUIDs, keep it that way
 
 ## Course OAuth Provider
@@ -122,8 +119,8 @@ Channel lifecycle and ACLs live on the **communities service (3002)** — no sep
 - Realm: `oauth`
 
 ## Known Issues / Tech Debt
-- `services/auth/src/index.ts` has duplicate `GET /` handlers — first one (requireAuth) wins, unauthenticated users get 401 JSON instead of redirect
-- Stub services return hardcoded data; frontend falls back to sample data if services are down
+- `services/auth/src/index.ts` has duplicate `GET /` handlers — first one (`requireAuth`) wins; unauthenticated users may get 401 JSON instead of redirect
+- Frontend may still degrade gracefully when optional services are down (staging without ES, etc.)
 - `passport` is installed but not actively used (sessions bypass it)
 - Nginx: use **`docs/nginx-linode-production-frontend.conf.example`** + **`docs/nginx-linode-production-backend.conf.example`** only; older single-file examples in `docs/` are **deprecated** (see `docs/README.md`, `docs/PROD-SPLIT-NGINX.md`)
 - RabbitMQ not yet integrated (needed for inter-service events)
@@ -140,6 +137,7 @@ Channel lifecycle and ACLs live on the **communities service (3002)** — no sep
 /search             → localhost:3004
 /ws                 → localhost:3005 (WebSocket)
 /dms                → localhost:3007
+/read-state         → localhost:3008
 ```
 
 ## Coding Conventions
