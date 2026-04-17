@@ -1,0 +1,25 @@
+repo_url: "https://github.com/ja963mes/CSE356-Discord-Term-Project.git"
+deploy_branch: "main-dev"
+deploy_user: "deploy"
+deploy_path: "/home/deploy/CSE356-Discord-Term-Project"
+
+# Set this only if you want Ansible to manage deploy SSH keys.
+# deploy_public_key: "ssh-ed25519 AAAA... your-key-comment"
+
+frontend_web_root: "/var/www/discord-frontend"
+
+# Path is relative to repo root when running ansible-playbook from ./ansible.
+frontend_nginx_conf_src: "../docs/nginx/production-frontend.conf.example"
+backend_nginx_conf_src: "../docs/nginx/production-backend.conf.example"
+
+# Order: search (Elasticsearch) before communities — GET /search-communities proxies to search.
+backend_systemd_services:
+  - discord-auth
+  - discord-search
+  - discord-communities
+  - discord-create-community
+  - discord-messages
+  - discord-realtime
+  - discord-realtime-2
+  - discord-dms
+  - discord-read-state
