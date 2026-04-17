@@ -12,10 +12,9 @@ frontend_web_root: "/var/www/discord-frontend"
 frontend_nginx_conf_src: "../docs/nginx/production-frontend.conf.example"
 backend_nginx_conf_src: "../docs/nginx/production-backend.conf.example"
 
-# Order: search (Elasticsearch) before communities — GET /search-communities proxies to search.
+# Backend app services hosted on backend VM.
 backend_systemd_services:
   - discord-auth
-  - discord-search
   - discord-communities
   - discord-create-community
   - discord-messages
@@ -23,3 +22,19 @@ backend_systemd_services:
   - discord-realtime-2
   - discord-dms
   - discord-read-state
+
+# Workspaces built on backend VM.
+backend_workspace_build_commands:
+  - npm run build --workspace auth-service
+  - npm run build --workspace communities-service
+  - npm run build --workspace create-community-service
+  - npm run build --workspace messages-service
+  - npm run build --workspace realtime-service
+  - npm run build --workspace dms-service
+  - npm run build --workspace read-state-service
+
+# Search VM service(s) and workspace build list.
+search_systemd_services:
+  - discord-search
+search_workspace_build_commands:
+  - npm run build --workspace search-service

@@ -18,15 +18,7 @@
   args:
     chdir: "{{ deploy_path }}"
   become_user: "{{ deploy_user }}"
-  loop:
-    - npm run build --workspace auth-service
-    - npm run build --workspace search-service
-    - npm run build --workspace communities-service
-    - npm run build --workspace create-community-service
-    - npm run build --workspace messages-service
-    - npm run build --workspace realtime-service
-    - npm run build --workspace dms-service
-    - npm run build --workspace read-state-service
+  loop: "{{ backend_workspace_build_commands }}"
 
 - name: Install backend nginx config
   ansible.builtin.copy:
