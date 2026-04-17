@@ -16,7 +16,7 @@
     update_cache: true
   register: apt_status
   until: apt_status is success
-  retries: 5
+  retries: 30
   delay: 10
 
 - name: Ensure deploy user exists
