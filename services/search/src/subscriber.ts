@@ -3,6 +3,7 @@ import { env } from "./env";
 import { redis as redisCommand } from "./redis";
 import { indexMessage, updateContent, markDeleted, deleteByScope } from "./elasticsearch";
 import { deleteCommunityDirectory, indexCommunityDirectory } from "./communitiesIndex";
+import { logger } from "./logger";
 
 /** Must match `services/communities/src/readCache.ts` — invalidates GET /search-communities Redis cache. */
 const COMMUNITIES_DIRECTORY_EPOCH_KEY = "comm:e:dir";
@@ -11,17 +12,18 @@ async function bumpCommunitiesDirectorySearchEpoch(): Promise<void> {
   try {
     await redisCommand.incr(COMMUNITIES_DIRECTORY_EPOCH_KEY);
   } catch (e) {
-    console.error("[search] bump directory search epoch failed", e);
+    logger.warn({ err: e }, "bump directory search epoch failed");
   }
 }
 import { db } from "./db";
 import { users, channels } from "./db/schema";
 import { eq } from "drizzle-orm";
 
-const sub = new Redis(env.REDIS_URL, { enableReadyCheck: false});
+const sub = new Redis(env.REDIS_URL, { enableReadyCheck: false });
 
-sub.on("connect", () => console.log("[search] Redis subscriber connected"));
-sub.on("error", (err) => console.error("[search] Redis subscriber error:", err));
+sub.on("connect", () => logger.info("redis subscriber connected"));
+sub.on("reconnecting", () => logger.warn("redis subscriber reconnecting"));
+sub.on("error", (err) => logger.error({ err }, "redis subscriber error"));
 
 // Simple in-memory cache for username lookups
 const usernameCache = new Map<string, { username: string; ts: number }>();
@@ -166,7 +168,7 @@ function onMessage(channel: string, message: string): void {
   try {
     data = JSON.parse(message);
   } catch {
-    console.error("[search] Failed to parse event from", channel);
+    logger.warn({ channel }, "failed to parse pubsub event");
     return;
   }
 
@@ -186,12 +188,12 @@ function onMessage(channel: string, message: string): void {
   }
 
   promise.catch((err) => {
-    console.error("[search] Error handling event", data?.type, err);
+    logger.error({ err, channel, eventType: data?.type }, "error handling pubsub event");
   });
 }
 
 export async function startSubscriber(): Promise<void> {
   await sub.subscribe("channel:events", "dm:events", "community:events");
   sub.on("message", onMessage);
-  console.log("[search] Subscribed to channel:events, dm:events, community:events");
+  logger.info({ channels: ["channel:events", "dm:events", "community:events"] }, "subscribed to pubsub channels");
 }

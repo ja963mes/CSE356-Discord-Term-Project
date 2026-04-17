@@ -11,6 +11,9 @@ const envSchema = z.object({
   SEARCH_PORT: z.string().default("3004"),
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string(),
+  /** Pino: trace | debug | info | warn | error | fatal */
+  LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).default("info"),
+  LOG_PRETTY: z.coerce.boolean().default(false),
   ELASTICSEARCH_URL: z.string().default("http://localhost:9200"),
   ES_INDEX_NAME: z.string().default("messages"),
   /** Elasticsearch index for public community directory search (`/directory/communities`). */
