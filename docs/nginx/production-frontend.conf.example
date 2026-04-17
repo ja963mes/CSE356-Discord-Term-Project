@@ -1,13 +1,13 @@
 # Nginx — production frontend VM (static SPA + proxy to backend VM nginx)
 #
 # Use this on the frontend VM that serves frontend/dist and receives public traffic.
-# All API and WebSocket routes are proxied to backend VM nginx (:80), not directly
-# to backend Node service ports.
+# Most API and WebSocket routes are proxied to backend VM nginx (:80). Search routes
+# are proxied to search_api. Not directly to backend Node service ports.
 #
 # Example hosts:
 #   Frontend VM (this host): 130.245.136.115 (Public IP)
 #   Backend VM nginx:         10.0.2.247:80 (Private IP)
-#   Search ingress nginx:     10.0.2.26:80   (Private IP, optional dedicated search host)
+#   Search ingress nginx:     10.0.2.26:3004 (Private IP, optional dedicated search host)
 #   Public domain:            group-6.cse356.compas.cs.stonybrook.edu
 #
 # Deploy static build:
@@ -28,7 +28,7 @@ upstream backend_api {
 }
 upstream search_api {
     # Point to dedicated search ingress/LB. Keep this path-level split to scale search independently.
-    server 10.0.2.26:80;
+    server 10.0.2.26:3004;
     keepalive 32;
 }
 
@@ -47,6 +47,19 @@ server {
 
     # Proxy API prefixes even when Host header is missing/incorrect.
     # (Regex keeps the config short while matching the same prefix set.)
+    location ^~ /search-communities {
+        proxy_pass http://search_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
     location ^~ /search {
         proxy_pass http://search_api;
         proxy_http_version 1.1;
@@ -60,7 +73,7 @@ server {
         proxy_send_timeout 30s;
     }
 
-    location ~ ^/(auth|create-community|communities|channels|messages|attachments|search-communities|dms|read-state)(/|$) {
+    location ~ ^/(auth|create-community|communities|channels|messages|attachments|dms|read-state)(/|$) {
         proxy_pass http://backend_api;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -182,7 +195,7 @@ server {
     }
 
     location ^~ /search-communities {
-        proxy_pass http://backend_api;
+        proxy_pass http://search_api;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
         proxy_set_header Host $host;
