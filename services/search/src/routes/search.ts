@@ -51,23 +51,30 @@ router.get("/search/messages", requireAuth, async (req: Request, res: Response) 
     }
 
     if (communityId) {
-      // Scoped to a specific community — verify membership
-      const [membership] = await db
-        .select({ user_id: communityMembers.user_id })
-        .from(communityMembers)
-        .where(and(eq(communityMembers.community_id, communityId), eq(communityMembers.user_id, userId)))
-        .limit(1);
-
-      if (!membership) {
-        res.status(403).json({ error: "You are not a member of this community" });
-        return;
-      }
-
+      // Single query: get channels the user is a member of within this community.
+      // If the result is empty the user is either not in the community or has no channels — both are safe to treat as 403.
       const userChannels = await db
         .select({ channel_id: channelMembers.channel_id })
         .from(channelMembers)
         .innerJoin(channels, eq(channels.id, channelMembers.channel_id))
+        .innerJoin(communityMembers, and(eq(communityMembers.community_id, communityId), eq(communityMembers.user_id, userId)))
         .where(and(eq(channels.community_id, communityId), eq(channelMembers.user_id, userId)));
+
+      if (userChannels.length === 0) {
+        // Distinguish "not a member" from "member but no channels" by checking membership alone
+        const [membership] = await db
+          .select({ user_id: communityMembers.user_id })
+          .from(communityMembers)
+          .where(and(eq(communityMembers.community_id, communityId), eq(communityMembers.user_id, userId)))
+          .limit(1);
+        if (!membership) {
+          res.status(403).json({ error: "You are not a member of this community" });
+          return;
+        }
+        // Member but no accessible channels
+        res.json({ query: q, total: 0, results: [] });
+        return;
+      }
 
       scopeIds = userChannels.map((r) => r.channel_id);
     } else {
