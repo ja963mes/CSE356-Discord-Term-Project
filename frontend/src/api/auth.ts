@@ -149,7 +149,8 @@ export function normalizeDmUsersPayload(raw: unknown): DmUser[] {
 
 // TODO: replace with real DM participants once Direct Conversations service is built
 export async function getDmUsers(): Promise<DmUser[]> {
-  const res = await fetch("/auth/dm-users", { credentials: "include" });
+  // Avoid fetching the entire user table; backend supports limit/q.
+  const res = await fetch("/auth/dm-users?limit=200", { credentials: "include" });
   if (!res.ok) return [];
   let body: unknown;
   try {
