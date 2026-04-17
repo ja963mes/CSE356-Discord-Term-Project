@@ -11,6 +11,8 @@ if (process.env.ENV_FILE) {
 const envSchema = z.object({
   COMMUNITIES_PORT: z.string().default("3002"),
   DATABASE_URL: z.string().url(),
+  /** Base URL for search-service (Elasticsearch-backed directory). */
+  SEARCH_SERVICE_URL: z.string().url().default("http://127.0.0.1:3004"),
   REDIS_URL: z.string(),
   /** Pino log level: trace | debug | info | warn | error | fatal */
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).default("info"),

@@ -1,6 +1,19 @@
 import Redis from "ioredis";
 import { env } from "./env";
+import { redis as redisCommand } from "./redis";
 import { indexMessage, updateContent, markDeleted, deleteByScope } from "./elasticsearch";
+import { deleteCommunityDirectory, indexCommunityDirectory } from "./communitiesIndex";
+
+/** Must match `services/communities/src/readCache.ts` — invalidates GET /search-communities Redis cache. */
+const COMMUNITIES_DIRECTORY_EPOCH_KEY = "comm:e:dir";
+
+async function bumpCommunitiesDirectorySearchEpoch(): Promise<void> {
+  try {
+    await redisCommand.incr(COMMUNITIES_DIRECTORY_EPOCH_KEY);
+  } catch (e) {
+    console.error("[search] bump directory search epoch failed", e);
+  }
+}
 import { db } from "./db";
 import { users, channels } from "./db/schema";
 import { eq } from "drizzle-orm";
@@ -127,8 +140,24 @@ async function handleDmEvent(data: any): Promise<void> {
 }
 
 async function handleCommunityEvent(data: any): Promise<void> {
-  if (data.type === "community:channel:delete") {
-    await deleteByScope(data.channelId);
+  switch (data.type) {
+    case "community:channel:delete":
+      await deleteByScope(data.channelId);
+      break;
+    case "community:directory:upsert":
+      await indexCommunityDirectory({
+        community_id: data.communityId,
+        name: data.name,
+        created_at: data.created_at,
+      });
+      await bumpCommunitiesDirectorySearchEpoch();
+      break;
+    case "community:directory:delete":
+      await deleteCommunityDirectory(data.communityId);
+      await bumpCommunitiesDirectorySearchEpoch();
+      break;
+    default:
+      break;
   }
 }
 

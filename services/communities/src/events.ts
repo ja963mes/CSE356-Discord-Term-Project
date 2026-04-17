@@ -54,6 +54,16 @@ export type CommunityEvent =
       channelId: string;
       /** User who lost channel access. */
       userId: string;
+    }
+  | {
+      type: "community:directory:upsert";
+      communityId: string;
+      name: string;
+      created_at: string;
+    }
+  | {
+      type: "community:directory:delete";
+      communityId: string;
     };
 
 export async function publishCommunityEvent(event: CommunityEvent): Promise<void> {
