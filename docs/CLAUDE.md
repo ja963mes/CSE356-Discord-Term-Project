@@ -35,9 +35,9 @@ npm run db:migrate        # Run migrations
 ## What's Already Done
 - **Auth** (`services/auth/`): local login/register, OAuth (Google, GitHub, OIDC), Redis sessions, Drizzle + migrations (shared Postgres)
 - **Create-community** (`services/create-community/`): 100 communities/user cap, seeds `#general`, owner membership
-- **Communities** (`services/communities/`): list/join/leave, members, `GET /search-communities`, channels (public/private, `channel_members`, admin CRUD); **Postgres DAO layer** under `src/dao/`
+- **Communities** (`services/communities/`): list/join/leave, members, `GET /search-communities` (proxies to **search-service** / Elasticsearch), channels (public/private, `channel_members`, admin CRUD); **Postgres DAO layer** under `src/dao/`
 - **Messages** (`services/messages/`): `GET/POST /messages`, ACLs, Cassandra history, attachment presign (MinIO)
-- **Search** (`services/search/`): Elasticsearch-backed `GET /search/messages` with membership-scoped channel IDs
+- **Search** (`services/search/`): Elasticsearch-backed `GET /search/messages` and **`GET /directory/communities`** (directory index synced from Postgres + Redis events)
 - **Realtime** (`services/realtime/`): WebSocket `/ws` for delivery fan-out
 - **DMs** (`services/dms/`): DM REST API backed by Cassandra (see DEV-27)
 - **Read-state** (`services/read-state/`): read/unread service on :3008
@@ -96,8 +96,8 @@ Channel lifecycle and ACLs live on the **communities service (3002)** — no sep
 - Edit & delete own messages (real-time propagation)
 
 ### 7. Search
-- **Implemented (messages):** Elasticsearch + `search` service; community and DM scopes with filters (see service routes).
-- **Ongoing / product:** directory search remains `GET /search-communities` on communities; near-real-time index freshness tied to indexer/subscriber behavior.
+- **Implemented:** Elasticsearch + `search` service for **`GET /search/messages`** (scopes, filters) and **`GET /directory/communities`** (public guild names). **`GET /search-communities`** on communities is a **BFF** (Redis cache + HTTP to search).
+- **Ongoing / product:** index freshness tied to subscriber + startup reindex; rename/delete flows may need extra ES events if added later.
 
 ### 8. Read State
 - **Service:** `read-state` on :3008 (see repo for current storage mix: Cassandra / Postgres as implemented).

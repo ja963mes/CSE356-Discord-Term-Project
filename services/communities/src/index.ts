@@ -45,7 +45,7 @@ app.get("/health", (_req, res) => {
 });
 
 /**
- * Public directory search: all communities matching name (no membership filter).
+ * Public directory search (no membership filter): Redis cache + **search-service** / Elasticsearch.
  * Query: q (required for results), limit (optional, default 25, max 100).
  */
 app.get("/search-communities", async (req, res) => {

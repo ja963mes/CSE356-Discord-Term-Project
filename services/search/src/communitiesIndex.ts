@@ -1,3 +1,8 @@
+/**
+ * Community directory reads: Elasticsearch only (`searchCommunitiesDirectory`).
+ * Postgres is used only to **reindex** into ES (`reindexAllCommunitiesFromPostgres`) and for
+ * create/update events — not for live search queries.
+ */
 import { esClient } from "./elasticsearch";
 import { env } from "./env";
 import { db } from "./db";

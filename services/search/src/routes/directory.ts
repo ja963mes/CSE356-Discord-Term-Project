@@ -4,7 +4,8 @@ import { searchCommunitiesDirectory } from "../communitiesIndex";
 const router = Router();
 
 /**
- * Public community name search (same semantics as former GET /search-communities on communities-service).
+ * Public community name search (Elasticsearch `wildcard` on indexed names; Postgres is not queried here).
+ * Same JSON shape as `GET /search-communities` on communities-service (proxy + cache there).
  * Query: q, limit (default 25, max 100).
  */
 router.get("/directory/communities", async (req: Request, res: Response) => {

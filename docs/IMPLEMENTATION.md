@@ -9,10 +9,10 @@ What this repository implements today versus typical course expectations (multi-
 | Area | Status |
 |------|--------|
 | **Auth** | Local + OAuth (Google, GitHub, OIDC); Redis sessions; Postgres users/identities |
-| **Communities & channels** | Postgres + Drizzle; CRUD, ACLs, directory search `GET /search-communities`; DAO layer for Postgres access |
+| **Communities & channels** | Postgres + Drizzle; CRUD, ACLs; `GET /search-communities` proxies to **search** (ES); DAO layer for Postgres |
 | **Channel messages** | Cassandra history; Postgres ACL; MinIO presign for attachments |
 | **DMs** | Dedicated service; Cassandra; REST under `/dms` |
-| **Search (messages)** | Elasticsearch + search microservice; `GET /search/messages` (session-scoped) |
+| **Search** | Elasticsearch + search microservice: `GET /search/messages` (session-scoped), `GET /directory/communities` (directory; Postgres → ES reindex + events) |
 | **Realtime** | WebSocket `/ws` on `realtime` service; fan-out to clients |
 | **Read state** | Service on **:3008**; Postgres (Drizzle) + Cassandra + Redis as implemented in `services/read-state/` |
 | **Frontend** | React 18 + Vite + Tailwind; proxies in `frontend/vite.config.ts` |
@@ -30,7 +30,7 @@ What this repository implements today versus typical course expectations (multi-
 | **Redis** | Sessions, OAuth state, ephemeral OAuth payloads; used by services for `requireAuth` patterns. |
 | **PostgreSQL** | Shared app DB (migrations under `services/auth/drizzle/`): users, identities, communities, channels, memberships, etc., per actual schema. |
 | **Cassandra** | Channel message timeline, DM storage, read-state paths (see per-service `env` and docs). **Note:** `docker-compose.yml` in this repo may ship Cassandra **commented out**; local full stack often expects Cassandra on **9042** (install separately or enable the compose service). |
-| **Elasticsearch** | Used by **search** service when `ELASTICSEARCH_URL` is set; compose includes an ES service for local/dev. |
+| **Elasticsearch** | **search** service: message search + community directory index; compose includes ES for local/dev. |
 | **MinIO** | S3-compatible attachments; compose service; messages service presign flow. |
 | **WebSockets** | Client uses `/ws` (proxied to realtime service). |
 | **RabbitMQ / K8s** | Not wired; design notes only (below). |
@@ -42,9 +42,9 @@ What this repository implements today versus typical course expectations (multi-
 | Port | Workspace / folder | Role |
 |------|-------------------|------|
 | **3001** | `services/auth` | Auth, OAuth, static login assets, `/health` |
-| **3002** | `services/communities` | Guilds, channels, members, `/search-communities` |
+| **3002** | `services/communities` | Guilds, channels, members; `/search-communities` → search (ES) |
 | **3003** | `services/messages` | Channel messages, `/attachments` presign |
-| **3004** | `services/search` | Message search (ES), `/health` pings ES |
+| **3004** | `services/search` | Message + directory search (ES), `/health` pings ES |
 | **3005** | `services/realtime` | WebSocket server |
 | **3006** | `services/create-community` | Create guild + seed `#general` |
 | **3007** | `services/dms` | Direct messages API |
