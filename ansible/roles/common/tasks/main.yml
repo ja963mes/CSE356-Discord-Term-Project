@@ -1,3 +1,8 @@
+- name: Setup NodeSource repository for Node.js 22
+  ansible.builtin.shell: curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  args:
+    creates: /etc/apt/sources.list.d/nodesource.list
+
 - name: Install base packages
   ansible.builtin.apt:
     name:
@@ -5,6 +10,7 @@
       - rsync
       - curl
       - ca-certificates
+      - nodejs
     state: present
     update_cache: true
   register: apt_status
