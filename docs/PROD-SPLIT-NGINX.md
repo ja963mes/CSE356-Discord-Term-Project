@@ -11,7 +11,8 @@ This guide is for a **two-VM** topology:
 Example hosts:
 
 - Frontend VM: `130.245.136.115`
-- Backend VM: `130.245.136.45`
+- Backend VM: `130.245.136.45` (Private IP: `10.0.2.247`)
+- Search VM: `130.245.136.135` (Private IP: `10.0.2.26`)
 - Public domain: `group-6.cse356.compas.cs.stonybrook.edu`
 
 ---
@@ -22,7 +23,7 @@ Client traffic should go to the frontend VM only:
 
 1. Browser hits `https://group-6.cse356.compas.cs.stonybrook.edu` -> frontend VM nginx.
 2. Frontend VM serves static SPA from `/var/www/discord-frontend`.
-3. API and WS routes are proxied by frontend VM nginx to backend VM nginx (`http://130.245.136.45:80`).
+3. API and WS routes are proxied by frontend VM nginx to backend VM nginx over private network (`http://10.0.2.247:80`).
 4. Backend VM nginx proxies to local Node services (`127.0.0.1:3001..3003,3005..3008`).
 5. Optional: frontend `/search` can target dedicated search ingress instead of backend nginx.
 
@@ -69,7 +70,7 @@ ls -la /var/www/discord-frontend/index.html
 - Must serve static SPA:
   - `root /var/www/discord-frontend;`
   - `location / { try_files ... @spa; }`
-- Must proxy these prefixes to backend VM nginx (`http://130.245.136.45:80`):
+- Must proxy these prefixes to backend VM nginx over private network (`http://10.0.2.247:80`):
   - `/auth`
   - `/create-community`
   - `/communities`
@@ -88,7 +89,7 @@ Use a single upstream for consistency:
 
 ```nginx
 upstream backend_api {
-    server 130.245.136.45:80;
+    server 10.0.2.247:80;
     keepalive 64;
 }
 ```

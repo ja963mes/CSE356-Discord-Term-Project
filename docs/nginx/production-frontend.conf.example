@@ -5,9 +5,9 @@
 # to backend Node service ports.
 #
 # Example hosts:
-#   Frontend VM (this host): 130.245.136.115
-#   Backend VM nginx:         130.245.136.45:80
-#   Search ingress nginx:     130.245.136.46:80   (optional dedicated search host)
+#   Frontend VM (this host): 130.245.136.115 (Public IP)
+#   Backend VM nginx:         10.0.2.247:80 (Private IP)
+#   Search ingress nginx:     10.0.2.26:80   (Private IP, optional dedicated search host)
 #   Public domain:            group-6.cse356.compas.cs.stonybrook.edu
 #
 # Deploy static build:
@@ -23,12 +23,12 @@ map $http_upgrade $connection_upgrade {
 }
 
 upstream backend_api {
-    server 130.245.136.45:80;
+    server 10.0.2.247:80;
     keepalive 64;
 }
 upstream search_api {
     # Point to dedicated search ingress/LB. Keep this path-level split to scale search independently.
-    server 130.245.136.46:80;
+    server 10.0.2.26:80;
     keepalive 32;
 }
 

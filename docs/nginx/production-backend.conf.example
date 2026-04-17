@@ -65,7 +65,7 @@ limit_req_zone $auth_bcrypt_global_key zone=auth_bcrypt_global:1m rate=100r/s;
 
 server {
     listen 80;
-    server_name 130.245.136.45;
+    server_name 10.0.2.247;
 
     client_max_body_size 25m;
 
