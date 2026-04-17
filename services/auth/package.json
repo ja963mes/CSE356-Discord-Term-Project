@@ -9,6 +9,7 @@
     "start": "node dist/index.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "ts-node src/scripts/migrate.ts",
+    "db:migrate:stamp": "ts-node src/scripts/stamp-migrations.ts",
     "db:migrate:kit": "drizzle-kit migrate"
   },
   "dependencies": {
