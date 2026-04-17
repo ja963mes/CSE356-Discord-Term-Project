@@ -10,6 +10,8 @@ import { httpLogger, logRouteError, logger } from "./logger";
 const app = express();
 
 app.use(express.json());
+// Accept form-encoded posts too (some clients/proxies omit JSON Content-Type).
+app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 app.use(httpLogger);
 

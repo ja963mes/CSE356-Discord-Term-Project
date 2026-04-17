@@ -123,9 +123,12 @@ async function handleOAuthLink(
 
 // POST /auth/register
 router.post("/register", async (req: Request, res: Response): Promise<void> => {
-  const { username, password, displayName } = req.body;
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const username = body.username;
+  const password = body.password;
+  const displayName = body.displayName;
 
-  if (!username || !password) {
+  if (typeof username !== "string" || typeof password !== "string" || !username || !password) {
     res.status(400).json({ error: "Username and password are required" });
     return;
   }
@@ -150,7 +153,7 @@ router.post("/register", async (req: Request, res: Response): Promise<void> => {
       .values({
         username,
         password_hash: hash,
-        profile: { displayName: displayName || username, avatar: null },
+        profile: { displayName: typeof displayName === "string" && displayName ? displayName : username, avatar: null },
       })
       .returning();
 
@@ -170,9 +173,11 @@ router.post("/register", async (req: Request, res: Response): Promise<void> => {
 
 // POST /auth/login
 router.post("/login", async (req: Request, res: Response): Promise<void> => {
-  const { username, password } = req.body;
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const username = body.username;
+  const password = body.password;
 
-  if (!username || !password) {
+  if (typeof username !== "string" || typeof password !== "string" || !username || !password) {
     res.status(400).json({ error: "Username and password are required" });
     return;
   }
@@ -468,9 +473,20 @@ router.get("/oidc/callback", async (req: Request, res: Response): Promise<void> 
 // ════════════════════════════════════════════
 
 router.post("/oauth/complete", async (req: Request, res: Response): Promise<void> => {
-  const { temp_token, action, username, password } = req.body;
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const temp_token = body.temp_token;
+  const action = body.action;
+  const username = body.username;
+  const password = body.password;
 
-  if (!temp_token || !action || !username) {
+  if (
+    typeof temp_token !== "string" ||
+    typeof action !== "string" ||
+    typeof username !== "string" ||
+    !temp_token ||
+    !action ||
+    !username
+  ) {
     res.status(400).json({ error: "temp_token, action, and username are required" });
     return;
   }
@@ -498,7 +514,7 @@ router.post("/oauth/complete", async (req: Request, res: Response): Promise<void
       }
 
       // Use 1 round for bcrypt hashing (for testing/benchmarking only)
-      const hash = password ? await bcrypt.hash(password, 1) : null;
+      const hash = typeof password === "string" && password ? await bcrypt.hash(password, 1) : null;
 
       const [newUser] = await db
         .insert(users)
@@ -506,7 +522,7 @@ router.post("/oauth/complete", async (req: Request, res: Response): Promise<void
           username,
           email: email || null,
           password_hash: hash,
-          profile: { displayName: displayName || username, avatar: null },
+          profile: { displayName: typeof displayName === "string" && displayName ? displayName : username, avatar: null },
         })
         .returning();
 
@@ -522,7 +538,7 @@ router.post("/oauth/complete", async (req: Request, res: Response): Promise<void
 
     } else if (action === "link") {
       // ── Link OAuth identity to an existing account ──
-      if (!password) {
+      if (typeof password !== "string" || !password) {
         res.status(400).json({ error: "Password required to link to existing account" });
         return;
       }
