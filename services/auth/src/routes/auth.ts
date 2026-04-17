@@ -8,7 +8,7 @@ import multer from "multer";
 import { db } from "../db";
 import { users, identities } from "../db/schema";
 import { redis } from "../db/redis";
-import { eq, and } from "drizzle-orm";
+import { eq, and, ilike, ne } from "drizzle-orm";
 import { requireAuth } from "../middleware/session";
 import { env } from "../config/env";
 import {
@@ -631,15 +631,27 @@ router.get("/link/oidc", requireAuth, async (req: Request, res: Response): Promi
 router.get("/dm-users", requireAuth, async (req: Request, res: Response): Promise<void> => {
   const { internal_id } = req.user as { internal_id: string };
   try {
-    const allUsers = await db
+    const qRaw = String(req.query.q ?? "");
+    const q = qRaw.trim();
+    const limitRaw = Number(req.query.limit ?? 200);
+    const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : 200, 1), 500);
+
+    const where = and(
+      ne(users.internal_id, internal_id),
+      q ? ilike(users.username, `%${q}%`) : undefined
+    );
+
+    const rows = await db
       .select({
         internal_id: users.internal_id,
         username: users.username,
         profile: users.profile,
       })
-      .from(users);
+      .from(users)
+      .where(where)
+      .limit(limit);
 
-    res.json({ users: allUsers.filter((u) => u.internal_id !== internal_id) });
+    res.json({ users: rows });
   } catch (err) {
     logRouteError("GET /auth/dm-users failed", err, { internal_id });
     res.status(500).json({ error: "Internal server error" });
