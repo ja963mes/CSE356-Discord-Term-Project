@@ -14,6 +14,8 @@ export const env = {
   PORT: process.env.REALTIME_PORT ?? "3005",
   REDIS_URL: process.env.REDIS_URL,
   DATABASE_URL: process.env.DATABASE_URL,
+  LOG_LEVEL: process.env.LOG_LEVEL ?? "info",
+  LOG_PRETTY: process.env.LOG_PRETTY === "true",
   CASSANDRA_CONTACT_POINTS: process.env.CASSANDRA_CONTACT_POINTS ?? "127.0.0.1",
   CASSANDRA_PORT: parseInt(process.env.CASSANDRA_PORT ?? "9042", 10),
   CASSANDRA_LOCAL_DATACENTER: process.env.CASSANDRA_LOCAL_DATACENTER ?? "datacenter1",
