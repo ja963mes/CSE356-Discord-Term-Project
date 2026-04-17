@@ -1,15 +1,18 @@
-# Deploy to split frontend/backend VMs over SSH.
+# Deploy to split frontend/backend VMs with Ansible.
 #
 # Required repo secrets:
-#   BACKEND_SSH_HOST, BACKEND_SSH_PRIVATE_KEY
-#   FRONTEND_SSH_HOST, FRONTEND_SSH_PRIVATE_KEY
+#   BACKEND_SSH_HOST
+#   FRONTEND_SSH_HOST
 #   DEPLOY_SSH_USER
+#   BACKEND_SSH_PRIVATE_KEY
+#   FRONTEND_SSH_PRIVATE_KEY
 #   DEPLOY_PATH
 # Recommended:
-#   SSH_KNOWN_HOSTS  → output of: ssh-keyscan -H YOUR_IP
+#   SSH_KNOWN_HOSTS  → output of: ssh-keyscan -H YOUR_IP (both hosts)
 # Optional:
 #   DEPLOY_BRANCH    → defaults to main-dev if unset (set secret to override)
 #   FRONTEND_WEB_ROOT → defaults to /var/www/discord-frontend
+#   REPO_URL         → defaults to this repository URL
 #
 # The `deploy` user on each server needs: git pull in DEPLOY_PATH, npm, and
 # passwordless sudo for systemctl restart/reload (see docs/STAGING-ROLLOUT.md).
@@ -17,8 +20,6 @@
 # Backend includes `discord-search` (Elasticsearch: message search + community directory
 # reindex on startup). Elasticsearch must be running before search (e.g. docker compose).
 # `discord-communities` proxies GET /search-communities to search — restart search with backend.
-# Add `sudo systemctl restart discord-read-state` below if that unit exists on the host.
-
 name: CI and deploy staging
 
 on:
@@ -45,63 +46,117 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main-dev')
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy backend services over SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.BACKEND_SSH_HOST }}
-          username: ${{ secrets.DEPLOY_SSH_USER }}
-          key: ${{ secrets.BACKEND_SSH_PRIVATE_KEY }}
-          port: 22
-          command_timeout: 30m
-          script_stop: true
-          script: |
-            set -euo pipefail
-            cd "${{ secrets.DEPLOY_PATH }}"
-            BRANCH='${{ secrets.DEPLOY_BRANCH }}'
-            if [ -z "$BRANCH" ]; then BRANCH=main-dev; fi
-            git fetch origin
-            git checkout "$BRANCH"
-            git pull --ff-only origin "$BRANCH"
-            npm ci
-            npm run build --workspace auth-service
-            npm run build --workspace search-service
-            npm run build --workspace communities-service
-            npm run build --workspace create-community-service
-            npm run build --workspace messages-service
-            npm run build --workspace realtime-service
-            npm run build --workspace dms-service
-            npm run build --workspace read-state-service
-            sudo systemctl restart discord-auth discord-search discord-communities discord-create-community discord-messages discord-realtime discord-realtime-2 discord-dms
-            sudo systemctl reload nginx
+      - uses: actions/checkout@v4
+
+      - name: Install Ansible
+        run: |
+          python3 -m pip install --upgrade pip
+          pip3 install ansible
+
+      - name: Configure SSH key (backend)
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${{ secrets.BACKEND_SSH_PRIVATE_KEY }}" > ~/.ssh/id_backend
+          chmod 600 ~/.ssh/id_backend
+          if [ -n "${{ secrets.SSH_KNOWN_HOSTS }}" ]; then
+            echo "${{ secrets.SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
+          fi
+
+      - name: Generate Ansible inventory and vars (backend)
+        run: |
+          set -euo pipefail
+          BRANCH='${{ secrets.DEPLOY_BRANCH }}'
+          if [ -z "$BRANCH" ]; then BRANCH=main-dev; fi
+          REPO='${{ secrets.REPO_URL }}'
+          if [ -z "$REPO" ]; then REPO=https://github.com/ja963mes/CSE356-Discord-Term-Project.git; fi
+          WEB_ROOT='${{ secrets.FRONTEND_WEB_ROOT }}'
+          if [ -z "$WEB_ROOT" ]; then WEB_ROOT=/var/www/discord-frontend; fi
+
+          cat > ansible/inventory/hosts.ini <<EOF
+          [backend]
+          backend-vm ansible_host=${{ secrets.BACKEND_SSH_HOST }} ansible_user=${{ secrets.DEPLOY_SSH_USER }} ansible_ssh_private_key_file=~/.ssh/id_backend
+          EOF
+
+          cat > ansible/group_vars/all.yml <<EOF
+          repo_url: "$REPO"
+          deploy_branch: "$BRANCH"
+          deploy_user: "${{ secrets.DEPLOY_SSH_USER }}"
+          deploy_path: "${{ secrets.DEPLOY_PATH }}"
+          frontend_web_root: "$WEB_ROOT"
+          frontend_nginx_conf_src: "../docs/nginx/production-frontend.conf.example"
+          backend_nginx_conf_src: "../docs/nginx/production-backend.conf.example"
+          backend_systemd_services:
+            - discord-auth
+            - discord-search
+            - discord-communities
+            - discord-create-community
+            - discord-messages
+            - discord-realtime
+            - discord-realtime-2
+            - discord-dms
+            - discord-read-state
+          EOF
+
+      - name: Deploy backend via Ansible
+        run: ansible-playbook -i ansible/inventory/hosts.ini ansible/playbooks/site.yml --limit backend
 
   deploy_frontend:
     needs: ci
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main-dev')
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy frontend static assets over SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.FRONTEND_SSH_HOST }}
-          username: ${{ secrets.DEPLOY_SSH_USER }}
-          key: ${{ secrets.FRONTEND_SSH_PRIVATE_KEY }}
-          port: 22
-          command_timeout: 30m
-          script_stop: true
-          script: |
-            set -euo pipefail
-            cd "${{ secrets.DEPLOY_PATH }}"
-            BRANCH='${{ secrets.DEPLOY_BRANCH }}'
-            if [ -z "$BRANCH" ]; then BRANCH=main-dev; fi
-            WEB_ROOT='${{ secrets.FRONTEND_WEB_ROOT }}'
-            if [ -z "$WEB_ROOT" ]; then WEB_ROOT=/var/www/discord-frontend; fi
-            git fetch origin
-            git checkout "$BRANCH"
-            git pull --ff-only origin "$BRANCH"
-            npm ci
-            npm run build --workspace frontend
-            sudo mkdir -p "$WEB_ROOT"
-            sudo rsync -a --delete ./frontend/dist/ "$WEB_ROOT"/
-            sudo chown -R root:www-data "$WEB_ROOT"
-            sudo chmod -R g+rX "$WEB_ROOT"
-            sudo systemctl reload nginx
+      - uses: actions/checkout@v4
+
+      - name: Install Ansible
+        run: |
+          python3 -m pip install --upgrade pip
+          pip3 install ansible
+
+      - name: Configure SSH key (frontend)
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${{ secrets.FRONTEND_SSH_PRIVATE_KEY }}" > ~/.ssh/id_frontend
+          chmod 600 ~/.ssh/id_frontend
+          if [ -n "${{ secrets.SSH_KNOWN_HOSTS }}" ]; then
+            echo "${{ secrets.SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
+          fi
+
+      - name: Generate Ansible inventory and vars (frontend)
+        run: |
+          set -euo pipefail
+          BRANCH='${{ secrets.DEPLOY_BRANCH }}'
+          if [ -z "$BRANCH" ]; then BRANCH=main-dev; fi
+          REPO='${{ secrets.REPO_URL }}'
+          if [ -z "$REPO" ]; then REPO=https://github.com/ja963mes/CSE356-Discord-Term-Project.git; fi
+          WEB_ROOT='${{ secrets.FRONTEND_WEB_ROOT }}'
+          if [ -z "$WEB_ROOT" ]; then WEB_ROOT=/var/www/discord-frontend; fi
+
+          cat > ansible/inventory/hosts.ini <<EOF
+          [frontend]
+          frontend-vm ansible_host=${{ secrets.FRONTEND_SSH_HOST }} ansible_user=${{ secrets.DEPLOY_SSH_USER }} ansible_ssh_private_key_file=~/.ssh/id_frontend
+          EOF
+
+          cat > ansible/group_vars/all.yml <<EOF
+          repo_url: "$REPO"
+          deploy_branch: "$BRANCH"
+          deploy_user: "${{ secrets.DEPLOY_SSH_USER }}"
+          deploy_path: "${{ secrets.DEPLOY_PATH }}"
+          frontend_web_root: "$WEB_ROOT"
+          frontend_nginx_conf_src: "../docs/nginx/production-frontend.conf.example"
+          backend_nginx_conf_src: "../docs/nginx/production-backend.conf.example"
+          backend_systemd_services:
+            - discord-auth
+            - discord-search
+            - discord-communities
+            - discord-create-community
+            - discord-messages
+            - discord-realtime
+            - discord-realtime-2
+            - discord-dms
+            - discord-read-state
+          EOF
+
+      - name: Deploy frontend via Ansible
+        run: ansible-playbook -i ansible/inventory/hosts.ini ansible/playbooks/site.yml --limit frontend
