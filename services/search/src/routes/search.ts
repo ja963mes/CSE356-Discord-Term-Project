@@ -32,7 +32,8 @@ function highlightSnippet(content: string, q: string): string {
 async function fetchJsonWithCookie<T>(url: string, cookie: string | undefined): Promise<T | null> {
   try {
     const res = await fetch(url, {
-      headers: cookie ? { cookie } : undefined,
+      // In Node, send Cookie header explicitly (capitalization matters for some libs/proxies).
+      headers: cookie ? { Cookie: cookie } : undefined,
     });
     if (!res.ok) return null;
     return (await res.json()) as T;
