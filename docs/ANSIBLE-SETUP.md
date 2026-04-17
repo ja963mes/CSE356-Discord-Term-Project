@@ -1,12 +1,13 @@
-# Ansible setup (split frontend + backend VMs)
+# Ansible setup (split frontend + backend + search VMs)
 
-Lightweight Ansible scaffold aligned with **[PROD-SPLIT-NGINX.md](./PROD-SPLIT-NGINX.md)** (two-VM production: static + TLS on one host, API + `/ws` on the other).
+Lightweight Ansible scaffold aligned with **[PROD-SPLIT-NGINX.md](./PROD-SPLIT-NGINX.md)** for split production hosts.
 
 It supports:
 
 - common host prep (`deploy` user, base packages)
 - backend deploy (git pull, `npm ci`, workspace builds, nginx config, systemd restarts)
 - frontend deploy (git pull, `npm ci`, frontend build, static publish to `/var/www/discord-frontend`, nginx config)
+- search deploy (git pull, `npm ci`, search workspace build, search systemd restarts)
 
 ---
 
@@ -37,6 +38,7 @@ Values to verify or customize:
 - `deploy_user`
 - `deploy_path`
 - `frontend_web_root`
+- `manage_nginx_config` (`false` for routine deploy refreshes, `true` when rolling out nginx config file changes)
 - nginx source paths (`frontend_nginx_conf_src`, `backend_nginx_conf_src`)
 
 Optional:
@@ -71,5 +73,5 @@ ansible-playbook -i inventory/hosts.ini --check playbooks/site.yml
 
 - This assumes Node.js is already installed on hosts and available to `deploy`.
 - Backend service restart list is controlled by `backend_systemd_services` in `group_vars/all.yml`.
-- Default backend restart list includes: `discord-auth`, `discord-search`, `discord-communities`, `discord-create-community`, `discord-messages`, `discord-realtime`, `discord-realtime-2`, `discord-dms`, and `discord-read-state`.
-- If your host-specific values differ, split variables into `group_vars/frontend.yml` and `group_vars/backend.yml`.
+- Search service restart list is controlled by `search_systemd_services` in `group_vars/all.yml`.
+- If host-specific values differ, split variables into host-group vars files (for example `group_vars/frontend.yml`, `group_vars/backend.yml`, and `group_vars/search.yml`).

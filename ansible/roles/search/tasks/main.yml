@@ -1,0 +1,32 @@
+- name: Ensure search repo is checked out
+  ansible.builtin.git:
+    repo: "{{ repo_url }}"
+    dest: "{{ deploy_path }}"
+    version: "{{ deploy_branch }}"
+    update: true
+    force: true
+  become_user: "{{ deploy_user }}"
+
+- name: Install search workspace dependencies
+  ansible.builtin.command: npm ci
+  args:
+    chdir: "{{ deploy_path }}"
+  become_user: "{{ deploy_user }}"
+
+- name: Build search workspace
+  ansible.builtin.command: "{{ item }}"
+  args:
+    chdir: "{{ deploy_path }}"
+  become_user: "{{ deploy_user }}"
+  loop: "{{ search_workspace_build_commands }}"
+
+- name: Restart search services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: restarted
+  loop: "{{ search_systemd_services }}"
+
+- name: Check search services are active
+  ansible.builtin.command: "systemctl is-active {{ item }}"
+  changed_when: false
+  loop: "{{ search_systemd_services }}"

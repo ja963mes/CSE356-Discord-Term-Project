@@ -15,3 +15,9 @@
   become: true
   roles:
     - frontend
+
+- name: Configure and deploy search VM
+  hosts: search
+  become: true
+  roles:
+    - search

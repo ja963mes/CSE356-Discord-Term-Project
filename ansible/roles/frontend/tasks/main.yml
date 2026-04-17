@@ -44,25 +44,34 @@
     mode: "0755"
     recurse: true
 
-- name: Install frontend nginx config
-  ansible.builtin.copy:
-    src: "{{ frontend_nginx_conf_src }}"
-    dest: /etc/nginx/sites-available/discord-frontend
-    owner: root
-    group: root
-    mode: "0644"
-  notify: Reload nginx
+- name: Manage frontend nginx config files (optional)
+  when: manage_nginx_config
+  block:
+    - name: Install frontend nginx config
+      ansible.builtin.copy:
+        src: "{{ frontend_nginx_conf_src }}"
+        dest: /etc/nginx/sites-available/discord-frontend
+        owner: root
+        group: root
+        mode: "0644"
 
-- name: Enable frontend nginx site
-  ansible.builtin.file:
-    src: /etc/nginx/sites-available/discord-frontend
-    dest: /etc/nginx/sites-enabled/discord-frontend
-    state: link
-    force: true
-  notify: Reload nginx
+    - name: Enable frontend nginx site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/discord-frontend
+        dest: /etc/nginx/sites-enabled/discord-frontend
+        state: link
+        force: true
 
-- name: Remove legacy default catch-all symlink if present
-  ansible.builtin.file:
-    path: /etc/nginx/sites-enabled/default-catchall
-    state: absent
-  notify: Reload nginx
+    - name: Remove legacy default catch-all symlink if present
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default-catchall
+        state: absent
+
+    - name: Validate nginx configuration
+      ansible.builtin.command: nginx -t
+      changed_when: false
+
+- name: Reload nginx
+  ansible.builtin.systemd:
+    name: nginx
+    state: reloaded

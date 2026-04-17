@@ -4,5 +4,8 @@ frontend-vm ansible_host=130.245.136.115
 [backend]
 backend-vm ansible_host=130.245.136.45
 
+[search]
+search-vm ansible_host=130.245.136.135
+
 [all:vars]
 ansible_user=deploy
