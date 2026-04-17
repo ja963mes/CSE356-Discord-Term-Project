@@ -29,6 +29,7 @@ import {
   subscribeAllChannelsForUserInCommunity,
   subscribeAllMembersForChannel,
 } from "./subscriptions";
+import { logger } from "./logger";
 
 // Unique ID for this instance — used to namespace presence:conns fields
 // so multiple instances don't stomp on each other's connection data at startup
@@ -71,7 +72,7 @@ function safeSend(ws: WebSocket, payload: string, label: string): void {
   try {
     ws.send(payload);
   } catch (err) {
-    console.error(`[ws fanout] send failed (${label})`, err);
+    logger.warn({ err, label }, "ws fanout send failed");
   }
 }
 
@@ -402,10 +403,32 @@ redisSub.on("message", (channel, message) => {
 
   const targetUserIds = new Set((event.participantIds ?? []).map(normUserId));
   const payload = JSON.stringify(event);
+  const localConnectedTargets = new Set<string>();
 
   for (const { ws, userId } of connections.values()) {
     if (!targetUserIds.has(normUserId(userId))) continue;
+    localConnectedTargets.add(normUserId(userId));
     safeSend(ws, payload, "dm_event");
+  }
+  const missingLocalTargets = [...targetUserIds].filter((id) => !localConnectedTargets.has(id));
+  if (
+    missingLocalTargets.length > 0 &&
+    (event.type === "dm:message:create" ||
+      event.type === "dm:message:edit" ||
+      event.type === "dm:message:delete" ||
+      event.type === "dm:read-state:update")
+  ) {
+    logger.warn(
+      {
+        eventType: event.type,
+        conversationId: event.conversationId,
+        participantCount: targetUserIds.size,
+        localConnectedCount: localConnectedTargets.size,
+        missingLocalTargets,
+        localConnectionCount: connections.size,
+      },
+      "dm fanout had missing local recipients"
+    );
   }
 
   if (event.type === "dm:conversation:create") {
