@@ -1,46 +1,11 @@
 import fs from "fs";
 import path from "path";
-import dotenv from "dotenv";
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { loadDotenvFromRepoRoot } from "./drizzlePaths";
 
-/** Directory containing `drizzle.config.ts` (`services/auth`), regardless of ts-node `__dirname`. */
-function findAuthServiceRoot(): string {
-  const markers = ["drizzle.config.ts", "drizzle.config.js"];
-  const walkUp = (start: string): string | undefined => {
-    let dir = path.resolve(start);
-    for (let i = 0; i < 12; i++) {
-      if (markers.some((m) => fs.existsSync(path.join(dir, m)))) {
-        return dir;
-      }
-      const parent = path.dirname(dir);
-      if (parent === dir) break;
-      dir = parent;
-    }
-    return undefined;
-  };
-
-  const seeds = [
-    path.resolve(__dirname),
-    path.resolve(process.cwd()),
-    path.join(process.cwd(), "services", "auth"),
-  ];
-
-  for (const seed of seeds) {
-    const found = walkUp(seed);
-    if (found) return found;
-  }
-
-  throw new Error(
-    "Could not find services/auth (no drizzle.config.ts). Run: npm run db:migrate from the repo root, or cd services/auth first.",
-  );
-}
-
-const authRoot = findAuthServiceRoot();
-// Match `drizzle.config.ts`: repo-root `.env` is two levels above `services/auth`.
-const envPath = path.resolve(authRoot, "../../.env");
-dotenv.config({ path: envPath });
+const { authRoot, envPath } = loadDotenvFromRepoRoot();
 
 const migrateUrl = process.env.DATABASE_URL_DIRECT || process.env.DATABASE_URL;
 if (!migrateUrl) {
@@ -57,6 +22,21 @@ if (!migrateUrl) {
 
 const migrationsFolder = path.join(authRoot, "drizzle");
 
+function hintIfAlreadyExists(err: unknown): void {
+  const e = err as { cause?: { code?: string; message?: string } };
+  const code = e?.cause?.code;
+  const msg = String(e?.cause?.message ?? err);
+  if (code === "42P07" || /already exists/i.test(msg)) {
+    console.error(
+      "\nThis usually means the database schema was created without Drizzle's journal table " +
+        "(`drizzle.__drizzle_migrations`), so migrate tries to replay old SQL.\n" +
+        "If your tables already match migrations 0..9, baseline the journal, then migrate again:\n" +
+        "  npm run db:migrate:stamp --workspace auth-service -- --through 9\n" +
+        "  npm run db:migrate --workspace auth-service\n",
+    );
+  }
+}
+
 async function main(): Promise<void> {
   const pool = new Pool({ connectionString: migrateUrl });
   try {
@@ -66,6 +46,7 @@ async function main(): Promise<void> {
   } catch (err) {
     console.error("Migration failed:");
     console.error(err);
+    hintIfAlreadyExists(err);
     process.exitCode = 1;
   } finally {
     await pool.end();
