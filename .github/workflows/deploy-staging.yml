@@ -13,6 +13,10 @@
 #
 # The `deploy` user on each server needs: git pull in DEPLOY_PATH, npm, and
 # passwordless sudo for systemctl restart/reload (see docs/STAGING-ROLLOUT.md).
+#
+# Backend includes `discord-search` (Elasticsearch: message search + community directory
+# reindex on startup). Elasticsearch must be running before search (e.g. docker compose).
+# `discord-communities` proxies GET /search-communities to search — restart search with backend.
 # Add `sudo systemctl restart discord-read-state` below if that unit exists on the host.
 
 name: CI and deploy staging
@@ -60,13 +64,14 @@ jobs:
             git pull --ff-only origin "$BRANCH"
             npm ci
             npm run build --workspace auth-service
+            npm run build --workspace search-service
             npm run build --workspace communities-service
             npm run build --workspace create-community-service
             npm run build --workspace messages-service
             npm run build --workspace realtime-service
             npm run build --workspace dms-service
             npm run build --workspace read-state-service
-            sudo systemctl restart discord-auth discord-communities discord-create-community discord-messages discord-realtime discord-realtime-2 discord-dms
+            sudo systemctl restart discord-auth discord-search discord-communities discord-create-community discord-messages discord-realtime discord-realtime-2 discord-dms
             sudo systemctl reload nginx
 
   deploy_frontend:
