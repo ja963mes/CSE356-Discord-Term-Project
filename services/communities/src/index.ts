@@ -20,6 +20,7 @@ import {
   getCommunityMemEpoch,
   getUserCommunityEpoch,
   membersCacheKey,
+  loadSearchCommunitiesCoalesced,
   searchCacheKey,
   setCachedJson,
   userCommunitiesCacheKey,
@@ -60,16 +61,10 @@ app.get("/search-communities", async (req, res) => {
 
   try {
     const ck = searchCacheKey(q, limit);
-    const hit = await getCachedJson<{ query: string; communities: Array<{ id: string; name: string; created_at: string }> }>(ck);
-    if (hit) {
-      res.json(hit);
-      return;
-    }
-
-    const rows = await communitiesDao.searchByName(q, limit);
-
-    const payload = { query: q, communities: rows };
-    void setCachedJson(ck, cacheTtl.search, payload);
+    const payload = await loadSearchCommunitiesCoalesced(ck, cacheTtl.search, async () => {
+      const rows = await communitiesDao.searchByName(q, limit);
+      return { query: q, communities: rows };
+    });
     res.json(payload);
   } catch (e) {
     logRouteError("GET /search-communities failed", e, { reqId: req.id, q });

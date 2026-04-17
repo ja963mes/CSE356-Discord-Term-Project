@@ -3,7 +3,7 @@ import { redis } from "./redis";
 import { logger } from "./logger";
 
 /** Seconds */
-const TTL_SEARCH = 45;
+const TTL_SEARCH = 90;
 const TTL_USER_COMMUNITIES = 90;
 const TTL_CHANNELS = 120;
 const TTL_MEMBERS = 120;
@@ -93,6 +93,62 @@ export async function setCachedJson(key: string, ttlSec: number, value: unknown)
   } catch (e) {
     logger.debug({ err: e, key }, "readCache: set failed");
   }
+}
+
+const SEARCH_LOCK_SEC = 10;
+const SEARCH_WAIT_MS = 4000;
+const SEARCH_POLL_MS = 20;
+
+/**
+ * On cache miss, only one concurrent request runs `factory`; others wait for Redis JSON
+ * (reduces Postgres stampedes for the same q/limit, e.g. many tabs or retried requests).
+ */
+export async function loadSearchCommunitiesCoalesced<T extends { query: string; communities: unknown[] }>(
+  cacheKey: string,
+  ttlSec: number,
+  factory: () => Promise<T>,
+): Promise<T> {
+  const cached = await getCachedJson<T>(cacheKey);
+  if (cached) return cached;
+
+  const lockKey = `${cacheKey}:sf`;
+  let acquired = false;
+  try {
+    const ok = await redis.set(lockKey, "1", "EX", SEARCH_LOCK_SEC, "NX").catch(() => null);
+    if (ok === "OK") {
+      acquired = true;
+      const data = await factory();
+      await setCachedJson(cacheKey, ttlSec, data);
+      return data;
+    }
+  } catch (e) {
+    logger.warn({ err: e, cacheKey }, "readCache: search coalesce primary path failed");
+    if (!acquired) {
+      return factory();
+    }
+    throw e;
+  } finally {
+    if (acquired) {
+      await redis.del(lockKey).catch(() => {});
+    }
+  }
+
+  const deadline = Date.now() + SEARCH_WAIT_MS;
+  while (Date.now() < deadline) {
+    await new Promise<void>((resolve) => setTimeout(resolve, SEARCH_POLL_MS));
+    const again = await getCachedJson<T>(cacheKey);
+    if (again) return again;
+    const lockHeld = await redis.exists(lockKey);
+    if (lockHeld === 0) {
+      const after = await getCachedJson<T>(cacheKey);
+      if (after) return after;
+      break;
+    }
+  }
+
+  const data = await factory();
+  void setCachedJson(cacheKey, ttlSec, data);
+  return data;
 }
 
 export function searchCacheKey(q: string, limit: number): string {
