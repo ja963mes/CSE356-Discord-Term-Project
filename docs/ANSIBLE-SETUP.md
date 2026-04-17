@@ -23,13 +23,14 @@ cp inventory/hosts.ini.example inventory/hosts.ini
 
 ## 2) Variables
 
-Copy shared vars and set values:
+`group_vars/all.yml` is committed with sane defaults. Copy the example only if you maintain a local override:
 
 ```bash
 cp group_vars/all.yml.example group_vars/all.yml
+# edit group_vars/all.yml
 ```
 
-Required values to verify:
+Values to verify or customize:
 
 - `repo_url`
 - `deploy_branch`

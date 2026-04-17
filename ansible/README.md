@@ -7,7 +7,7 @@ Deploy automation for the **split frontend / backend VM** layout described in **
 ```bash
 cd ansible
 cp inventory/hosts.ini.example inventory/hosts.ini
-cp group_vars/all.yml.example group_vars/all.yml
+# group_vars/all.yml is in git with defaults; copy from .example only if you override locally
 ansible-playbook -i inventory/hosts.ini --private-key ~/.ssh/id_ed25519 playbooks/site.yml
 ```
 
