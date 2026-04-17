@@ -61,6 +61,8 @@ redisSub.on("error", (err) => console.error("Redis sub error:", err));
 
 // Track active connections: connId -> { ws, userId }
 const connections = new Map<string, { ws: WebSocket; userId: string }>();
+// Reverse index: normalizedUserId -> Set<connId> for O(1) fanout lookup
+const userConnections = new Map<string, Set<string>>();
 
 /** Normalize user ids for Set membership (Postgres JSON vs session can differ in UUID case). */
 function normUserId(id: string): string {
@@ -87,16 +89,24 @@ async function setLastKnownPresence(userId: string, status: PresenceStatus): Pro
 // Fan-out helpers: 1 Redis call instead of N (one per connection)
 async function fanOutToGuild(communityId: string, payload: string): Promise<void> {
   const raw = await redis.smembers(`presence:guild:${communityId}`);
-  const userIds = new Set(raw.map(normUserId));
-  for (const { ws, userId } of connections.values()) {
-    if (userIds.has(normUserId(userId))) safeSend(ws, payload, "guild");
+  for (const uid of raw) {
+    const conns = userConnections.get(normUserId(uid));
+    if (!conns) continue;
+    for (const connId of conns) {
+      const conn = connections.get(connId);
+      if (conn) safeSend(conn.ws, payload, "guild");
+    }
   }
 }
 async function fanOutToChannel(channelId: string, payload: string): Promise<void> {
   const raw = await redis.smembers(`presence:channel:${channelId}`);
-  const userIds = new Set(raw.map(normUserId));
-  for (const { ws, userId } of connections.values()) {
-    if (userIds.has(normUserId(userId))) safeSend(ws, payload, "channel");
+  for (const uid of raw) {
+    const conns = userConnections.get(normUserId(uid));
+    if (!conns) continue;
+    for (const connId of conns) {
+      const conn = connections.get(connId);
+      if (conn) safeSend(conn.ws, payload, "channel");
+    }
   }
 }
 
@@ -160,6 +170,9 @@ wss.on("connection", async (ws, req) => {
   const prevStatus = await computePresence(redis, userId);
 
   connections.set(connId, { ws, userId });
+  const normId = normUserId(userId);
+  if (!userConnections.has(normId)) userConnections.set(normId, new Set());
+  userConnections.get(normId)!.add(connId);
   await Promise.all([
     registerConnection(redis, userId, connId, instanceId),
     subscribeUser(redis, userId),
@@ -181,10 +194,7 @@ wss.on("connection", async (ws, req) => {
     const relatedUserIds = await getPresenceTargets(redis, userId);
     const connectedRelated = relatedUserIds.filter((id) => {
       if (normUserId(id) === normUserId(userId)) return false;
-      for (const { userId: uid } of connections.values()) {
-        if (normUserId(uid) === normUserId(id)) return true;
-      }
-      return false;
+      return (userConnections.get(normUserId(id))?.size ?? 0) > 0;
     });
 
     const presencePayloads = await Promise.all(
@@ -240,6 +250,12 @@ wss.on("connection", async (ws, req) => {
   ws.on("close", async () => {
     const prev = await computePresence(redis, userId);
     connections.delete(connId);
+    const normId = normUserId(userId);
+    const userConns = userConnections.get(normId);
+    if (userConns) {
+      userConns.delete(connId);
+      if (userConns.size === 0) userConnections.delete(normId);
+    }
     await removeConnection(redis, userId, connId, instanceId);
     console.log(`[disconnect] userId=${userId} connId=${connId} total=${connections.size}`);
     const stillConnected = [...connections.values()].some((c) => c.userId === userId);
@@ -284,10 +300,14 @@ redisSub.on("message", (channel, message) => {
   if (channel === PRESENCE_BROADCAST_CHANNEL) {
     let msg: PresenceBroadcastMessage;
     try { msg = JSON.parse(message); } catch { return; }
-    const targetSet = new Set((msg.targets ?? []).map(normUserId));
     const payload = JSON.stringify({ type: "presence_update", userId: msg.userId, status: msg.status, awayMessage: msg.awayMessage });
-    for (const { ws, userId: connUserId } of connections.values()) {
-      if (targetSet.has(normUserId(connUserId))) safeSend(ws, payload, "presence_broadcast");
+    for (const targetUid of (msg.targets ?? []).map(normUserId)) {
+      const conns = userConnections.get(targetUid);
+      if (!conns) continue;
+      for (const connId of conns) {
+        const conn = connections.get(connId);
+        if (conn) safeSend(conn.ws, payload, "presence_broadcast");
+      }
     }
     return;
   }
@@ -308,15 +328,15 @@ redisSub.on("message", (channel, message) => {
         const { status: newMemberStatus, awayMessage: newMemberAway } = await buildPresencePayload(userId);
         await broadcastPresenceChange(redis, userId, newMemberStatus, newMemberAway);
         // Send the new member their presence snapshot of existing connected members
-        for (const { ws, userId: connUserId } of connections.values()) {
-          if (normUserId(connUserId) !== normUserId(userId)) continue;
+        const newMemberConns = userConnections.get(normUserId(userId));
+        for (const connId of newMemberConns ?? []) {
+          const conn = connections.get(connId);
+          if (!conn) continue;
+          const { ws } = conn;
           const relatedIds = await getPresenceTargets(redis, userId);
           const connectedRelated = relatedIds.filter((id) => {
-            if (id === userId) return false;
-            for (const { userId: uid } of connections.values()) {
-              if (normUserId(uid) === normUserId(id)) return true;
-            }
-            return false;
+            if (normUserId(id) === normUserId(userId)) return false;
+            return (userConnections.get(normUserId(id))?.size ?? 0) > 0;
           });
           const payloads = await Promise.all(
             connectedRelated.map(async (rid) => {
@@ -361,8 +381,10 @@ redisSub.on("message", (channel, message) => {
       const payload = JSON.stringify(event);
       void (async () => {
         await subscribeChannel(redis, channelId, userId);
-        for (const { ws, userId: connUserId } of connections.values()) {
-          if (normUserId(connUserId) === normUserId(userId)) safeSend(ws, payload, "ch_member_add");
+        const conns = userConnections.get(normUserId(userId));
+        if (conns) for (const connId of conns) {
+          const conn = connections.get(connId);
+          if (conn) safeSend(conn.ws, payload, "ch_member_add");
         }
       })();
     }
@@ -373,8 +395,10 @@ redisSub.on("message", (channel, message) => {
       const payload = JSON.stringify(event);
       void (async () => {
         await unsubscribeChannel(redis, channelId, userId);
-        for (const { ws, userId: connUserId } of connections.values()) {
-          if (normUserId(connUserId) === normUserId(userId)) safeSend(ws, payload, "ch_member_remove");
+        const conns = userConnections.get(normUserId(userId));
+        if (conns) for (const connId of conns) {
+          const conn = connections.get(connId);
+          if (conn) safeSend(conn.ws, payload, "ch_member_remove");
         }
       })();
     }
@@ -405,10 +429,14 @@ redisSub.on("message", (channel, message) => {
   const payload = JSON.stringify(event);
   const localConnectedTargets = new Set<string>();
 
-  for (const { ws, userId } of connections.values()) {
-    if (!targetUserIds.has(normUserId(userId))) continue;
-    localConnectedTargets.add(normUserId(userId));
-    safeSend(ws, payload, "dm_event");
+  for (const targetUid of targetUserIds) {
+    const conns = userConnections.get(targetUid);
+    if (!conns) continue;
+    localConnectedTargets.add(targetUid);
+    for (const connId of conns) {
+      const conn = connections.get(connId);
+      if (conn) safeSend(conn.ws, payload, "dm_event");
+    }
   }
   const missingLocalTargets = [...targetUserIds].filter((id) => !localConnectedTargets.has(id));
   if (
@@ -442,12 +470,13 @@ redisSub.on("message", (channel, message) => {
         participants.map(async (uid) => {
           const { status, awayMessage } = await buildPresencePayload(uid);
           const presencePayload = JSON.stringify({ type: "presence_update", userId: uid, status, awayMessage });
-          for (const { ws, userId: connUserId } of connections.values()) {
-            if (
-              targetUserIds.has(normUserId(connUserId)) &&
-              normUserId(connUserId) !== normUserId(uid)
-            ) {
-              safeSend(ws, presencePayload, "dm_conv_create_presence");
+          for (const targetUid of targetUserIds) {
+            if (normUserId(targetUid) === normUserId(uid)) continue;
+            const conns = userConnections.get(targetUid);
+            if (!conns) continue;
+            for (const connId of conns) {
+              const conn = connections.get(connId);
+              if (conn) safeSend(conn.ws, presencePayload, "dm_conv_create_presence");
             }
           }
         })

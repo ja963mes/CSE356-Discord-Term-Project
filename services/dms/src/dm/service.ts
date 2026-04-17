@@ -338,11 +338,14 @@ export const createMessage = async (params: {
   content: string;
   attachmentKeys: string[];
 }): Promise<MessageRecord> => {
-  const conversation = await getConversation(params.conversationId);
+  const [conversation, participantCheck] = await Promise.all([
+    getConversation(params.conversationId),
+    isParticipant(params.conversationId, params.authorId),
+  ]);
   if (!conversation) {
     throw new DmError(404, "Conversation not found");
   }
-  if (!(await isParticipant(params.conversationId, params.authorId))) {
+  if (!participantCheck) {
     throw new DmError(403, "Only participants can post messages");
   }
 
@@ -371,7 +374,7 @@ export const createMessage = async (params: {
     { prepare: true }
   );
 
-  await touchConversation(params.conversationId);
+  void touchConversation(params.conversationId); // fire-and-forget, not on critical path
 
   const attachmentUrls = params.attachmentKeys.map(keyToUrl);
   const messageRecord: MessageRecord = {
