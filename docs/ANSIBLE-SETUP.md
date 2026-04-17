@@ -38,6 +38,7 @@ Values to verify or customize:
 - `deploy_user`
 - `deploy_path`
 - `frontend_web_root`
+- `manage_nginx_config` (`false` for routine deploy refreshes, `true` when rolling out nginx config file changes)
 - nginx source paths (`frontend_nginx_conf_src`, `backend_nginx_conf_src`)
 
 Optional:

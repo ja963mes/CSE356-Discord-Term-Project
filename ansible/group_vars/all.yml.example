@@ -7,6 +7,8 @@ deploy_path: "/home/deploy/CSE356-Discord-Term-Project"
 # deploy_public_key: "ssh-ed25519 AAAA... your-key-comment"
 
 frontend_web_root: "/var/www/discord-frontend"
+# Keep nginx config files stable on routine deploys; set true for bootstrap/config rollout.
+manage_nginx_config: false
 
 # Path is relative to repo root when running ansible-playbook from ./ansible.
 frontend_nginx_conf_src: "../docs/nginx/production-frontend.conf.example"
