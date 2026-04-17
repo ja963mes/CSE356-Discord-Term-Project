@@ -1,0 +1,17 @@
+- name: Configure common deploy prerequisites
+  hosts: all
+  become: true
+  roles:
+    - common
+
+- name: Configure and deploy backend VM
+  hosts: backend
+  become: true
+  roles:
+    - backend
+
+- name: Configure and deploy frontend VM
+  hosts: frontend
+  become: true
+  roles:
+    - frontend

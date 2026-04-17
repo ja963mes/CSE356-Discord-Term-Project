@@ -9,8 +9,8 @@ deploy_path: "/home/deploy/CSE356-Discord-Term-Project"
 frontend_web_root: "/var/www/discord-frontend"
 
 # Path is relative to repo root when running ansible-playbook from ./ansible.
-frontend_nginx_conf_src: "../docs/nginx-linode-production-frontend.conf.example"
-backend_nginx_conf_src: "../docs/nginx-linode-production-backend.conf.example"
+frontend_nginx_conf_src: "../docs/nginx/production-frontend.conf.example"
+backend_nginx_conf_src: "../docs/nginx/production-backend.conf.example"
 
 # Order: search (Elasticsearch) before communities — GET /search-communities proxies to search.
 backend_systemd_services:

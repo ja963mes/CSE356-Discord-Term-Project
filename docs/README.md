@@ -20,13 +20,14 @@ Everything below lives in **`docs/`** except the root **[README.md](../README.md
 |----------|-------------|
 | **[STAGING-ROLLOUT.md](./STAGING-ROLLOUT.md)** | Staging VM: services, systemd, nginx, migrations, smoke checks |
 | **[PROD-SPLIT-NGINX.md](./PROD-SPLIT-NGINX.md)** | **Production:** two-VM nginx — frontend (static + TLS) + backend (API + `/ws`) |
-| **[nginx-linode-production-frontend.conf.example](./nginx-linode-production-frontend.conf.example)** | **Supported** frontend VM site config |
-| **[nginx-linode-production-backend.conf.example](./nginx-linode-production-backend.conf.example)** | **Supported** backend VM site config |
-| **[nginx-linode-production-search.conf.example](./nginx-linode-production-search.conf.example)** | **Supported** dedicated search ingress config (`/search`, `/directory`) |
+| **[nginx/README.md](./nginx/README.md)** | Centralized nginx configs index |
+| **[nginx/production-frontend.conf.example](./nginx/production-frontend.conf.example)** | **Supported** frontend VM site config |
+| **[nginx/production-backend.conf.example](./nginx/production-backend.conf.example)** | **Supported** backend VM site config |
+| **[nginx/production-search.conf.example](./nginx/production-search.conf.example)** | **Supported** dedicated search ingress config (`/search`, `/directory`) |
 | **[ANSIBLE-SETUP.md](./ANSIBLE-SETUP.md)** | Ansible scaffold for split-VM deploy (`ansible/`) |
 
 **Deprecated (reference only — do not use for new installs):**  
-[nginx-linode-staging.conf.example](./nginx-linode-staging.conf.example), [nginx-linode-production.conf.example](./nginx-linode-production.conf.example), [nginx-linode-services-only.conf.example](./nginx-linode-services-only.conf.example) — superseded by the frontend + backend pair above ([§7 in PROD-SPLIT-NGINX](./PROD-SPLIT-NGINX.md)).
+[nginx/deprecated/linode-staging.conf.example](./nginx/deprecated/linode-staging.conf.example), [nginx/deprecated/linode-production-combined.conf.example](./nginx/deprecated/linode-production-combined.conf.example), [nginx/deprecated/linode-services-only.conf.example](./nginx/deprecated/linode-services-only.conf.example) — superseded by the frontend + backend pair above ([§7 in PROD-SPLIT-NGINX](./PROD-SPLIT-NGINX.md)).
 
 ---
 

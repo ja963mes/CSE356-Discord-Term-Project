@@ -80,9 +80,9 @@ ls -la /var/www/discord-frontend/index.html
   - `/dms`
   - `/read-state`
   - `/ws`
-- Proxy `/search` to dedicated search ingress (`nginx-linode-production-search.conf.example`) when search is split out.
+- Proxy `/search` to dedicated search ingress (`nginx/production-search.conf.example`) when search is split out.
 
-Use [`nginx-linode-production-frontend.conf.example`](./nginx-linode-production-frontend.conf.example) as your baseline.
+Use [`nginx/production-frontend.conf.example`](./nginx/production-frontend.conf.example) as your baseline.
 
 Use a single upstream for consistency:
 
@@ -141,7 +141,7 @@ Run and monitor:
 
 Backend VM nginx should be API/WS only and proxy local service ports.
 
-Use [`nginx-linode-production-backend.conf.example`](./nginx-linode-production-backend.conf.example) as baseline.
+Use [`nginx/production-backend.conf.example`](./nginx/production-backend.conf.example) as baseline.
 This backend config intentionally excludes `/search`; use dedicated search ingress for that route.
 
 Do not rely on frontend static serving on backend VM.
@@ -199,9 +199,9 @@ From frontend VM logs:
 
 These files remain in `docs/` for historical reference only; each file begins with a **DEPRECATED** banner:
 
-- `nginx-linode-staging.conf.example` — old single-host “full staging” proxy
-- `nginx-linode-production.conf.example` — old single-host “static + API” combined production
-- `nginx-linode-services-only.conf.example` — old partial-stack proxy
+- `nginx/deprecated/linode-staging.conf.example` — old single-host “full staging” proxy
+- `nginx/deprecated/linode-production-combined.conf.example` — old single-host “static + API” combined production
+- `nginx/deprecated/linode-services-only.conf.example` — old partial-stack proxy
 
-**Use only** `nginx-linode-production-frontend.conf.example`, `nginx-linode-production-backend.conf.example`, and (when split out) `nginx-linode-production-search.conf.example` for new deployments. For a single machine, merge `location` blocks from the needed configs (same path order as `frontend/vite.config.ts`) or run API nginx + Vite elsewhere.
+**Use only** `nginx/production-frontend.conf.example`, `nginx/production-backend.conf.example`, and (when split out) `nginx/production-search.conf.example` for new deployments. For a single machine, merge `location` blocks from the needed configs (same path order as `frontend/vite.config.ts`) or run API nginx + Vite elsewhere.
 

@@ -16,7 +16,7 @@ What this repository implements today versus typical course expectations (multi-
 | **Realtime** | WebSocket `/ws` on `realtime` service; fan-out to clients |
 | **Read state** | Service on **:3008**; Postgres (Drizzle) + Cassandra + Redis as implemented in `services/read-state/` |
 | **Frontend** | React 18 + Vite + Tailwind; proxies in `frontend/vite.config.ts` |
-| **Reverse proxy (prod)** | **Supported:** split VM examples — `docs/nginx-linode-production-frontend.conf.example` + `...-backend.conf.example` ([`PROD-SPLIT-NGINX.md`](./PROD-SPLIT-NGINX.md)). Older single-file nginx examples are **deprecated** (kept for reference only). |
+| **Reverse proxy (prod)** | **Supported:** split VM examples — `docs/nginx/production-frontend.conf.example` + `...-backend.conf.example` ([`PROD-SPLIT-NGINX.md`](./PROD-SPLIT-NGINX.md)). Older single-file nginx examples are **deprecated** (kept for reference only). |
 | **Deploy automation** | Optional Ansible scaffold under `ansible/` ([`ANSIBLE-SETUP.md`](./ANSIBLE-SETUP.md)) |
 | **Load / latency smoke tests** | k6 scripts under `k6/`; `npm run k6:routes`, `npm run k6:search-messages` |
 

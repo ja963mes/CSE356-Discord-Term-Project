@@ -1,8 +1,8 @@
 # =============================================================================
 # DEPRECATED — do not use for new deployments (retained for reference only).
 # Production is defined as split VMs only:
-#   - Frontend VM: nginx-linode-production-frontend.conf.example
-#   - Backend VM:  nginx-linode-production-backend.conf.example
+#   - Frontend VM: nginx/production-frontend.conf.example
+#   - Backend VM:  nginx/production-backend.conf.example
 # Guide: PROD-SPLIT-NGINX.md
 # =============================================================================
 #
@@ -28,7 +28,7 @@
 # 3. Publish build to nginx root (re-run after every frontend deploy):
 #    sudo rsync -a --delete /path/to/repo/frontend/dist/ /var/www/discord-frontend/
 #    sudo chmod -R g+rX /var/www/discord-frontend
-# 4. Copy this file: sudo cp .../docs/nginx-linode-production.conf.example \
+# 4. Copy this file: sudo cp .../docs/nginx/deprecated/linode-production-combined.conf.example \
 #       /etc/nginx/sites-available/discord-production
 # 5. Edit: server_name, optional comment /search block if search not running
 # 6. Enable: sudo ln -sf /etc/nginx/sites-available/discord-production /etc/nginx/sites-enabled/
