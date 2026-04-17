@@ -61,7 +61,7 @@ jobs:
           BRANCH="$DEPLOY_BRANCH"
           if [ -z "$BRANCH" ]; then BRANCH=main-dev; fi
 
-          ssh -i ~/.ssh/id_backend -o StrictHostKeyChecking=yes "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.BACKEND_SSH_HOST }}" "bash -s" <<EOF
+          ssh -i ~/.ssh/id_backend -o StrictHostKeyChecking=no "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.BACKEND_SSH_HOST }}" "bash -s" <<EOF
           set -euo pipefail
           BRANCH='$BRANCH'
           DEPLOY_PATH='${DEPLOY_PATH}'
