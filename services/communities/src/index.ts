@@ -149,7 +149,14 @@ app.post("/communities/:communityId/join", requireAuth, async (req: Request, res
       return;
     }
 
-    const newMember = await communityMembersDao.addMember(communityId, userId, "member");
+    const { joined_at: joinedAt, inserted } = await communityMembersDao.addMember(communityId, userId, "member");
+
+    if (!inserted) {
+      // Idempotent: heals rare partial state if another request inserted membership then failed mid-join.
+      await addUserToAllPublicChannels(communityId, userId);
+      res.status(200).json({ message: "Already a member" });
+      return;
+    }
 
     await addUserToAllPublicChannels(communityId, userId);
 
@@ -162,7 +169,7 @@ app.post("/communities/:communityId/join", requireAuth, async (req: Request, res
       username: userRow?.username ?? "",
       displayName: profile.displayName ?? userRow?.username ?? "",
       role: "member",
-      joinedAt: newMember.joined_at.toISOString(),
+      joinedAt: joinedAt.toISOString(),
     });
 
     void bumpAllForUserCommunity(userId, communityId);
