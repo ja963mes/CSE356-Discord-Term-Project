@@ -61,6 +61,20 @@ redisSub.on("error", (err) => console.error("Redis sub error:", err));
 // Track active connections: connId -> { ws, userId }
 const connections = new Map<string, { ws: WebSocket; userId: string }>();
 
+/** Normalize user ids for Set membership (Postgres JSON vs session can differ in UUID case). */
+function normUserId(id: string): string {
+  return id.trim().toLowerCase();
+}
+
+function safeSend(ws: WebSocket, payload: string, label: string): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  try {
+    ws.send(payload);
+  } catch (err) {
+    console.error(`[ws fanout] send failed (${label})`, err);
+  }
+}
+
 // Last known presence stored in Redis so multiple instances agree on state
 async function getLastKnownPresence(userId: string): Promise<PresenceStatus> {
   return ((await redis.get(`presence:last:${userId}`)) as PresenceStatus | null) ?? "offline";
@@ -71,15 +85,17 @@ async function setLastKnownPresence(userId: string, status: PresenceStatus): Pro
 
 // Fan-out helpers: 1 Redis call instead of N (one per connection)
 async function fanOutToGuild(communityId: string, payload: string): Promise<void> {
-  const userIds = new Set(await redis.smembers(`presence:guild:${communityId}`));
+  const raw = await redis.smembers(`presence:guild:${communityId}`);
+  const userIds = new Set(raw.map(normUserId));
   for (const { ws, userId } of connections.values()) {
-    if (userIds.has(userId) && ws.readyState === WebSocket.OPEN) ws.send(payload);
+    if (userIds.has(normUserId(userId))) safeSend(ws, payload, "guild");
   }
 }
 async function fanOutToChannel(channelId: string, payload: string): Promise<void> {
-  const userIds = new Set(await redis.smembers(`presence:channel:${channelId}`));
+  const raw = await redis.smembers(`presence:channel:${channelId}`);
+  const userIds = new Set(raw.map(normUserId));
   for (const { ws, userId } of connections.values()) {
-    if (userIds.has(userId) && ws.readyState === WebSocket.OPEN) ws.send(payload);
+    if (userIds.has(normUserId(userId))) safeSend(ws, payload, "channel");
   }
 }
 
@@ -163,9 +179,9 @@ wss.on("connection", async (ws, req) => {
     // Get all related connected users from Redis and send their presence
     const relatedUserIds = await getPresenceTargets(redis, userId);
     const connectedRelated = relatedUserIds.filter((id) => {
-      if (id === userId) return false;
+      if (normUserId(id) === normUserId(userId)) return false;
       for (const { userId: uid } of connections.values()) {
-        if (uid === id) return true;
+        if (normUserId(uid) === normUserId(id)) return true;
       }
       return false;
     });
@@ -267,12 +283,10 @@ redisSub.on("message", (channel, message) => {
   if (channel === PRESENCE_BROADCAST_CHANNEL) {
     let msg: PresenceBroadcastMessage;
     try { msg = JSON.parse(message); } catch { return; }
-    const targetSet = new Set(msg.targets);
+    const targetSet = new Set((msg.targets ?? []).map(normUserId));
     const payload = JSON.stringify({ type: "presence_update", userId: msg.userId, status: msg.status, awayMessage: msg.awayMessage });
     for (const { ws, userId: connUserId } of connections.values()) {
-      if (targetSet.has(connUserId) && ws.readyState === WebSocket.OPEN) {
-        ws.send(payload);
-      }
+      if (targetSet.has(normUserId(connUserId))) safeSend(ws, payload, "presence_broadcast");
     }
     return;
   }
@@ -294,12 +308,12 @@ redisSub.on("message", (channel, message) => {
         await broadcastPresenceChange(redis, userId, newMemberStatus, newMemberAway);
         // Send the new member their presence snapshot of existing connected members
         for (const { ws, userId: connUserId } of connections.values()) {
-          if (connUserId !== userId) continue;
+          if (normUserId(connUserId) !== normUserId(userId)) continue;
           const relatedIds = await getPresenceTargets(redis, userId);
           const connectedRelated = relatedIds.filter((id) => {
             if (id === userId) return false;
             for (const { userId: uid } of connections.values()) {
-              if (uid === id) return true;
+              if (normUserId(uid) === normUserId(id)) return true;
             }
             return false;
           });
@@ -310,9 +324,7 @@ redisSub.on("message", (channel, message) => {
             })
           );
           for (const p of payloads) {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: "presence_update", ...p }));
-            }
+            safeSend(ws, JSON.stringify({ type: "presence_update", ...p }), "join_snapshot");
           }
         }
       })();
@@ -349,9 +361,7 @@ redisSub.on("message", (channel, message) => {
       void (async () => {
         await subscribeChannel(redis, channelId, userId);
         for (const { ws, userId: connUserId } of connections.values()) {
-          if (connUserId === userId && ws.readyState === WebSocket.OPEN) {
-            ws.send(payload);
-          }
+          if (normUserId(connUserId) === normUserId(userId)) safeSend(ws, payload, "ch_member_add");
         }
       })();
     }
@@ -363,9 +373,7 @@ redisSub.on("message", (channel, message) => {
       void (async () => {
         await unsubscribeChannel(redis, channelId, userId);
         for (const { ws, userId: connUserId } of connections.values()) {
-          if (connUserId === userId && ws.readyState === WebSocket.OPEN) {
-            ws.send(payload);
-          }
+          if (normUserId(connUserId) === normUserId(userId)) safeSend(ws, payload, "ch_member_remove");
         }
       })();
     }
@@ -392,13 +400,12 @@ redisSub.on("message", (channel, message) => {
     return;
   }
 
-  const targetUserIds = new Set(event.participantIds ?? []);
+  const targetUserIds = new Set((event.participantIds ?? []).map(normUserId));
   const payload = JSON.stringify(event);
 
   for (const { ws, userId } of connections.values()) {
-    if (targetUserIds.has(userId) && ws.readyState === WebSocket.OPEN) {
-      ws.send(payload);
-    }
+    if (!targetUserIds.has(normUserId(userId))) continue;
+    safeSend(ws, payload, "dm_event");
   }
 
   if (event.type === "dm:conversation:create") {
@@ -413,8 +420,11 @@ redisSub.on("message", (channel, message) => {
           const { status, awayMessage } = await buildPresencePayload(uid);
           const presencePayload = JSON.stringify({ type: "presence_update", userId: uid, status, awayMessage });
           for (const { ws, userId: connUserId } of connections.values()) {
-            if (targetUserIds.has(connUserId) && connUserId !== uid && ws.readyState === WebSocket.OPEN) {
-              ws.send(presencePayload);
+            if (
+              targetUserIds.has(normUserId(connUserId)) &&
+              normUserId(connUserId) !== normUserId(uid)
+            ) {
+              safeSend(ws, presencePayload, "dm_conv_create_presence");
             }
           }
         })
