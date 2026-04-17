@@ -51,8 +51,17 @@
     state: absent
   notify: Reload nginx
 
+- name: Validate nginx configuration
+  ansible.builtin.command: nginx -t
+  changed_when: false
+
 - name: Restart backend services
   ansible.builtin.systemd:
     name: "{{ item }}"
     state: restarted
+  loop: "{{ backend_systemd_services }}"
+
+- name: Check backend services are active
+  ansible.builtin.command: "systemctl is-active {{ item }}"
+  changed_when: false
   loop: "{{ backend_systemd_services }}"

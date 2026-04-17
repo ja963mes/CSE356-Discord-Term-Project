@@ -22,3 +22,4 @@ backend_systemd_services:
   - discord-realtime
   - discord-realtime-2
   - discord-dms
+  - discord-read-state
