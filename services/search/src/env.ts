@@ -11,6 +11,8 @@ const envSchema = z.object({
   SEARCH_PORT: z.string().default("3004"),
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string(),
+  /** Base URL for backend nginx (used for search fallback scans). Example: http://10.0.2.247 */
+  BACKEND_API_URL: z.string().url().default("http://10.0.2.247"),
   /** Pino: trace | debug | info | warn | error | fatal */
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).default("info"),
   LOG_PRETTY: z.coerce.boolean().default(false),
