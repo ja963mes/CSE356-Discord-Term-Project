@@ -38,6 +38,10 @@ process.on("uncaughtException", (err) => {
   process.exit(1);
 });
 
+app.listen(port, () => {
+  logger.info({ port }, "search-service listening");
+});
+
 void (async () => {
   logger.info(
     {
@@ -49,10 +53,20 @@ void (async () => {
     },
     "search-service booting"
   );
-  await ensureIndex();
-  logger.info({ index: env.ES_INDEX_NAME }, "ensured messages index");
-  await ensureCommunitiesIndex();
-  logger.info({ index: env.ES_COMMUNITIES_INDEX_NAME }, "ensured communities directory index");
+  try {
+    await ensureIndex();
+    logger.info({ index: env.ES_INDEX_NAME }, "ensured messages index");
+  } catch (e) {
+    logger.error({ err: e }, "failed to ensure messages index");
+  }
+
+  try {
+    await ensureCommunitiesIndex();
+    logger.info({ index: env.ES_COMMUNITIES_INDEX_NAME }, "ensured communities directory index");
+  } catch (e) {
+    logger.error({ err: e }, "failed to ensure communities directory index");
+  }
+
   try {
     const n = await reindexAllCommunitiesFromPostgres();
     logger.info({ count: n }, "reindexed communities into Elasticsearch");
@@ -60,8 +74,10 @@ void (async () => {
   } catch (e) {
     logger.error({ err: e }, "community directory reindex failed (ES may be stale/empty)");
   }
-  await startSubscriber();
-  app.listen(port, () => {
-    logger.info({ port }, "search-service listening");
-  });
+
+  try {
+    await startSubscriber();
+  } catch (e) {
+    logger.error({ err: e }, "failed to start redis subscriber");
+  }
 })();
