@@ -99,6 +99,8 @@ jobs:
           EOF
 
       - name: Deploy backend via Ansible
+        env:
+          ANSIBLE_CONFIG: ansible/ansible.cfg
         run: ansible-playbook -i ansible/inventory/hosts.ini ansible/playbooks/site.yml --limit backend
 
   deploy_frontend:
@@ -159,4 +161,6 @@ jobs:
           EOF
 
       - name: Deploy frontend via Ansible
+        env:
+          ANSIBLE_CONFIG: ansible/ansible.cfg
         run: ansible-playbook -i ansible/inventory/hosts.ini ansible/playbooks/site.yml --limit frontend
