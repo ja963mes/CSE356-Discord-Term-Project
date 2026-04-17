@@ -1,0 +1,68 @@
+- name: Ensure frontend repo is checked out
+  ansible.builtin.git:
+    repo: "{{ repo_url }}"
+    dest: "{{ deploy_path }}"
+    version: "{{ deploy_branch }}"
+    update: true
+    force: true
+  become_user: "{{ deploy_user }}"
+
+- name: Install frontend workspace dependencies
+  ansible.builtin.command: npm ci
+  args:
+    chdir: "{{ deploy_path }}"
+  become_user: "{{ deploy_user }}"
+
+- name: Build frontend workspace
+  ansible.builtin.command: npm run build --workspace frontend
+  args:
+    chdir: "{{ deploy_path }}"
+  become_user: "{{ deploy_user }}"
+
+- name: Ensure frontend web root exists
+  ansible.builtin.file:
+    path: "{{ frontend_web_root }}"
+    state: directory
+    owner: root
+    group: www-data
+    mode: "0755"
+
+- name: Sync frontend dist to web root
+  ansible.posix.synchronize:
+    src: "{{ deploy_path }}/frontend/dist/"
+    dest: "{{ frontend_web_root }}/"
+    delete: true
+    recursive: true
+  delegate_to: "{{ inventory_hostname }}"
+
+- name: Ensure frontend web root permissions are readable by nginx
+  ansible.builtin.file:
+    path: "{{ frontend_web_root }}"
+    state: directory
+    owner: root
+    group: www-data
+    mode: "0755"
+    recurse: true
+
+- name: Install frontend nginx config
+  ansible.builtin.copy:
+    src: "{{ frontend_nginx_conf_src }}"
+    dest: /etc/nginx/sites-available/discord-frontend
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Enable frontend nginx site
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/discord-frontend
+    dest: /etc/nginx/sites-enabled/discord-frontend
+    state: link
+    force: true
+  notify: Reload nginx
+
+- name: Remove legacy default catch-all symlink if present
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default-catchall
+    state: absent
+  notify: Reload nginx

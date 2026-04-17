@@ -1,0 +1,40 @@
+- name: Install base packages
+  ansible.builtin.apt:
+    name:
+      - git
+      - rsync
+      - curl
+      - ca-certificates
+    state: present
+    update_cache: true
+
+- name: Ensure deploy user exists
+  ansible.builtin.user:
+    name: "{{ deploy_user }}"
+    shell: /bin/bash
+    create_home: true
+    groups: sudo
+    append: true
+
+- name: Ensure deploy .ssh directory exists
+  ansible.builtin.file:
+    path: "/home/{{ deploy_user }}/.ssh"
+    state: directory
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0700"
+
+- name: Optionally install deploy public key
+  ansible.posix.authorized_key:
+    user: "{{ deploy_user }}"
+    state: present
+    key: "{{ deploy_public_key }}"
+  when: deploy_public_key is defined and deploy_public_key | length > 0
+
+- name: Ensure deploy path parent exists
+  ansible.builtin.file:
+    path: "{{ deploy_path | dirname }}"
+    state: directory
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0755"

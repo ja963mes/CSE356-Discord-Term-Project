@@ -12,7 +12,7 @@ Typical Node processes on staging:
 - `realtime` (3005) — WebSocket fan-out
 - `dms` (3007) — direct messages (Cassandra)
 - `read-state` (3008) — read / unread (when you run the full stack)
-- **Optional:** `search` (3004) + **Elasticsearch** — often **skipped on small VMs** (RAM/CPU). If ES is not running, comment out the `/search` `location` in [`nginx-linode-production-backend.conf.example`](./nginx-linode-production-backend.conf.example); the UI may degrade search-only features.
+- **Optional:** `search` (3004) + **Elasticsearch** — often **skipped on small VMs** (RAM/CPU). For split search ingress, use [`nginx/production-search.conf.example`](./nginx/production-search.conf.example) and point frontend `/search` there; if search is absent, `/search` features will degrade.
 - **Optional but recommended:** static or proxied `frontend`
 
 Longer-term, full-text search is expected to **splinter per domain** (messages, DMs, directory, etc.) along microservice boundaries rather than one central search service—see [Search (today vs eventual splintering)](./sharding-and-replication.md#search-today-vs-eventual-splintering) in `docs/sharding-and-replication.md`.
@@ -305,14 +305,14 @@ In staging, avoid binding raw service ports publicly; prefer one ingress host wi
 
 **Supported nginx baselines (split frontend + backend):** see [`PROD-SPLIT-NGINX.md`](./PROD-SPLIT-NGINX.md).
 
-- **Backend VM / API ingress (staging or production):** [`nginx-linode-production-backend.conf.example`](./nginx-linode-production-backend.conf.example)  
-  Proxies all API prefixes including `messages`, `attachments`, `dms`, and `/ws`. **Comment out** the `/search` block if you are not running `search-service` (see Scope).
-- **Frontend VM (optional on staging):** [`nginx-linode-production-frontend.conf.example`](./nginx-linode-production-frontend.conf.example)  
+- **Backend VM / API ingress (staging or production):** [`nginx/production-backend.conf.example`](./nginx/production-backend.conf.example)  
+  Proxies core API prefixes including `messages`, `attachments`, `dms`, and `/ws` (search route removed; use dedicated search ingress template).
+- **Frontend VM (optional on staging):** [`nginx/production-frontend.conf.example`](./nginx/production-frontend.conf.example)  
   Serves static `frontend/dist` and proxies API/WS to the backend VM. Point `BACKEND_UPSTREAM` at your API host.
 
 **Single staging box without a separate frontend VM:** run Node services locally on the box, use the **backend** example as the only nginx site (API + `/ws`), and run the SPA from **Vite on your laptop** against that host; *or* merge the `location` blocks from the frontend + backend examples into one `server` block (keep the same path order as `frontend/vite.config.ts`).
 
-**Deprecated (reference only, do not copy for new installs):** [`nginx-linode-staging.conf.example`](./nginx-linode-staging.conf.example), [`nginx-linode-production.conf.example`](./nginx-linode-production.conf.example), [`nginx-linode-services-only.conf.example`](./nginx-linode-services-only.conf.example) — superseded by the frontend + backend pair.
+**Deprecated (reference only, do not copy for new installs):** [`nginx/deprecated/linode-staging.conf.example`](./nginx/deprecated/linode-staging.conf.example), [`nginx/deprecated/linode-production-combined.conf.example`](./nginx/deprecated/linode-production-combined.conf.example), [`nginx/deprecated/linode-services-only.conf.example`](./nginx/deprecated/linode-services-only.conf.example) — superseded by the frontend + backend pair.
 
 - API paths proxy to `127.0.0.1:3001`–`3007` as in the README proxy table (including `/attachments` → messages on `3003`).
 - `server_name` should be `130.245.136.45` (or your domain).

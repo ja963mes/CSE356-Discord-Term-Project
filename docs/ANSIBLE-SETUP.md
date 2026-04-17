@@ -70,4 +70,5 @@ ansible-playbook -i inventory/hosts.ini --check playbooks/site.yml
 
 - This assumes Node.js is already installed on hosts and available to `deploy`.
 - Backend service restart list is controlled by `backend_systemd_services` in `group_vars/all.yml`.
+- Default backend restart list includes: `discord-auth`, `discord-search`, `discord-communities`, `discord-create-community`, `discord-messages`, `discord-realtime`, `discord-realtime-2`, `discord-dms`, and `discord-read-state`.
 - If your host-specific values differ, split variables into `group_vars/frontend.yml` and `group_vars/backend.yml`.

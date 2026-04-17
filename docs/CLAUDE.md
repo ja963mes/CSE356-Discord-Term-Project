@@ -122,7 +122,7 @@ Channel lifecycle and ACLs live on the **communities service (3002)** — no sep
 - `services/auth/src/index.ts` has duplicate `GET /` handlers — first one (`requireAuth`) wins; unauthenticated users may get 401 JSON instead of redirect
 - Frontend may still degrade gracefully when optional services are down (staging without ES, etc.)
 - `passport` is installed but not actively used (sessions bypass it)
-- Nginx: use **`docs/nginx-linode-production-frontend.conf.example`** + **`docs/nginx-linode-production-backend.conf.example`** only; older single-file examples in `docs/` are **deprecated** (see `docs/README.md`, `docs/PROD-SPLIT-NGINX.md`)
+- Nginx: use **`docs/nginx/production-frontend.conf.example`** + **`docs/nginx/production-backend.conf.example`** only; older single-file examples in `docs/` are **deprecated** (see `docs/README.md`, `docs/PROD-SPLIT-NGINX.md`)
 - RabbitMQ not yet integrated (needed for inter-service events)
 
 ## Frontend Proxy Config (vite.config.ts)

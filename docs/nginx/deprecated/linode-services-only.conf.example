@@ -1,15 +1,15 @@
 # =============================================================================
 # DEPRECATED — do not use for new deployments (retained for reference only).
 # Supported baselines:
-#   - Frontend VM: nginx-linode-production-frontend.conf.example
-#   - Backend VM:  nginx-linode-production-backend.conf.example
+#   - Frontend VM: nginx/production-frontend.conf.example
+#   - Backend VM:  nginx/production-backend.conf.example
 # Guide: PROD-SPLIT-NGINX.md
 # =============================================================================
 #
 # Nginx — services-only (auth + communities + create-community + realtime)
 #
 # Use when the frontend runs elsewhere and this host does not run messages/DMs/search.
-# For full API on-box ingress, use nginx-linode-production-backend.conf.example instead.
+# For full API on-box ingress, use nginx/production-backend.conf.example instead.
 #
 # Use this when the frontend runs on your laptop, and the Linode hosts only:
 #   - auth (3001)
@@ -20,7 +20,7 @@
 # Notes:
 # - Order matters: /search-communities must be before /search.
 # - This file intentionally does NOT proxy /messages, /attachments, /dms, /search
-#   (run those services locally or switch to nginx-linode-production-backend.conf.example).
+#   (run those services locally or switch to nginx/production-backend.conf.example).
 
 map $http_upgrade $connection_upgrade {
     default upgrade;
