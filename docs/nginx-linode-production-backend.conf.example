@@ -28,9 +28,11 @@ upstream backend_search {
     server 127.0.0.1:3004;
     keepalive 16;
 }
+# WebSocket: list a second server only if discord-realtime-2 actually listens there. Otherwise nginx
+# round-robins to a dead port and ~half of clients never get realtime (grading "Delivery timeout").
 upstream backend_realtime {
     server 127.0.0.1:3005;
-    server 127.0.0.1:3009;
+    # server 127.0.0.1:3009;
     keepalive 16;
 }
 
