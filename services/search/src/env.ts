@@ -13,6 +13,8 @@ const envSchema = z.object({
   REDIS_URL: z.string(),
   ELASTICSEARCH_URL: z.string().default("http://localhost:9200"),
   ES_INDEX_NAME: z.string().default("messages"),
+  /** Elasticsearch index for public community directory search (`/directory/communities`). */
+  ES_COMMUNITIES_INDEX_NAME: z.string().default("communities_directory"),
 });
 
 export const env = envSchema.parse(process.env);

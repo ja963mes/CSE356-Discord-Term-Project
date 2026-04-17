@@ -79,9 +79,9 @@ flowchart TB
 |--------|------|----------------|
 | `/auth` | 3001 | Sessions, OAuth |
 | `/create-community` | 3006 | Create guild |
-| `/communities`, `/channels`, `/search-communities` | 3002 | Guilds, channels, directory search |
+| `/communities`, `/channels`, `/search-communities` | 3002 | Guilds, channels; directory search **proxies to search (ES)** |
 | `/messages`, `/attachments` | 3003 | Channel messages, presign |
-| `/search` | 3004 | Message search (ES) |
+| `/search` | 3004 | Message search + ES directory API (`/directory/communities`) |
 | `/dms` | 3007 | Direct messages |
 | `/read-state` | 3008 | Read / unread state |
 | `/ws` | 3005 | WebSocket (upgrade) |

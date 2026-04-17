@@ -7,6 +7,9 @@ import { env } from "./env";
 import { requireAuth } from "./middleware/session";
 import { communities, communityMembers, channels, channelMembers } from "./db/schema";
 import { bumpCommunitiesReadCacheAfterCreate } from "./invalidateCommunitiesCache";
+import { redis } from "./redis";
+
+const COMMUNITY_EVENTS_CHANNEL = "community:events";
 
 const MAX_COMMUNITIES_PER_USER = 100;
 
@@ -74,6 +77,22 @@ app.post("/create-community", requireAuth, async (req: Request, res: Response) =
     });
 
     void bumpCommunitiesReadCacheAfterCreate(userId, result.id);
+
+    const createdAtIso =
+      result.created_at instanceof Date ? result.created_at.toISOString() : String(result.created_at);
+    try {
+      await redis.publish(
+        COMMUNITY_EVENTS_CHANNEL,
+        JSON.stringify({
+          type: "community:directory:upsert",
+          communityId: result.id,
+          name: result.name,
+          created_at: createdAtIso,
+        }),
+      );
+    } catch (e) {
+      console.warn("[create-community] directory ES publish failed", e);
+    }
 
     res.status(201).json({
       community: {

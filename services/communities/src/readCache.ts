@@ -19,6 +19,20 @@ function keyEpochCh(communityId: string): string {
   return `comm:e:ch:${communityId}`;
 }
 
+/** Bumped when the public directory index changes (align with create-community `invalidateCommunitiesCache.ts`). */
+function keyEpochDir(): string {
+  return `comm:e:dir`;
+}
+
+export async function getDirectorySearchEpoch(): Promise<string> {
+  try {
+    const v = await redis.get(keyEpochDir());
+    return v ?? "0";
+  } catch {
+    return "0";
+  }
+}
+
 export async function getUserCommunityEpoch(userId: string): Promise<string> {
   try {
     const v = await redis.get(keyEpochUcl(userId));
@@ -95,8 +109,8 @@ export async function setCachedJson(key: string, ttlSec: number, value: unknown)
   }
 }
 
-export function searchCacheKey(q: string, limit: number): string {
-  const h = createHash("sha256").update(`${q}\0${limit}`).digest("hex").slice(0, 40);
+export function searchCacheKey(epoch: string, q: string, limit: number): string {
+  const h = createHash("sha256").update(`${epoch}\0${q}\0${limit}`).digest("hex").slice(0, 40);
   return `comm:c:sc:${h}`;
 }
 

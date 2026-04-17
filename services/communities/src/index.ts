@@ -20,6 +20,7 @@ import {
   getCommunityMemEpoch,
   getUserCommunityEpoch,
   membersCacheKey,
+  getDirectorySearchEpoch,
   searchCacheKey,
   setCachedJson,
   userCommunitiesCacheKey,
@@ -44,7 +45,7 @@ app.get("/health", (_req, res) => {
 });
 
 /**
- * Public directory search: all communities matching name (no membership filter).
+ * Public directory search (no membership filter): Redis cache + **search-service** / Elasticsearch.
  * Query: q (required for results), limit (optional, default 25, max 100).
  */
 app.get("/search-communities", async (req, res) => {
@@ -59,16 +60,44 @@ app.get("/search-communities", async (req, res) => {
   }
 
   try {
-    const ck = searchCacheKey(q, limit);
-    const hit = await getCachedJson<{ query: string; communities: Array<{ id: string; name: string; created_at: string }> }>(ck);
+    const epoch = await getDirectorySearchEpoch();
+    const ck = searchCacheKey(epoch, q, limit);
+    const hit = await getCachedJson<{ query: string; communities: Array<{ id: string; name: string; created_at: string }> }>(
+      ck,
+    );
     if (hit) {
       res.json(hit);
       return;
     }
 
-    const rows = await communitiesDao.searchByName(q, limit);
+    const base = env.SEARCH_SERVICE_URL.replace(/\/+$/, "");
+    const url = new URL(`${base}/directory/communities`);
+    url.searchParams.set("q", q);
+    url.searchParams.set("limit", String(limit));
 
-    const payload = { query: q, communities: rows };
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 12_000);
+    let fetchRes: Awaited<ReturnType<typeof fetch>>;
+    try {
+      fetchRes = await fetch(url.toString(), { signal: ctrl.signal, headers: { Accept: "application/json" } });
+    } finally {
+      clearTimeout(t);
+    }
+
+    if (!fetchRes.ok) {
+      logRouteError("GET /search-communities search-service error", new Error(`HTTP ${fetchRes.status}`), {
+        reqId: req.id,
+        q,
+        url: url.toString(),
+      });
+      res.status(502).json({ error: "Directory search temporarily unavailable" });
+      return;
+    }
+
+    const payload = (await fetchRes.json()) as {
+      query: string;
+      communities: Array<{ id: string; name: string; created_at: string }>;
+    };
     void setCachedJson(ck, cacheTtl.search, payload);
     res.json(payload);
   } catch (e) {

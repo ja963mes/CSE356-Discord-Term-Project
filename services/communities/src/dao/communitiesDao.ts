@@ -1,22 +1,7 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "../db";
 import { communities, communityMembers } from "../db/schema";
-import { CommunityDirectoryRow, UserCommunityRow } from "./types";
-
-// ILIKE '%q%': pair with migration 0010 (pg_trgm GIN on communities.name).
-export async function searchByName(query: string, limit: number): Promise<CommunityDirectoryRow[]> {
-  const pattern = `%${query}%`;
-  return db
-    .select({
-      id: communities.id,
-      name: communities.name,
-      created_at: communities.created_at,
-    })
-    .from(communities)
-    .where(sql`${communities.name} ILIKE ${pattern}`)
-    .orderBy(desc(communities.created_at))
-    .limit(limit);
-}
+import { UserCommunityRow } from "./types";
 
 export async function listForUser(userId: string): Promise<UserCommunityRow[]> {
   return db
