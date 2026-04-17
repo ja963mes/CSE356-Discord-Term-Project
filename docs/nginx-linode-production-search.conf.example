@@ -1,0 +1,73 @@
+# Nginx — production search ingress (search microservice only)
+#
+# Use this on a dedicated search edge VM/host (or sidecar ingress) so `/search`
+# is decoupled from the core backend ingress. Keep paths stable for clients while
+# scaling search-service instances behind this upstream.
+#
+# Suggested topology:
+#   Frontend VM nginx: `/search` -> this host (or LB in front of this host)
+#   Communities service: SEARCH_SERVICE_URL -> this host (for `/directory/communities`)
+#
+# Services expected behind this ingress:
+#   search-service instances (example ports: 3004, 3014, 3024)
+
+upstream search_service_pool {
+    least_conn;
+    server 127.0.0.1:3004 max_fails=3 fail_timeout=10s;
+    # Add/remove replicas as you scale:
+    # server 127.0.0.1:3014 max_fails=3 fail_timeout=10s;
+    # server 127.0.0.1:3024 max_fails=3 fail_timeout=10s;
+    keepalive 64;
+}
+
+server {
+    listen 80;
+    server_name search.internal.example;
+
+    client_max_body_size 5m;
+
+    location = /health {
+        proxy_pass http://search_service_pool/health;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 10s;
+        proxy_send_timeout 10s;
+    }
+
+    location ^~ /search {
+        proxy_pass http://search_service_pool;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    # communities-service queries this path directly for public directory search.
+    location ^~ /directory {
+        proxy_pass http://search_service_pool;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    location / {
+        return 404;
+    }
+}
+

@@ -4,7 +4,7 @@
 # This host should not serve frontend static files in split production.
 #
 # Services expected on localhost:
-#   3001 auth   3002 communities   3003 messages   3004 search
+#   3001 auth   3002 communities   3003 messages
 #   3005 realtime (/ws)   3006 create-community   3007 dms   3008 read-state
 
 map $http_upgrade $connection_upgrade {
@@ -23,10 +23,6 @@ upstream backend_communities {
 upstream backend_messages {
     server 127.0.0.1:3003;
     keepalive 32;
-}
-upstream backend_search {
-    server 127.0.0.1:3004;
-    keepalive 16;
 }
 # WebSocket: list a second server only if discord-realtime-2 actually listens there. Otherwise nginx
 # round-robins to a dead port and ~half of clients never get realtime (grading "Delivery timeout").
@@ -139,16 +135,6 @@ server {
 
     location ^~ /search-communities {
         proxy_pass http://backend_communities;
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    location ^~ /search {
-        proxy_pass http://backend_search;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
         proxy_set_header Host $host;

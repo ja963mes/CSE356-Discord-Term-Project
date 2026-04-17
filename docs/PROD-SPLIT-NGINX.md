@@ -6,6 +6,7 @@ This guide is for a **two-VM** topology:
 
 - **Frontend VM**: serves static `frontend/dist` and terminates TLS for the public domain.
 - **Backend VM**: runs Node services and nginx that proxies service paths to local ports.
+- **Optional Search ingress VM/host**: dedicated nginx for `search-service` (`/search`, `/directory`) with scalable upstream pool.
 
 Example hosts:
 
@@ -22,7 +23,8 @@ Client traffic should go to the frontend VM only:
 1. Browser hits `https://group-6.cse356.compas.cs.stonybrook.edu` -> frontend VM nginx.
 2. Frontend VM serves static SPA from `/var/www/discord-frontend`.
 3. API and WS routes are proxied by frontend VM nginx to backend VM nginx (`http://130.245.136.45:80`).
-4. Backend VM nginx proxies to local Node services (`127.0.0.1:3001..3008`).
+4. Backend VM nginx proxies to local Node services (`127.0.0.1:3001..3003,3005..3008`).
+5. Optional: frontend `/search` can target dedicated search ingress instead of backend nginx.
 
 This avoids exposing all backend service ports publicly.
 
@@ -75,10 +77,10 @@ ls -la /var/www/discord-frontend/index.html
   - `/messages`
   - `/attachments`
   - `/search-communities`
-  - `/search` (if enabled)
   - `/dms`
   - `/read-state`
   - `/ws`
+- Proxy `/search` to dedicated search ingress (`nginx-linode-production-search.conf.example`) when search is split out.
 
 Use [`nginx-linode-production-frontend.conf.example`](./nginx-linode-production-frontend.conf.example) as your baseline.
 
@@ -140,6 +142,7 @@ Run and monitor:
 Backend VM nginx should be API/WS only and proxy local service ports.
 
 Use [`nginx-linode-production-backend.conf.example`](./nginx-linode-production-backend.conf.example) as baseline.
+This backend config intentionally excludes `/search`; use dedicated search ingress for that route.
 
 Do not rely on frontend static serving on backend VM.
 
@@ -200,5 +203,5 @@ These files remain in `docs/` for historical reference only; each file begins wi
 - `nginx-linode-production.conf.example` — old single-host “static + API” combined production
 - `nginx-linode-services-only.conf.example` — old partial-stack proxy
 
-**Use only** `nginx-linode-production-frontend.conf.example` and `nginx-linode-production-backend.conf.example` for new deployments. For a single machine, merge `location` blocks from both (same path order as `frontend/vite.config.ts`) or run API nginx + Vite elsewhere.
+**Use only** `nginx-linode-production-frontend.conf.example`, `nginx-linode-production-backend.conf.example`, and (when split out) `nginx-linode-production-search.conf.example` for new deployments. For a single machine, merge `location` blocks from the needed configs (same path order as `frontend/vite.config.ts`) or run API nginx + Vite elsewhere.
 

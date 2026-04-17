@@ -22,6 +22,7 @@ Everything below lives in **`docs/`** except the root **[README.md](../README.md
 | **[PROD-SPLIT-NGINX.md](./PROD-SPLIT-NGINX.md)** | **Production:** two-VM nginx — frontend (static + TLS) + backend (API + `/ws`) |
 | **[nginx-linode-production-frontend.conf.example](./nginx-linode-production-frontend.conf.example)** | **Supported** frontend VM site config |
 | **[nginx-linode-production-backend.conf.example](./nginx-linode-production-backend.conf.example)** | **Supported** backend VM site config |
+| **[nginx-linode-production-search.conf.example](./nginx-linode-production-search.conf.example)** | **Supported** dedicated search ingress config (`/search`, `/directory`) |
 | **[ANSIBLE-SETUP.md](./ANSIBLE-SETUP.md)** | Ansible scaffold for split-VM deploy (`ansible/`) |
 
 **Deprecated (reference only — do not use for new installs):**  
