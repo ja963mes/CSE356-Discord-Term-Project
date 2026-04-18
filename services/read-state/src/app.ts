@@ -98,13 +98,24 @@ app.post("/read-state/channels/:channelId/read", requireAuth, async (req, res) =
     return;
   }
 
-  const exists = await ensureMessageExists(channelIdResult.data, body.data.messageId, body.data.timeuuid);
+  let exists: boolean;
+  try {
+    exists = await ensureMessageExists(channelIdResult.data, body.data.messageId, body.data.timeuuid);
+  } catch {
+    res.status(400).json({ error: "Invalid timeuuid" });
+    return;
+  }
   if (!exists) {
     res.status(404).json({ error: "Message not found" });
     return;
   }
 
-  await markChannelRead(req.user!.internal_id, channelIdResult.data, body.data.messageId, body.data.timeuuid);
+  try {
+    await markChannelRead(req.user!.internal_id, channelIdResult.data, body.data.messageId, body.data.timeuuid);
+  } catch {
+    res.status(400).json({ error: "Invalid timeuuid" });
+    return;
+  }
   res.status(204).send();
 });
 
@@ -140,7 +151,13 @@ app.post("/read-state/dms/:conversationId/read", requireAuth, async (req, res) =
     return;
   }
 
-  let messageId = await getDmMessageIdForTimeuuid(parsed.data, body.data.timeuuid);
+  let messageId: string | null;
+  try {
+    messageId = await getDmMessageIdForTimeuuid(parsed.data, body.data.timeuuid);
+  } catch {
+    res.status(400).json({ error: "Invalid timeuuid" });
+    return;
+  }
   if (!messageId) {
     res.status(404).json({ error: "Message not found" });
     return;

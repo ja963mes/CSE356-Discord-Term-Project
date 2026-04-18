@@ -4,11 +4,42 @@ import { db } from "../db";
 import { communityMembers, channelMembers, channels, dmParticipants } from "../db/schema";
 import { requireAuth } from "../middleware/session";
 import { searchMessages } from "../elasticsearch";
+import { env } from "../env";
 
 const router = Router();
 
 function isUuid(s: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function highlightSnippet(content: string, q: string): string {
+  const safe = escapeHtml(content);
+  const needle = q.trim();
+  if (!needle) return safe;
+  // Simple case-insensitive highlight of first occurrence.
+  const idx = safe.toLowerCase().indexOf(needle.toLowerCase());
+  if (idx < 0) return safe;
+  const before = safe.slice(0, idx);
+  const mid = safe.slice(idx, idx + needle.length);
+  const after = safe.slice(idx + needle.length);
+  return `${before}<em>${mid}</em>${after}`;
+}
+
+async function fetchJsonWithCookie<T>(url: string, cookie: string | undefined): Promise<T | null> {
+  try {
+    const res = await fetch(url, {
+      // In Node, send Cookie header explicitly (capitalization matters for some libs/proxies).
+      headers: cookie ? { Cookie: cookie } : undefined,
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
 }
 
 router.get("/search/messages", requireAuth, async (req: Request, res: Response) => {
@@ -104,7 +135,58 @@ router.get("/search/messages", requireAuth, async (req: Request, res: Response) 
       offset,
     });
 
-    res.json({ query: q, ...results });
+    if (results.total > 0) {
+      res.json({ query: q, ...results });
+      return;
+    }
+
+    // Fallback: scan recent messages via backend API using the caller's session cookie.
+    // This covers gaps when the search service was down and missed pubsub events.
+    const cookie = req.header("cookie");
+    const channelsToScan = scopeIds.slice(0, 10);
+    const scans = await Promise.all(
+      channelsToScan.map((channelId) =>
+        fetchJsonWithCookie<{ channelId: string; messages: Array<{
+          id: string;
+          timeuuid: string;
+          authorId: string;
+          author: string;
+          content: string;
+          createdAt: string;
+          deleted?: boolean;
+        }>; }>(
+          `${env.BACKEND_API_URL}/messages?channelId=${encodeURIComponent(channelId)}&limit=200`,
+          cookie
+        ).then((body) => ({ channelId, body }))
+      )
+    );
+
+    const lowered = q.toLowerCase();
+    const matched: any[] = [];
+    for (const { channelId, body } of scans) {
+      const msgs = body?.messages ?? [];
+      for (const m of msgs) {
+        if (m.deleted) continue;
+        if (typeof m.content !== "string") continue;
+        if (!m.content.toLowerCase().includes(lowered)) continue;
+        matched.push({
+          message_id: String(m.id),
+          scope_type: "channel",
+          scope_id: channelId,
+          community_id: communityId ?? null,
+          channel_name: null,
+          author_id: String(m.authorId ?? ""),
+          author_username: String(m.author ?? ""),
+          content: String(m.content ?? ""),
+          created_at: String(m.createdAt ?? ""),
+          highlight: highlightSnippet(String(m.content ?? ""), q),
+        });
+        if (matched.length >= limit) break;
+      }
+      if (matched.length >= limit) break;
+    }
+
+    res.json({ query: q, total: matched.length, results: matched });
   } else {
     // scope === "dm"
     const conversationId = String(req.query.conversationId ?? "");
@@ -138,7 +220,42 @@ router.get("/search/messages", requireAuth, async (req: Request, res: Response) 
       offset,
     });
 
-    res.json({ query: q, ...results });
+    if (results.total > 0) {
+      res.json({ query: q, ...results });
+      return;
+    }
+
+    const cookie = req.header("cookie");
+    const body = await fetchJsonWithCookie<{ messages: Array<{
+      messageId: string;
+      conversationId: string;
+      authorId: string;
+      content: string;
+      createdAt: string;
+      deleted?: boolean;
+    }>; nextCursor: string | null }>(
+      `${env.BACKEND_API_URL}/dms/${encodeURIComponent(conversationId)}/messages?limit=200`,
+      cookie
+    );
+
+    const lowered = q.toLowerCase();
+    const matched = (body?.messages ?? [])
+      .filter((m) => !m.deleted && typeof m.content === "string" && m.content.toLowerCase().includes(lowered))
+      .slice(0, limit)
+      .map((m) => ({
+        message_id: String(m.messageId),
+        scope_type: "dm",
+        scope_id: conversationId,
+        community_id: null,
+        channel_name: null,
+        author_id: String(m.authorId ?? ""),
+        author_username: String(m.authorId ?? ""),
+        content: String(m.content ?? ""),
+        created_at: String(m.createdAt ?? ""),
+        highlight: highlightSnippet(String(m.content ?? ""), q),
+      }));
+
+    res.json({ query: q, total: matched.length, results: matched });
   }
 });
 

@@ -10,6 +10,17 @@
 #   Search ingress nginx:     10.0.2.26:3004 (Private IP, optional dedicated search host)
 #   Public domain:            group-6.cse356.compas.cs.stonybrook.edu
 #
+# REQUIRED — set these in /etc/nginx/nginx.conf before deploying this site config.
+# WebSocket connections are long-lived (proxy_read_timeout 86400) and each one holds
+# a worker slot. The default worker_connections 768 exhausts under any real load and
+# causes 500 errors on all other requests.
+#
+#   worker_rlimit_nofile 65536;   (in the top-level context)
+#   events {
+#       worker_connections 16384;
+#       multi_accept on;
+#   }
+#
 # Deploy static build:
 #   sudo mkdir -p /var/www/discord-frontend
 #   npm ci && npm run build --workspace frontend

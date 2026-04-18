@@ -173,6 +173,33 @@ wss.on("connection", async (ws, req) => {
   const normId = normUserId(userId);
   if (!userConnections.has(normId)) userConnections.set(normId, new Set());
   userConnections.get(normId)!.add(connId);
+
+  // Register close/error handlers immediately after adding to the map so that if the socket
+  // closes during any subsequent await the cleanup always runs and the connection is not leaked.
+  ws.on("close", async () => {
+    const prev = await computePresence(redis, userId);
+    connections.delete(connId);
+    const closeNormId = normUserId(userId);
+    const userConns = userConnections.get(closeNormId);
+    if (userConns) {
+      userConns.delete(connId);
+      if (userConns.size === 0) userConnections.delete(closeNormId);
+    }
+    await removeConnection(redis, userId, connId, instanceId);
+    console.log(`[disconnect] userId=${userId} connId=${connId} total=${connections.size}`);
+    const stillConnected = [...connections.values()].some((c) => c.userId === userId);
+    // Broadcast BEFORE unsubscribing — targets are looked up from context sets,
+    // which must still be in Redis when broadcastPresenceChange runs.
+    await updateAndBroadcast(userId, prev);
+    if (!stillConnected) {
+      await unsubscribeUser(redis, userId);
+    }
+  });
+
+  ws.on("error", (err) => {
+    console.error(`[error] connId=${connId}`, err);
+  });
+
   await Promise.all([
     registerConnection(redis, userId, connId, instanceId),
     subscribeUser(redis, userId),
@@ -246,30 +273,6 @@ wss.on("connection", async (ws, req) => {
     await updateAndBroadcast(userId, prev);
   });
 
-  // On close, remove the connection and broadcast presence if it changed
-  ws.on("close", async () => {
-    const prev = await computePresence(redis, userId);
-    connections.delete(connId);
-    const normId = normUserId(userId);
-    const userConns = userConnections.get(normId);
-    if (userConns) {
-      userConns.delete(connId);
-      if (userConns.size === 0) userConnections.delete(normId);
-    }
-    await removeConnection(redis, userId, connId, instanceId);
-    console.log(`[disconnect] userId=${userId} connId=${connId} total=${connections.size}`);
-    const stillConnected = [...connections.values()].some((c) => c.userId === userId);
-    // Broadcast BEFORE unsubscribing — targets are looked up from context sets,
-    // which must still be in Redis when broadcastPresenceChange runs.
-    await updateAndBroadcast(userId, prev);
-    if (!stillConnected) {
-      await unsubscribeUser(redis, userId);
-    }
-  });
-
-  ws.on("error", (err) => {
-    console.error(`[error] connId=${connId}`, err);
-  });
 });
 
 // Every 30s check all connected users for idle transitions
