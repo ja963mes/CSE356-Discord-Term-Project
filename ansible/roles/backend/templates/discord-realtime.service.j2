@@ -7,7 +7,7 @@ Type=simple
 User={{ deploy_user }}
 WorkingDirectory={{ deploy_path }}
 EnvironmentFile=/etc/discord.env
-Environment="REALTIME_PORT=3005"
+Environment="PORT=3005"
 ExecStart=/usr/bin/npm run start --workspace realtime-service
 Restart=always
 RestartSec=3
