@@ -9,6 +9,8 @@ deploy_path: "/home/deploy/CSE356-Discord-Term-Project"
 frontend_web_root: "/var/www/discord-frontend"
 # Keep nginx config files stable on routine deploys; set true for bootstrap/config rollout.
 manage_nginx_config: false
+# Set true to update systemd service files (fixes path mismatches, adds new services).
+manage_systemd_services: true
 
 # Path is relative to repo root when running ansible-playbook from ./ansible.
 frontend_nginx_conf_src: "../docs/nginx/production-frontend.conf.example"

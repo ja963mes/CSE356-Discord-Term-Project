@@ -20,6 +20,30 @@
   become_user: "{{ deploy_user }}"
   loop: "{{ search_workspace_build_commands }}"
 
+- name: Manage systemd service files (optional, fixes path mismatches)
+  when: manage_systemd_services | default(false)
+  block:
+    - name: Install search systemd service files
+      ansible.builtin.template:
+        src: "{{ item }}.service.j2"
+        dest: "/etc/systemd/system/{{ item }}.service"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ search_systemd_services }}"
+      register: systemd_files_changed
+
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: systemd_files_changed.changed
+
+    - name: Enable search services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+      loop: "{{ search_systemd_services }}"
+
 - name: Restart search services
   ansible.builtin.systemd:
     name: "{{ item }}"
