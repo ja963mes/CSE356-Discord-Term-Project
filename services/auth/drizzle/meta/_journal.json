@@ -85,6 +85,13 @@
       "when": 1774900000000,
       "tag": "0011_drop_communities_name_trgm_idx",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1776544105225,
+      "tag": "0012_yummy_thor",
+      "breakpoints": true
     }
   ]
 }

@@ -20,6 +20,21 @@
   become_user: "{{ deploy_user }}"
   loop: "{{ backend_workspace_build_commands }}"
 
+- name: Run database migrations (first backend host only)
+  when: inventory_hostname == groups['backend'][0]
+  block:
+    - name: Execute Drizzle migrations
+      ansible.builtin.command: npm run db:migrate
+      args:
+        chdir: "{{ deploy_path }}"
+      become_user: "{{ deploy_user }}"
+      register: migration_output
+
+    - name: Display migration output
+      ansible.builtin.debug:
+        var: migration_output.stdout_lines
+      when: migration_output.stdout_lines is defined and migration_output.stdout_lines | length > 0
+
 - name: Manage backend nginx config files (optional)
   when: manage_nginx_config
   block:
