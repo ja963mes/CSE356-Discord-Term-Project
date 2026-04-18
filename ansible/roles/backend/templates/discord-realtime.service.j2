@@ -1,0 +1,18 @@
+[Unit]
+Description=Discord realtime service (instance 1)
+After=network.target
+
+[Service]
+Type=simple
+User={{ deploy_user }}
+WorkingDirectory={{ deploy_path }}
+EnvironmentFile=/etc/discord.env
+Environment="PORT=3005"
+ExecStart=/usr/bin/npm run start --workspace realtime-service
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

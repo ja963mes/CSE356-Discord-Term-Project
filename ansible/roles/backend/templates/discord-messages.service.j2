@@ -1,0 +1,17 @@
+[Unit]
+Description=Discord messages service
+After=network.target
+
+[Service]
+Type=simple
+User={{ deploy_user }}
+WorkingDirectory={{ deploy_path }}
+EnvironmentFile=/etc/discord.env
+ExecStart=/usr/bin/npm run start --workspace messages-service
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
