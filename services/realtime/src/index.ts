@@ -432,37 +432,14 @@ redisSub.on("message", (channel, message) => {
 
   const targetUserIds = new Set((event.participantIds ?? []).map(normUserId));
   const payload = JSON.stringify(event);
-  const localConnectedTargets = new Set<string>();
 
-  logger.info({ eventType: event.type, conversationId: event.conversationId, participantCount: targetUserIds.size }, "dm event received, fanning out");
   for (const targetUid of targetUserIds) {
     const conns = userConnections.get(targetUid);
     if (!conns) continue;
-    localConnectedTargets.add(targetUid);
     for (const connId of conns) {
       const conn = connections.get(connId);
       if (conn) safeSend(conn.ws, payload, "dm_event");
     }
-  }
-  const missingLocalTargets = [...targetUserIds].filter((id) => !localConnectedTargets.has(id));
-  if (
-    missingLocalTargets.length > 0 &&
-    (event.type === "dm:message:create" ||
-      event.type === "dm:message:edit" ||
-      event.type === "dm:message:delete" ||
-      event.type === "dm:read-state:update")
-  ) {
-    logger.warn(
-      {
-        eventType: event.type,
-        conversationId: event.conversationId,
-        participantCount: targetUserIds.size,
-        localConnectedCount: localConnectedTargets.size,
-        missingLocalTargets,
-        localConnectionCount: connections.size,
-      },
-      "dm fanout had missing local recipients"
-    );
   }
 
   if (event.type === "dm:conversation:create") {
