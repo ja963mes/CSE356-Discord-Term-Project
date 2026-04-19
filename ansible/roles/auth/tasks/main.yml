@@ -1,0 +1,56 @@
+- name: Ensure auth repo is checked out
+  ansible.builtin.git:
+    repo: "{{ repo_url }}"
+    dest: "{{ deploy_path }}"
+    version: "{{ deploy_branch }}"
+    update: true
+    force: true
+  become_user: "{{ deploy_user }}"
+
+- name: Install auth workspace dependencies
+  ansible.builtin.command: npm ci
+  args:
+    chdir: "{{ deploy_path }}"
+  become_user: "{{ deploy_user }}"
+
+- name: Build auth workspace
+  ansible.builtin.command: "{{ item }}"
+  args:
+    chdir: "{{ deploy_path }}"
+  become_user: "{{ deploy_user }}"
+  loop: "{{ auth_workspace_build_commands }}"
+
+- name: Manage auth systemd service files (optional)
+  when: manage_systemd_services | default(false)
+  block:
+    - name: Install auth systemd service files
+      ansible.builtin.template:
+        src: "{{ item }}.service.j2"
+        dest: "/etc/systemd/system/{{ item }}.service"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ auth_systemd_services }}"
+      register: auth_systemd_files_changed
+
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: auth_systemd_files_changed.changed
+
+    - name: Enable auth services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+      loop: "{{ auth_systemd_services }}"
+
+- name: Restart auth services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: restarted
+  loop: "{{ auth_systemd_services }}"
+
+- name: Check auth services are active
+  ansible.builtin.command: "systemctl is-active {{ item }}"
+  changed_when: false
+  loop: "{{ auth_systemd_services }}"

@@ -9,6 +9,12 @@
   become: true
   roles:
     - realtime
+
+- name: Configure and deploy auth VM
+  hosts: auth
+  become: true
+  roles:
+    - auth
     
 - name: Configure and deploy backend VM
   hosts: backend

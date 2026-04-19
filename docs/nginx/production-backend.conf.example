@@ -4,7 +4,7 @@
 # This host should not serve frontend static files in split production.
 #
 # Services on localhost (this VM):
-#   3001 auth   3002 communities   3003 messages
+#   3002 communities   3003 messages
 #   3006 create-community   3007 dms   3008 read-state
 #
 # Realtime (WebSocket /ws): two instances on dedicated realtime VM (private network).
@@ -15,10 +15,6 @@ map $http_upgrade $connection_upgrade {
     ''      close;
 }
 
-upstream backend_auth {
-    server 127.0.0.1:3001;
-    keepalive 32;
-}
 upstream backend_communities {
     server 127.0.0.1:3002;
     keepalive 32;
@@ -48,43 +44,11 @@ upstream backend_read_state {
     keepalive 16;
 }
 
-limit_req_zone $binary_remote_addr zone=auth_limit:10m rate=100r/s;
-
-map "$request_method$uri" $auth_bcrypt_ip_key {
-    default                        "";
-    "~^POST/auth/login$"           $binary_remote_addr;
-    "~^POST/auth/register$"        $binary_remote_addr;
-    "~^POST/auth/oauth/complete$"  $binary_remote_addr;
-}
-limit_req_zone $auth_bcrypt_ip_key zone=auth_bcrypt_per_ip:10m rate=20r/s;
-
-map "$request_method$uri" $auth_bcrypt_global_key {
-    default                        "";
-    "~^POST/auth/login$"           "bcrypt";
-    "~^POST/auth/register$"        "bcrypt";
-    "~^POST/auth/oauth/complete$"  "bcrypt";
-}
-limit_req_zone $auth_bcrypt_global_key zone=auth_bcrypt_global:1m rate=100r/s;
-
 server {
     listen 80;
     server_name 10.0.2.247;
 
     client_max_body_size 25m;
-
-    location ^~ /auth {
-        limit_req zone=auth_limit burst=200 nodelay;
-        limit_req zone=auth_bcrypt_per_ip burst=40 nodelay;
-        limit_req zone=auth_bcrypt_global burst=100 nodelay;
-        limit_req_status 429;
-        proxy_pass http://backend_auth;
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
 
     location ^~ /create-community {
         proxy_pass http://backend_create_community;
