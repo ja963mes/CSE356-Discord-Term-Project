@@ -433,9 +433,7 @@ export const listMessages = async (params: {
   values.push(params.limit);
 
   const result = await cassandra.execute(queryParts.join(" "), values, { prepare: true });
-  const messages = result.rows
-    .filter((r) => r.get("author_id") != null)
-    .map(mapMessage);
+  const messages = result.rows.map(mapMessage);
   const nextCursor =
     messages.length === params.limit
       ? result.rows[result.rows.length - 1].get("created_at").toString()
@@ -462,14 +460,10 @@ export const editMessage = async (params: {
   if (result.rowLength === 0) {
     throw new DmError(404, "Message not found");
   }
-  const authorIdCol = result.first().get("author_id");
-  if (authorIdCol == null) {
-    throw new DmError(404, "Message not found");
-  }
   if (result.first().get("is_deleted") === true) {
     throw new DmError(400, "This message was deleted");
   }
-  if (authorIdCol.toString() !== params.authorId) {
+  if (result.first().get("author_id").toString() !== params.authorId) {
     throw new DmError(403, "Only the author can edit this message");
   }
 
@@ -532,15 +526,11 @@ export const deleteMessage = async (params: {
   if (result.rowLength === 0) {
     throw new DmError(404, "Message not found");
   }
-  const authorIdCol = result.first().get("author_id");
-  if (authorIdCol == null) {
-    throw new DmError(404, "Message not found");
-  }
   const messageId = result.first().get("message_id").toString();
   if (result.first().get("is_deleted") === true) {
     return;
   }
-  if (authorIdCol.toString() !== params.authorId) {
+  if (result.first().get("author_id").toString() !== params.authorId) {
     throw new DmError(403, "Only the author can delete this message");
   }
 

@@ -310,13 +310,11 @@ export async function getDmParticipantReadStates(conversationId: string, request
 
 export async function getDmMessageIdForTimeuuid(conversationId: string, timeuuid: string): Promise<string | null> {
   const result = await dmsCassandra.execute(
-    `SELECT message_id, author_id FROM ${dmsKs}.messages_by_conversation WHERE conversation_id = ? AND created_at = ?`,
+    `SELECT message_id FROM ${dmsKs}.messages_by_conversation WHERE conversation_id = ? AND created_at = ?`,
     [toUuid(conversationId), toTimeUuid(timeuuid)],
     { prepare: true, consistency: readConsistency }
   );
-  const row = result.rows[0];
-  if (!row || row.get("author_id") == null) return null;
-  return row.get("message_id")?.toString() ?? null;
+  return result.rows[0]?.get("message_id")?.toString() ?? null;
 }
 
 export async function getChannelMessageIdForTimeuuid(channelId: string, timeuuid: string): Promise<string | null> {
