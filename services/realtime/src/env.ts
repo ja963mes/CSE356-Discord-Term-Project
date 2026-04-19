@@ -20,5 +20,4 @@ export const env = {
   CASSANDRA_PORT: parseInt(process.env.CASSANDRA_PORT ?? "9042", 10),
   CASSANDRA_LOCAL_DATACENTER: process.env.CASSANDRA_LOCAL_DATACENTER ?? "datacenter1",
   CASSANDRA_KEYSPACE: process.env.CASSANDRA_KEYSPACE ?? "dms",
-  ATTACHMENT_BASE_URL: process.env.ATTACHMENT_BASE_URL ?? "",
 };
