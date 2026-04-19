@@ -70,7 +70,12 @@ function normUserId(id: string): string {
 }
 
 function safeSend(ws: WebSocket, payload: string, label: string): void {
-  if (ws.readyState !== WebSocket.OPEN) return;
+  if (ws.readyState !== WebSocket.OPEN) {
+    if (label === "dm_event") {
+      logger.warn({ label, readyState: ws.readyState }, "ws not open, dropping send");
+    }
+    return;
+  }
   try {
     ws.send(payload);
   } catch (err) {
