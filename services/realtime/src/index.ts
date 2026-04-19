@@ -70,7 +70,12 @@ function normUserId(id: string): string {
 }
 
 function safeSend(ws: WebSocket, payload: string, label: string): void {
-  if (ws.readyState !== WebSocket.OPEN) return;
+  if (ws.readyState !== WebSocket.OPEN) {
+    if (label === "dm_event") {
+      logger.warn({ label, readyState: ws.readyState }, "ws not open, dropping send");
+    }
+    return;
+  }
   try {
     ws.send(payload);
   } catch (err) {
@@ -146,6 +151,26 @@ app.get("/internal/presence/:userId", async (req, res) => {
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
+// Server-side ping/pong heartbeat. Keeps idle WS alive through NAT/proxy timeouts
+// and detects half-open TCP so we can terminate and clean up.
+const HEARTBEAT_MS = 25_000;
+const heartbeat = setInterval(() => {
+  for (const ws of wss.clients) {
+    const w = ws as WebSocket & { isAlive?: boolean };
+    if (w.isAlive === false) {
+      ws.terminate();
+      continue;
+    }
+    w.isAlive = false;
+    try {
+      ws.ping();
+    } catch {
+      // socket closed mid-iteration, ignore
+    }
+  }
+}, HEARTBEAT_MS);
+wss.on("close", () => clearInterval(heartbeat));
+
 // Initial websocket connection
 wss.on("connection", async (ws, req) => {
   // Authenticate via session_token cookie
@@ -166,6 +191,10 @@ wss.on("connection", async (ws, req) => {
   }
 
   const connId = randomUUID();
+  (ws as WebSocket & { isAlive?: boolean }).isAlive = true;
+  ws.on("pong", () => {
+    (ws as WebSocket & { isAlive?: boolean }).isAlive = true;
+  });
   // Get the user's current presence before registering the new connection
   const prevStatus = await computePresence(redis, userId);
 

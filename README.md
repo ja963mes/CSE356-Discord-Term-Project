@@ -13,15 +13,11 @@ Node **microservices** (Express + TypeScript), a **React (Vite)** client, and sh
 
 ## Architecture (local dev)
 
-With **`npm run dev:all`**, the browser loads the app from **Vite :5173**, which **proxies** API paths to localhost services (same path order as `frontend/vite.config.ts`).
+With **`npm run dev:all`**, the browser loads the app from **Vite :5173**, which **proxies** API paths to localhost services (same path order as `frontend/vite.config.ts`). Services coordinate through Redis pub/sub — DMs, channel messages, community changes, and presence all flow to the realtime service (and to the search indexer) over named Redis channels.
 
 ```mermaid
 flowchart TB
-  subgraph client [Browser]
-    Browser[SPA]
-  end
-
-  Vite[Vite :5173]
+  Browser[Browser SPA] --> Vite[Vite :5173]
 
   subgraph svc [Node services]
     A[auth :3001]
@@ -36,21 +32,20 @@ flowchart TB
 
   subgraph data [Data stores]
     PG[(PostgreSQL)]
-    RD[(Redis)]
+    RD[(Redis pub/sub + sessions)]
     CAS[(Cassandra)]
     ES[(Elasticsearch)]
     S3[(MinIO)]
   end
 
-  Browser --> Vite
-  Vite --> A
-  Vite --> C
-  Vite --> M
-  Vite --> S
-  Vite --> R
-  Vite --> CC
-  Vite --> D
-  Vite --> RS
+  Vite -->|/auth| A
+  Vite -->|/communities /channels /search-communities| C
+  Vite -->|/messages /attachments| M
+  Vite -->|/search /directory| S
+  Vite -->|/ws| R
+  Vite -->|/create-community| CC
+  Vite -->|/dms| D
+  Vite -->|/read-state| RS
 
   A --> PG
   A --> RD
@@ -62,6 +57,7 @@ flowchart TB
   M --> CAS
   M --> RD
   M --> S3
+  D --> PG
   D --> CAS
   D --> RD
   S --> PG
@@ -71,7 +67,25 @@ flowchart TB
   RS --> PG
   RS --> CAS
   RS --> RD
+
+  %% pub/sub fanout: publishers (dotted) -> realtime + search indexer
+  M -. channel:events .-> R
+  M -. messages:index .-> S
+  D -. dm:events .-> R
+  C -. community:events .-> R
+  CC -. community:events .-> R
+  RS -. dm:events (read-state) .-> R
 ```
+
+**Pub/sub channels:**
+
+| Channel | Publishers | Subscribers | Purpose |
+|---------|------------|-------------|---------|
+| `dm:events` | dms, read-state | realtime | DM create/edit/delete, read-state updates |
+| `channel:events` | messages | realtime | Channel message create/edit/delete |
+| `community:events` | communities, create-community | realtime | Guild / channel / membership changes |
+| `presence:broadcast` | realtime | realtime (cross-instance) | Presence deltas between realtime instances |
+| Indexing | messages | search | Elasticsearch indexing of channel messages |
 
 **Proxy map (prefix → default target):**
 
@@ -86,7 +100,40 @@ flowchart TB
 | `/read-state` | 3008 | Read / unread state |
 | `/ws` | 3005 | WebSocket (upgrade) |
 
-Scaling and sharding notes: **[docs/sharding-and-replication.md](./docs/sharding-and-replication.md)**.
+---
+
+## Architecture (split-VM production)
+
+In production the stack runs on three VMs with nginx load-balancing WebSockets across **two realtime instances** on the same host (ports `3005` and `3009`). The WebSocket server runs a 25 s ping/pong heartbeat so idle connections survive NAT / proxy timeouts.
+
+```mermaid
+flowchart LR
+  Client[Client / Autograder] --> FE[Frontend VM<br/>nginx · static + TLS]
+  FE -->|/auth /communities /messages<br/>/search /dms /read-state ...| BE[Backend VM<br/>nginx + Node services]
+  FE -->|/ws upgrade| BE
+
+  BE -->|round-robin| RT1[realtime-1 :3005]
+  BE -->|round-robin| RT2[realtime-2 :3009]
+
+  subgraph RTVM [Realtime VM]
+    RT1
+    RT2
+  end
+
+  subgraph Data [Shared data tier]
+    PG[(Postgres + PgBouncer)]
+    RD[(Redis)]
+    CAS[(Cassandra)]
+    ES[(Elasticsearch)]
+    S3[(MinIO)]
+  end
+
+  BE --> Data
+  RT1 --> RD
+  RT2 --> RD
+```
+
+Ansible drives the split deploy (see `ansible/` + **[docs/PROD-SPLIT-NGINX.md](./docs/PROD-SPLIT-NGINX.md)**, **[docs/ANSIBLE-SETUP.md](./docs/ANSIBLE-SETUP.md)**). Scaling / sharding notes: **[docs/sharding-and-replication.md](./docs/sharding-and-replication.md)**.
 
 ---
 
@@ -180,10 +227,10 @@ k6/                   # Load / latency smoke tests
 ansible/              # Optional split-VM deploy playbook
 services/
   auth/               # 3001
-  communities/      # 3002
+  communities/        # 3002
   messages/           # 3003
   search/             # 3004
-  realtime/           # 3005
+  realtime/           # 3005 (+ 3009 as realtime-2 in production)
   create-community/   # 3006
   dms/                # 3007
   read-state/         # 3008
