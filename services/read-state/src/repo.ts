@@ -317,6 +317,15 @@ export async function getDmMessageIdForTimeuuid(conversationId: string, timeuuid
   return result.rows[0]?.get("message_id")?.toString() ?? null;
 }
 
+export async function getChannelMessageIdForTimeuuid(channelId: string, timeuuid: string): Promise<string | null> {
+  const result = await messagesCassandra.execute(
+    `SELECT message_id FROM ${messagesKs}.messages_by_channel WHERE channel_id = ? AND created_at = ?`,
+    [toUuid(channelId), toTimeUuid(timeuuid)],
+    { prepare: true, consistency: readConsistency }
+  );
+  return result.rows[0]?.get("message_id")?.toString() ?? null;
+}
+
 export async function markDmRead(
   userId: string,
   conversationId: string,

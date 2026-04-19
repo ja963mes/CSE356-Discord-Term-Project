@@ -13,6 +13,11 @@ export async function removeConnection(redis: Redis, userId: string, connId: str
   await redis.hdel(`presence:conns:${userId}`, `${instanceId}:${connId}`);
 }
 
+/** True if this user still has at least one WS registered on any realtime instance (cluster-wide). */
+export async function hasRegisteredConnections(redis: Redis, userId: string): Promise<boolean> {
+  return (await redis.hlen(`presence:conns:${userId}`)) > 0;
+}
+
 export async function updateActivity(redis: Redis, userId: string, connId: string, instanceId: string): Promise<void> {
   await redis.hset(`presence:conns:${userId}`, `${instanceId}:${connId}`, Date.now());
 }
