@@ -3,9 +3,12 @@
 # Use this on the backend VM that runs Node services locally.
 # This host should not serve frontend static files in split production.
 #
-# Services expected on localhost:
+# Services on localhost (this VM):
 #   3001 auth   3002 communities   3003 messages
-#   3005 realtime (/ws)   3006 create-community   3007 dms   3008 read-state
+#   3006 create-community   3007 dms   3008 read-state
+#
+# Realtime (WebSocket /ws): two instances on dedicated realtime VM (private network).
+# Upstream below uses 10.0.3.180 — keep in sync with inventory / firewall (backend must reach :3005 and :3009).
 
 map $http_upgrade $connection_upgrade {
     default upgrade;
@@ -27,8 +30,8 @@ upstream backend_messages {
 # WebSocket: list a second server only if discord-realtime-2 actually listens there. Otherwise nginx
 # round-robins to a dead port and ~half of clients never get realtime (grading "Delivery timeout").
 upstream backend_realtime {
-    server 127.0.0.1:3005;
-    server 127.0.0.1:3009;
+    server 10.0.3.180:3005;
+    server 10.0.3.180:3009;
     keepalive 16;
 }
 
