@@ -3,7 +3,6 @@ backend_workspace_build_commands:
   - npm run build --workspace communities-service
   - npm run build --workspace create-community-service
   - npm run build --workspace messages-service
-  - npm run build --workspace realtime-service
   - npm run build --workspace dms-service
   - npm run build --workspace read-state-service
 
@@ -12,7 +11,5 @@ backend_systemd_services:
   - discord-communities
   - discord-create-community
   - discord-messages
-  - discord-realtime
-  - discord-realtime-2
   - discord-dms
   - discord-read-state

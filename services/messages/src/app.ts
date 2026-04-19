@@ -1,7 +1,7 @@
 /// <reference path="./types/express.d.ts" />
 import express, { Request, Response, NextFunction } from "express";
 import cookieParser from "cookie-parser";
-import { httpLogger, logRouteError } from "./logger";
+import { httpLogger, logRouteError, logger } from "./logger";
 import { eq, and } from "drizzle-orm";
 import { db } from "./db";
 import { requireAuth } from "./middleware/session";
@@ -183,6 +183,8 @@ app.post("/messages", requireAuth, async (req: Request, res: Response) => {
     attachmentKeys,
   });
 
+  logger.info({ userId, channelId, messageId }, "message stored");
+
   const message = {
     id: messageId,
     messageId,
@@ -203,6 +205,8 @@ app.post("/messages", requireAuth, async (req: Request, res: Response) => {
     communityId: access.channel.community_id,
     message,
   });
+
+  logger.info({ userId, channelId, messageId, type: "channel:message:create" }, "channel event published");
 
   res.status(201).json({ message });
 });

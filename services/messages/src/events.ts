@@ -1,4 +1,5 @@
 import { redis } from "./redis";
+import { logger } from "./logger";
 
 const CHANNEL = "channel:events";
 
@@ -49,6 +50,6 @@ export const publishChannelEvent = async (event: ChannelMessageEvent): Promise<v
   try {
     await redis.publish(CHANNEL, JSON.stringify(event));
   } catch (err) {
-    console.error("[messages] failed to publish event", event.type, err);
+    logger.error({ err, eventType: event.type }, "failed to publish channel event");
   }
 };

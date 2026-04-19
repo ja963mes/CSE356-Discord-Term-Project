@@ -12,9 +12,8 @@ manage_nginx_config: false
 # Set true to update systemd service files (fixes path mismatches, adds new services).
 manage_systemd_services: true
 
-# Path is relative to repo root when running ansible-playbook from ./ansible.
-frontend_nginx_conf_src: "../docs/nginx/production-frontend.conf.example"
-backend_nginx_conf_src: "../docs/nginx/production-backend.conf.example"
+frontend_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-frontend.conf.example"
+backend_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-backend.conf.example"
 
 # Backend vs realtime: group_vars/backend.yml + roles/backend; realtime group_vars/realtime.yml + roles/realtime.
 
