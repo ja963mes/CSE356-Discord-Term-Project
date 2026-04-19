@@ -19,7 +19,7 @@ Everything below lives in **`docs/`** except the root **[README.md](../README.md
 | Document | Description |
 |----------|-------------|
 | **[STAGING-ROLLOUT.md](./STAGING-ROLLOUT.md)** | Staging VM: services, systemd, nginx, migrations, smoke checks |
-| **[PROD-SPLIT-NGINX.md](./PROD-SPLIT-NGINX.md)** | **Production:** two-VM nginx — frontend (static + TLS) + backend (API + `/ws`) |
+| **[PROD-SPLIT-NGINX.md](./PROD-SPLIT-NGINX.md)** | **Production:** split nginx with frontend + backend, plus direct `/auth` to auth-service over private network |
 | **[nginx/README.md](./nginx/README.md)** | Centralized nginx configs index |
 | **[nginx/production-frontend.conf.example](./nginx/production-frontend.conf.example)** | **Supported** frontend VM site config |
 | **[nginx/production-backend.conf.example](./nginx/production-backend.conf.example)** | **Supported** backend VM site config |

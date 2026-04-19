@@ -1,6 +1,6 @@
 # Ansible
 
-Deploy automation for the **split frontend / backend / search VM** layout described in **[docs/PROD-SPLIT-NGINX.md](../docs/PROD-SPLIT-NGINX.md)**.
+Deploy automation for the **split frontend / backend / auth / realtime / search VM** layout described in **[docs/PROD-SPLIT-NGINX.md](../docs/PROD-SPLIT-NGINX.md)**.
 
 ## Quick start
 

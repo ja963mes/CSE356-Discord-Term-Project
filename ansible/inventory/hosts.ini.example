@@ -4,6 +4,9 @@ frontend-vm ansible_host=130.245.136.115
 [backend]
 backend-vm ansible_host=130.245.136.45
 
+[auth]
+auth-vm ansible_host=10.0.3.158
+
 [search]
 search-vm ansible_host=130.245.136.135
 

@@ -1,12 +1,14 @@
-# Ansible setup (split frontend + backend + search VMs)
+# Ansible setup (split frontend + backend + auth + realtime + search VMs)
 
 Lightweight Ansible scaffold aligned with **[PROD-SPLIT-NGINX.md](./PROD-SPLIT-NGINX.md)** for split production hosts.
 
 It supports:
 
 - common host prep (`deploy` user, base packages)
+- auth deploy (git pull, `npm ci`, auth workspace build, auth systemd restart)
 - backend deploy (git pull, `npm ci`, workspace builds, nginx config, systemd restarts)
 - frontend deploy (git pull, `npm ci`, frontend build, static publish to `/var/www/discord-frontend`, nginx config)
+- realtime deploy (git pull, `npm ci`, realtime workspace build, realtime systemd restarts)
 - search deploy (git pull, `npm ci`, search workspace build, search systemd restarts)
 
 ---
@@ -41,6 +43,13 @@ Values to verify or customize:
 - `manage_nginx_config` (`false` for routine deploy refreshes, `true` when rolling out nginx config file changes)
 - nginx source paths (`frontend_nginx_conf_src`, `backend_nginx_conf_src`)
 
+Host-group vars:
+
+- `inventory/group_vars/auth.yml`
+- `inventory/group_vars/backend.yml`
+- `inventory/group_vars/realtime.yml`
+- `inventory/group_vars/search.yml`
+
 Optional:
 
 - `deploy_public_key` if you want Ansible to enforce/update `authorized_keys`.
@@ -72,6 +81,8 @@ ansible-playbook -i inventory/hosts.ini --check playbooks/site.yml
 ## 4) Notes
 
 - This assumes Node.js is already installed on hosts and available to `deploy`.
-- Backend service restart list is controlled by `backend_systemd_services` in `group_vars/all.yml`.
-- Search service restart list is controlled by `search_systemd_services` in `group_vars/all.yml`.
-- If host-specific values differ, split variables into host-group vars files (for example `group_vars/frontend.yml`, `group_vars/backend.yml`, and `group_vars/search.yml`).
+- Auth service restart/build lists are controlled by `auth_systemd_services` and `auth_workspace_build_commands` in `inventory/group_vars/auth.yml`.
+- Backend service restart/build lists are controlled by `backend_systemd_services` and `backend_workspace_build_commands` in `inventory/group_vars/backend.yml`.
+- Realtime service restart/build lists are controlled by `realtime_systemd_services` and `realtime_workspace_build_commands` in `inventory/group_vars/realtime.yml`.
+- Search service restart/build lists are controlled by `search_systemd_services` and `search_workspace_build_commands` in `inventory/group_vars/search.yml`.
+- If host-specific values differ further, add host vars or additional group vars files.
