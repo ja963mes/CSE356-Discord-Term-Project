@@ -31,6 +31,9 @@ import {
   subscribeAllMembersForChannel,
 } from "./subscriptions";
 import { logger } from "./logger";
+import { types as cassandraTypes } from "cassandra-driver";
+import { initCassandra, getLastReadTimeuuidForDm, getLatestDmTimeuuid, listDmMessagesNewerThan } from "./cassandra";
+import { pg } from "./db";
 
 // Unique ID for this instance — used to namespace presence:conns fields
 // so multiple instances don't stomp on each other's connection data at startup
@@ -68,6 +71,94 @@ const userConnections = new Map<string, Set<string>>();
 /** Normalize user ids for Set membership (Postgres JSON vs session can differ in UUID case). */
 function normUserId(id: string): string {
   return id.trim().toLowerCase();
+}
+
+function keyToUrl(key: string): string {
+  const base = env.ATTACHMENT_BASE_URL.trim().replace(/\/+$/, "");
+  if (!base) return "";
+  return `${base}/${key}`;
+}
+
+async function listUserDmConversationIds(userId: string): Promise<string[]> {
+  const result = await pg.query<{ conversation_id: string }>(
+    "SELECT conversation_id FROM dm_participants WHERE user_id = $1::uuid",
+    [userId]
+  );
+  return result.rows.map((r) => String(r.conversation_id));
+}
+
+async function replayMissedDmMessages(ws: WebSocket, userId: string): Promise<void> {
+  // Keep this conservative to avoid stampeding Cassandra on mass reconnect.
+  const PER_CONV_LIMIT = 25;
+  const MAX_CONVS = 50;
+
+  let convIds: string[];
+  try {
+    convIds = await listUserDmConversationIds(userId);
+  } catch (err) {
+    logger.warn({ err, userId }, "dm catch-up failed to list conversations");
+    return;
+  }
+
+  const slice = convIds.slice(0, MAX_CONVS);
+  for (const conversationId of slice) {
+    if (ws.readyState !== WebSocket.OPEN) return;
+
+    let lastRead: string | null = null;
+    let latest: string | null = null;
+    try {
+      [lastRead, latest] = await Promise.all([
+        getLastReadTimeuuidForDm(userId, conversationId),
+        getLatestDmTimeuuid(conversationId),
+      ]);
+    } catch (err) {
+      // Missing read-state row is fine; treat as no last-read.
+      logger.warn({ err, userId, conversationId }, "dm catch-up failed to read lastRead");
+    }
+
+    if (!latest) continue;
+    if (lastRead) {
+      try {
+        const last = cassandraTypes.TimeUuid.fromString(lastRead);
+        const lat = cassandraTypes.TimeUuid.fromString(latest);
+        if (lat.getBuffer().compare(last.getBuffer()) <= 0) continue;
+      } catch (err) {
+        logger.warn({ err, userId, conversationId }, "dm catch-up timeuuid compare failed");
+      }
+    }
+
+    let rows;
+    try {
+      rows = await listDmMessagesNewerThan({ conversationId, afterTimeuuid: lastRead, limit: PER_CONV_LIMIT });
+    } catch (err) {
+      logger.warn({ err, userId, conversationId }, "dm catch-up failed to list messages");
+      continue;
+    }
+
+    // Cassandra returns newest-first (DESC clustering). Send oldest-first for stable UI ordering.
+    for (const r of [...rows].reverse()) {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      // Match the existing realtime event shape the frontend already handles.
+      // The frontend looks for attachmentKeys/attachmentUrls (not `attachments`).
+      const payload = JSON.stringify({
+        type: "dm:message:create",
+        conversationId,
+        participantIds: [userId],
+        message: {
+          messageId: r.messageId,
+          authorId: r.authorId,
+          content: r.isDeleted ? "" : r.content,
+          timeuuid: r.timeuuid,
+          createdAt: r.createdAtIso,
+          attachmentKeys: r.isDeleted ? [] : r.attachmentKeys,
+          attachmentUrls: r.isDeleted ? [] : r.attachmentKeys.map(keyToUrl).filter(Boolean),
+          deleted: r.isDeleted,
+          updatedAt: r.updatedAtIso,
+        },
+      });
+      safeSend(ws, payload, "dm_catchup");
+    }
+  }
 }
 
 function safeSend(ws: WebSocket, payload: string, label: string): void {
@@ -239,6 +330,12 @@ wss.on("connection", async (ws, req) => {
   await updateAndBroadcast(userId, prevStatus);
   const { status: currentStatus, awayMessage: currentAwayMessage } = await buildPresencePayload(userId);
   await setLastKnownPresence(userId, currentStatus);
+
+  // DM catch-up: replay messages that were persisted while this client was offline
+  // but missed over websocket delivery due to disconnect races.
+  setImmediate(() => {
+    void replayMissedDmMessages(ws, userId);
+  });
 
   // Send current presence snapshot to the newly connected client
   setImmediate(async () => {
@@ -506,9 +603,10 @@ redisSub.on("message", (channel, message) => {
 
 initDb()
   .then(() => {
-    server.listen(Number(env.PORT), () => {
-      logger.info({ port: env.PORT }, "realtime service running");
-    });
+    return initCassandra();
+  })
+  .then(() => {
+    server.listen(Number(env.PORT), () => logger.info({ port: env.PORT }, "realtime service running"));
   })
   .catch((err) => {
     logger.error({ err }, "failed to initialize DB");
