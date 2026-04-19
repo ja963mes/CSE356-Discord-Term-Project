@@ -34,11 +34,11 @@ import { logger } from "./logger";
 // Unique ID for this instance — used to namespace presence:conns fields
 // so multiple instances don't stomp on each other's connection data at startup
 const instanceId = randomUUID();
-console.log(`[startup] instanceId=${instanceId}`);
+logger.info({ instanceId }, "startup");
 
 const redis = new Redis(env.REDIS_URL);
 redis.on("connect", async () => {
-  console.log("Redis connected");
+  logger.info("redis connected");
   // Clear only this instance's stale connection fields from previous runs.
   // Other instances' fields are left intact so their presence tracking is unaffected.
   const keys = await redis.keys("presence:conns:*");
@@ -51,13 +51,13 @@ redis.on("connect", async () => {
       cleared += stale.length;
     }
   }
-  if (cleared > 0) console.log(`[startup] cleared ${cleared} stale presence fields for instanceId=${instanceId}`);
+  if (cleared > 0) logger.info({ cleared, instanceId }, "cleared stale presence fields");
 });
-redis.on("error", (err) => console.error("Redis error:", err));
+redis.on("error", (err) => logger.error({ err }, "redis error"));
 
 // Dedicated Redis client for pub/sub (ioredis requires a separate connection for subscriptions)
 const redisSub = new Redis(env.REDIS_URL);
-redisSub.on("error", (err) => console.error("Redis sub error:", err));
+redisSub.on("error", (err) => logger.error({ err }, "redis sub error"));
 
 // Track active connections: connId -> { ws, userId }
 const connections = new Map<string, { ws: WebSocket; userId: string }>();
@@ -124,7 +124,7 @@ async function buildPresencePayload(userId: string): Promise<{ status: PresenceS
 async function updateAndBroadcast(userId: string, prevStatus: PresenceStatus): Promise<void> {
   const { status: newStatus, awayMessage } = await buildPresencePayload(userId);
   if (newStatus !== prevStatus) {
-    console.log(`[presence] userId=${userId} ${prevStatus} → ${newStatus}`);
+    logger.info({ userId, from: prevStatus, to: newStatus }, "presence changed");
     await broadcastPresenceChange(redis, userId, newStatus, awayMessage);
     await setLastKnownPresence(userId, newStatus);
   }
@@ -186,7 +186,7 @@ wss.on("connection", async (ws, req) => {
       if (userConns.size === 0) userConnections.delete(closeNormId);
     }
     await removeConnection(redis, userId, connId, instanceId);
-    console.log(`[disconnect] userId=${userId} connId=${connId} total=${connections.size}`);
+    logger.info({ userId, connId, total: connections.size }, "client disconnected");
     const stillConnected = [...connections.values()].some((c) => c.userId === userId);
     // Broadcast BEFORE unsubscribing — targets are looked up from context sets,
     // which must still be in Redis when broadcastPresenceChange runs.
@@ -197,7 +197,7 @@ wss.on("connection", async (ws, req) => {
   });
 
   ws.on("error", (err) => {
-    console.error(`[error] connId=${connId}`, err);
+    logger.error({ err, connId }, "websocket error");
   });
 
   await Promise.all([
@@ -205,7 +205,7 @@ wss.on("connection", async (ws, req) => {
     subscribeUser(redis, userId),
   ]);
 
-  console.log(`[connect] userId=${userId} connId=${connId} total=${connections.size}`);
+  logger.info({ userId, connId, total: connections.size }, "client connected");
   await updateAndBroadcast(userId, prevStatus);
   const { status: currentStatus, awayMessage: currentAwayMessage } = await buildPresencePayload(userId);
   await setLastKnownPresence(userId, currentStatus);
@@ -255,6 +255,7 @@ wss.on("connection", async (ws, req) => {
       const channelId = (msg as { channelId?: string }).channelId;
       if (typeof channelId === "string" && channelId.length > 0) {
         await subscribeChannel(redis, channelId, userId);
+        logger.info({ userId, connId, channelId }, "client subscribed to channel");
       }
     } else if (msg.type === "away") {
       // Manually set away status with an optional message that other users can see
@@ -287,7 +288,7 @@ setInterval(async () => {
     const { status: newStatus, awayMessage } = await buildPresencePayload(userId);
     await setLastKnownPresence(userId, newStatus);
     if (newStatus !== prev) {
-      console.log(`[presence] userId=${userId} ${prev} → ${newStatus}`);
+      logger.info({ userId, from: prev, to: newStatus }, "presence changed");
       await broadcastPresenceChange(redis, userId, newStatus, awayMessage);
     }
   }
@@ -295,8 +296,8 @@ setInterval(async () => {
 
 // Subscribe to DM events from the DMS service and forward to relevant WebSocket clients
 redisSub.subscribe("dm:events", "community:events", "channel:events", PRESENCE_BROADCAST_CHANNEL, (err) => {
-  if (err) console.error("[pubsub] subscribe failed:", err);
-  else console.log("[pubsub] subscribed to dm:events + community:events + channel:events + presence:broadcast");
+  if (err) logger.error({ err }, "pubsub subscribe failed");
+  else logger.info("subscribed to pubsub channels: dm:events, community:events, channel:events, presence:broadcast");
 });
 
 redisSub.on("message", (channel, message) => {
@@ -415,6 +416,7 @@ redisSub.on("message", (channel, message) => {
     const channelId = event.channelId as string;
     if (!channelId) return;
 
+    logger.info({ eventType: event.type, channelId, messageId: event.message && (event.message as { messageId?: string }).messageId }, "channel event received, fanning out");
     void fanOutToChannel(channelId, JSON.stringify(event));
     return;
   }
@@ -432,6 +434,7 @@ redisSub.on("message", (channel, message) => {
   const payload = JSON.stringify(event);
   const localConnectedTargets = new Set<string>();
 
+  logger.info({ eventType: event.type, conversationId: event.conversationId, participantCount: targetUserIds.size }, "dm event received, fanning out");
   for (const targetUid of targetUserIds) {
     const conns = userConnections.get(targetUid);
     if (!conns) continue;
@@ -497,10 +500,10 @@ redisSub.on("message", (channel, message) => {
 initDb()
   .then(() => {
     server.listen(Number(env.PORT), () => {
-      console.log(`Realtime service running on port ${env.PORT}`);
+      logger.info({ port: env.PORT }, "realtime service running");
     });
   })
   .catch((err) => {
-    console.error("[realtime] failed to initialize DB", err);
+    logger.error({ err }, "failed to initialize DB");
     process.exit(1);
   });
