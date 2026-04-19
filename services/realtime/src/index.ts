@@ -9,6 +9,7 @@ import { initDb } from "./db";
 import {
   registerConnection,
   removeConnection,
+  hasRegisteredConnections,
   updateActivity,
   setAway,
   clearAway,
@@ -216,13 +217,13 @@ wss.on("connection", async (ws, req) => {
       if (userConns.size === 0) userConnections.delete(closeNormId);
     }
     logger.info({ userId, connId, total: connections.size }, "client disconnected");
-    const stillConnected = [...connections.values()].some((c) => c.userId === userId);
     const prev = await computePresence(redis, userId);
     await removeConnection(redis, userId, connId, instanceId);
+    const stillConnectedElsewhere = await hasRegisteredConnections(redis, userId);
     // Broadcast BEFORE unsubscribing — targets are looked up from context sets,
     // which must still be in Redis when broadcastPresenceChange runs.
     await updateAndBroadcast(userId, prev);
-    if (!stillConnected) {
+    if (!stillConnectedElsewhere) {
       await unsubscribeUser(redis, userId);
     }
   });
@@ -231,10 +232,8 @@ wss.on("connection", async (ws, req) => {
     logger.error({ err, connId }, "websocket error");
   });
 
-  await Promise.all([
-    registerConnection(redis, userId, connId, instanceId),
-    subscribeUser(redis, userId),
-  ]);
+  await registerConnection(redis, userId, connId, instanceId);
+  await subscribeUser(redis, userId);
 
   logger.info({ userId, connId, total: connections.size }, "client connected");
   await updateAndBroadcast(userId, prevStatus);
