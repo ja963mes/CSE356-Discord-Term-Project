@@ -62,6 +62,8 @@ export default function DmChatView({
   const bottomRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
   const lastMarkedRef = useRef<string | null>(null);
+  const hintRefreshInFlightRef = useRef(false);
+  const hintRefreshPendingRef = useRef(false);
 
   const conversationId = conversation.conversationId;
   const label = conversation.name ?? (conversation.conversationType === "one_to_one" ? "Direct Message" : "Group DM");
@@ -92,6 +94,40 @@ export default function DmChatView({
       // ignore
     }
   }, [conversationId, currentUserId, onReadStateUpdated]);
+
+  const refreshFromHint = useCallback(async (hintAuthorId?: string) => {
+    if (hintRefreshInFlightRef.current) {
+      hintRefreshPendingRef.current = true;
+      return;
+    }
+
+    hintRefreshInFlightRef.current = true;
+    try {
+      do {
+        hintRefreshPendingRef.current = false;
+        const data = await listMessages(conversationId);
+        setMessages((prev) => {
+          if (data.messages.length === 0) return prev;
+          const merged = new Map<string, DmMessage>();
+          for (const m of prev) merged.set(m.messageId, m);
+          for (const m of data.messages) merged.set(m.messageId, m);
+          return Array.from(merged.values()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        });
+        setNextCursor((prev) => prev ?? data.nextCursor);
+        const newest = data.messages[0] ?? null;
+        if (newest && (atBottomRef.current || newest.authorId === currentUserId || hintAuthorId === currentUserId)) {
+          void markLatestRead(newest);
+        }
+        if (atBottomRef.current) {
+          setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+        }
+      } while (hintRefreshPendingRef.current);
+    } catch {
+      // ignore
+    } finally {
+      hintRefreshInFlightRef.current = false;
+    }
+  }, [conversationId, currentUserId, markLatestRead]);
 
   // Load available users when invite panel opens
   useEffect(() => {
@@ -206,7 +242,10 @@ export default function DmChatView({
     const e = wsEvent as Record<string, unknown>;
     if (e.conversationId !== conversationId) return;
 
-    if (e.type === "dm:message:create") {
+    if (e.type === "dm:new_message") {
+      const hintAuthorId = typeof e.authorId === "string" ? e.authorId : undefined;
+      void refreshFromHint(hintAuthorId);
+    } else if (e.type === "dm:message:create") {
       const raw = e.message as Record<string, unknown>;
       const msg: DmMessage = {
         messageId: String(raw.messageId),
@@ -260,7 +299,7 @@ export default function DmChatView({
         setReadStateByUserId((prev) => ({ ...prev, [userId]: timeuuid }));
       }
     }
-  }, [wsEvent, conversationId, currentUserId, markLatestRead]);
+  }, [wsEvent, conversationId, currentUserId, markLatestRead, refreshFromHint]);
 
   const handleInvite = async (userId: string) => {
     setInviting(true);

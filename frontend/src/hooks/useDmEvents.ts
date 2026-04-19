@@ -35,7 +35,7 @@ export function useDmEvents(me: Me | null) {
       return;
     }
 
-    if (t === "dm:message:create") {
+    if (t === "dm:message:create" || t === "dm:new_message") {
       const convId = latestDmEvent.conversationId as string | undefined;
       if (!convId) return;
       // Bump this conversation to the top

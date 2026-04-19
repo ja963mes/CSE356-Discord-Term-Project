@@ -349,14 +349,17 @@ export default function ChatPage() {
   }, [activePanel, channelMentionCountById, channelUnreadById, channels, selectedChannelId, selectedCommunityId, viewMode]);
 
   useEffect(() => {
-    if (!latestDmEvent || !me || latestDmEvent.type !== "dm:message:create") return;
+    if (!latestDmEvent || !me || (latestDmEvent.type !== "dm:message:create" && latestDmEvent.type !== "dm:new_message")) return;
     const convId = typeof latestDmEvent.conversationId === "string" ? latestDmEvent.conversationId : null;
     const raw =
-      latestDmEvent.message && typeof latestDmEvent.message === "object" && latestDmEvent.message !== null
+      latestDmEvent.type === "dm:message:create" &&
+      latestDmEvent.message &&
+      typeof latestDmEvent.message === "object" &&
+      latestDmEvent.message !== null
         ? latestDmEvent.message as Record<string, unknown>
         : null;
-    const authorId = raw ? String(raw.authorId ?? "") : "";
-    const timeuuid = raw ? String(raw.timeuuid ?? "") : "";
+    const authorId = raw ? String(raw.authorId ?? "") : String(latestDmEvent.authorId ?? "");
+    const timeuuid = raw ? String(raw.timeuuid ?? "") : String(latestDmEvent.timeuuid ?? "");
     if (!convId || authorId === me.internal_id) return;
 
     const lastRead = dmLastReadById[convId] ?? null;
