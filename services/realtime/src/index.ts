@@ -206,7 +206,8 @@ wss.on("connection", async (ws, req) => {
   // Register close/error handlers immediately after adding to the map so that if the socket
   // closes during any subsequent await the cleanup always runs and the connection is not leaked.
   ws.on("close", async () => {
-    const prev = await computePresence(redis, userId);
+    // Remove from local maps synchronously before any await so fanout never
+    // finds this closed socket during the async gap.
     connections.delete(connId);
     const closeNormId = normUserId(userId);
     const userConns = userConnections.get(closeNormId);
@@ -214,9 +215,10 @@ wss.on("connection", async (ws, req) => {
       userConns.delete(connId);
       if (userConns.size === 0) userConnections.delete(closeNormId);
     }
-    await removeConnection(redis, userId, connId, instanceId);
     logger.info({ userId, connId, total: connections.size }, "client disconnected");
     const stillConnected = [...connections.values()].some((c) => c.userId === userId);
+    const prev = await computePresence(redis, userId);
+    await removeConnection(redis, userId, connId, instanceId);
     // Broadcast BEFORE unsubscribing — targets are looked up from context sets,
     // which must still be in Redis when broadcastPresenceChange runs.
     await updateAndBroadcast(userId, prev);

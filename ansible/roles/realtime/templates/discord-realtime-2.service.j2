@@ -8,7 +8,7 @@ User={{ deploy_user }}
 WorkingDirectory={{ deploy_path }}
 EnvironmentFile=/etc/discord.env
 Environment="REALTIME_PORT={{ realtime_port_2 | default(3009) }}"
-ExecStart=/usr/bin/npm run start --workspace realtime-service
+ExecStart=/usr/bin/node {{ deploy_path }}/services/realtime/dist/index.js
 Restart=always
 RestartSec=3
 StandardOutput=journal
