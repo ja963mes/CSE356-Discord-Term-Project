@@ -4,8 +4,9 @@ import { WebSocketServer, WebSocket } from "ws";
 import { parse as parseCookie } from "cookie";
 import Redis from "ioredis";
 import { randomUUID } from "crypto";
+import { types as cassandraTypes } from "cassandra-driver";
 import { env } from "./env";
-import { initDb } from "./db";
+import { initDb, pg } from "./db";
 import {
   registerConnection,
   removeConnection,
@@ -31,6 +32,7 @@ import {
   subscribeAllMembersForChannel,
 } from "./subscriptions";
 import { logger } from "./logger";
+import { getLastReadTimeuuidForDm, getLatestDmTimeuuid, initCassandra, listDmMessagesNewerThan } from "./cassandra";
 
 // Unique ID for this instance — used to namespace presence:conns fields
 // so multiple instances don't stomp on each other's connection data at startup
@@ -68,6 +70,85 @@ const userConnections = new Map<string, Set<string>>();
 /** Normalize user ids for Set membership (Postgres JSON vs session can differ in UUID case). */
 function normUserId(id: string): string {
   return id.trim().toLowerCase();
+}
+
+async function listUserDmConversationIds(userId: string): Promise<string[]> {
+  const result = await pg.query<{ conversation_id: string }>(
+    "SELECT conversation_id FROM dm_participants WHERE user_id = $1::uuid",
+    [userId]
+  );
+  return result.rows.map((r) => String(r.conversation_id));
+}
+
+async function replayMissedDmHints(ws: WebSocket, userId: string): Promise<void> {
+  const MAX_CONVERSATIONS = 50;
+  const PER_CONVERSATION_LIMIT = 25;
+
+  let conversationIds: string[];
+  try {
+    conversationIds = await listUserDmConversationIds(userId);
+  } catch (err) {
+    logger.warn({ err, userId }, "dm catch-up failed to list conversations");
+    return;
+  }
+
+  for (const conversationId of conversationIds.slice(0, MAX_CONVERSATIONS)) {
+    if (ws.readyState !== WebSocket.OPEN) return;
+
+    let lastRead: string | null = null;
+    let latest: string | null = null;
+    try {
+      [lastRead, latest] = await Promise.all([
+        getLastReadTimeuuidForDm(userId, conversationId),
+        getLatestDmTimeuuid(conversationId),
+      ]);
+    } catch (err) {
+      logger.warn({ err, userId, conversationId }, "dm catch-up failed to read cursor");
+      continue;
+    }
+
+    if (!latest) continue;
+    if (lastRead) {
+      try {
+        const latestTuuid = cassandraTypes.TimeUuid.fromString(latest);
+        const lastReadTuuid = cassandraTypes.TimeUuid.fromString(lastRead);
+        if (latestTuuid.getBuffer().compare(lastReadTuuid.getBuffer()) <= 0) {
+          continue;
+        }
+      } catch (err) {
+        logger.warn({ err, userId, conversationId }, "dm catch-up timeuuid compare failed");
+      }
+    }
+
+    let rows;
+    try {
+      rows = await listDmMessagesNewerThan({
+        conversationId,
+        afterTimeuuid: lastRead,
+        limit: PER_CONVERSATION_LIMIT,
+      });
+    } catch (err) {
+      logger.warn({ err, userId, conversationId }, "dm catch-up failed to list messages");
+      continue;
+    }
+
+    // Cassandra rows come back newest-first; replay hints oldest-first.
+    for (const row of [...rows].reverse()) {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      safeSend(
+        ws,
+        JSON.stringify({
+          type: "dm:new_message",
+          conversationId,
+          messageId: row.messageId,
+          authorId: row.authorId,
+          timeuuid: row.timeuuid,
+          source: "catchup",
+        }),
+        "dm_catchup"
+      );
+    }
+  }
 }
 
 function safeSend(ws: WebSocket, payload: string, label: string): void {
@@ -239,6 +320,11 @@ wss.on("connection", async (ws, req) => {
   await updateAndBroadcast(userId, prevStatus);
   const { status: currentStatus, awayMessage: currentAwayMessage } = await buildPresencePayload(userId);
   await setLastKnownPresence(userId, currentStatus);
+
+  // Reconcile missed DMs after reconnect using Cassandra + read-state cursors.
+  setImmediate(() => {
+    void replayMissedDmHints(ws, userId);
+  });
 
   // Send current presence snapshot to the newly connected client
   setImmediate(async () => {
@@ -461,14 +547,30 @@ redisSub.on("message", (channel, message) => {
   }
 
   const targetUserIds = new Set((event.participantIds ?? []).map(normUserId));
-  const payload = JSON.stringify(event);
+  const outgoing =
+    event.type === "dm:message:create"
+      ? JSON.stringify({
+          type: "dm:new_message",
+          conversationId: event.conversationId,
+          messageId: event.message && typeof event.message === "object"
+            ? (event.message as { messageId?: string }).messageId
+            : undefined,
+          authorId: event.message && typeof event.message === "object"
+            ? (event.message as { authorId?: string }).authorId
+            : undefined,
+          timeuuid: event.message && typeof event.message === "object"
+            ? (event.message as { timeuuid?: string }).timeuuid
+            : undefined,
+          source: "live",
+        })
+      : JSON.stringify(event);
 
   for (const targetUid of targetUserIds) {
     const conns = userConnections.get(targetUid);
     if (!conns) continue;
     for (const connId of conns) {
       const conn = connections.get(connId);
-      if (conn) safeSend(conn.ws, payload, "dm_event");
+      if (conn) safeSend(conn.ws, outgoing, "dm_event");
     }
   }
 
@@ -505,6 +607,9 @@ redisSub.on("message", (channel, message) => {
 });
 
 initDb()
+  .then(() => {
+    return initCassandra();
+  })
   .then(() => {
     server.listen(Number(env.PORT), () => {
       logger.info({ port: env.PORT }, "realtime service running");
