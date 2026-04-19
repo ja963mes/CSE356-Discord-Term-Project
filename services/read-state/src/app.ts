@@ -6,7 +6,6 @@ import { cassandra, messagesCassandra } from "./cassandra";
 import { requireAuth } from "./middleware/session";
 import {
   assertChannelAccess,
-  ensureMessageExists,
   getChannelMessageIdForTimeuuid,
   getDmMessageIdForTimeuuid,
   getChannelState,
@@ -99,20 +98,20 @@ app.post("/read-state/channels/:channelId/read", requireAuth, async (req, res) =
     return;
   }
 
-  let exists: boolean;
+  let resolvedMessageId: string | null;
   try {
-    exists = await ensureMessageExists(channelIdResult.data, body.data.messageId, body.data.timeuuid);
+    resolvedMessageId = await getChannelMessageIdForTimeuuid(channelIdResult.data, body.data.timeuuid);
   } catch {
     res.status(400).json({ error: "Invalid timeuuid" });
     return;
   }
-  if (!exists) {
+  if (!resolvedMessageId) {
     res.status(404).json({ error: "Message not found" });
     return;
   }
 
   try {
-    await markChannelRead(req.user!.internal_id, channelIdResult.data, body.data.messageId, body.data.timeuuid);
+    await markChannelRead(req.user!.internal_id, channelIdResult.data, resolvedMessageId, body.data.timeuuid);
   } catch {
     res.status(400).json({ error: "Invalid timeuuid" });
     return;
@@ -167,29 +166,15 @@ app.post("/read-state/dms/:conversationId/read", requireAuth, async (req, res) =
       return;
     }
 
-    let channelMessageId = body.data.messageId ?? null;
-    if (!channelMessageId) {
-      try {
-        channelMessageId = await getChannelMessageIdForTimeuuid(parsed.data, body.data.timeuuid);
-      } catch {
-        res.status(400).json({ error: "Invalid timeuuid" });
-        return;
-      }
-    }
-
-    if (!channelMessageId) {
-      res.status(404).json({ error: "Message not found" });
-      return;
-    }
-
-    let exists = false;
+    let channelMessageId: string | null;
     try {
-      exists = await ensureMessageExists(parsed.data, channelMessageId, body.data.timeuuid);
+      channelMessageId = await getChannelMessageIdForTimeuuid(parsed.data, body.data.timeuuid);
     } catch {
       res.status(400).json({ error: "Invalid timeuuid" });
       return;
     }
-    if (!exists) {
+
+    if (!channelMessageId) {
       res.status(404).json({ error: "Message not found" });
       return;
     }
