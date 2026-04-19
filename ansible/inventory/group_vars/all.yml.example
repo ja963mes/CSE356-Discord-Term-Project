@@ -14,26 +14,7 @@ manage_nginx_config: false
 frontend_nginx_conf_src: "../docs/nginx/production-frontend.conf.example"
 backend_nginx_conf_src: "../docs/nginx/production-backend.conf.example"
 
-# Backend app services hosted on backend VM.
-backend_systemd_services:
-  - discord-auth
-  - discord-communities
-  - discord-create-community
-  - discord-messages
-  - discord-realtime
-  - discord-realtime-2
-  - discord-dms
-  - discord-read-state
-
-# Workspaces built on backend VM.
-backend_workspace_build_commands:
-  - npm run build --workspace auth-service
-  - npm run build --workspace communities-service
-  - npm run build --workspace create-community-service
-  - npm run build --workspace messages-service
-  - npm run build --workspace realtime-service
-  - npm run build --workspace dms-service
-  - npm run build --workspace read-state-service
+# Backend vs realtime: group_vars/backend.yml + roles/backend; realtime group_vars/realtime.yml + roles/realtime.
 
 # Search VM service(s) and workspace build list.
 search_systemd_services:

@@ -24,7 +24,7 @@ Client traffic should go to the frontend VM only:
 1. Browser hits `https://group-6.cse356.compas.cs.stonybrook.edu` -> frontend VM nginx.
 2. Frontend VM serves static SPA from `/var/www/discord-frontend`.
 3. API and WS routes are proxied by frontend VM nginx to backend VM nginx over private network (`http://10.0.2.247:80`).
-4. Backend VM nginx proxies to local Node services (`127.0.0.1:3001..3003,3005..3008`).
+4. Backend VM nginx proxies most Node APIs to localhost (`127.0.0.1:3001..3003,3006..3008`); `/ws` is proxied to the realtime VM on the private network (see `nginx/production-backend.conf.example`, `upstream backend_realtime`).
 5. Optional: frontend `/search` can target dedicated search ingress instead of backend nginx.
 
 This avoids exposing all backend service ports publicly.
@@ -128,19 +128,20 @@ curl -I https://group-6.cse356.compas.cs.stonybrook.edu/assets/index-*.js
 
 ### 4.1 Keep backend services running
 
-Run and monitor:
+Run and monitor on **this** backend VM:
 
 - `discord-auth` (3001)
 - `discord-communities` (3002)
 - `discord-create-community` (3006)
 - `discord-messages` (3003)
-- `discord-realtime` (3005)
 - `discord-dms` (3007)
 - `discord-read-state` (3008)
 
+When realtime is split onto a **realtime VM**, run `discord-realtime` / `discord-realtime-2` there (3005 / 3009) and point nginx `upstream backend_realtime` at that host’s private IP.
+
 ### 4.2 Nginx responsibilities on backend VM
 
-Backend VM nginx should be API/WS only and proxy local service ports.
+Backend VM nginx should be API/WS only: proxy API paths to localhost Node ports, and `/ws` to the realtime upstream (localhost or private IP per `production-backend.conf.example`).
 
 Use [`nginx/production-backend.conf.example`](./nginx/production-backend.conf.example) as baseline.
 This backend config intentionally excludes `/search`; use dedicated search ingress for that route.
