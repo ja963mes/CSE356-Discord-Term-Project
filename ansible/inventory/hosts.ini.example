@@ -13,5 +13,11 @@ search-vm ansible_host=130.245.136.135
 [messages]
 messages-vm ansible_host=10.0.3.199
 
+[dms]
+dms-vm ansible_host=10.0.3.52
+
+[read_state]
+read-state-vm ansible_host=10.0.1.189
+
 [all:vars]
 ansible_user=deploy

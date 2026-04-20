@@ -22,6 +22,12 @@
   roles:
     - dms
 
+- name: Configure and deploy read-state VM
+  hosts: read_state
+  become: true
+  roles:
+    - read-state
+
 - name: Configure and deploy auth VM
   hosts: auth
   become: true
