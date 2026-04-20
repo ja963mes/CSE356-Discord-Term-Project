@@ -3,6 +3,39 @@ import { logger } from "./logger";
 
 const CHANNEL = "dm:events";
 
+/**
+ * Outbound-queue parameters. Each participant has a capped Redis list of
+ * pending dm:new_message hints. Realtime drains this list on WS connect so
+ * that hints dispatched while a socket was tearing down are still delivered
+ * on the next reconnect, without waiting for Cassandra catch-up.
+ */
+const PENDING_KEY_PREFIX = "dm:pending:";
+const PENDING_MAX_PER_USER = 100;
+const PENDING_TTL_SECONDS = 3600;
+
+async function enqueuePendingDmHint(
+  participantIds: string[],
+  hint: { type: "dm:new_message"; conversationId: string; messageId: string; authorId: string; timeuuid: string }
+): Promise<void> {
+  if (participantIds.length === 0) return;
+  const payload = JSON.stringify(hint);
+  const pipeline = redis.pipeline();
+  for (const userId of participantIds) {
+    const key = `${PENDING_KEY_PREFIX}${userId}`;
+    pipeline.lpush(key, payload);
+    pipeline.ltrim(key, 0, PENDING_MAX_PER_USER - 1);
+    pipeline.expire(key, PENDING_TTL_SECONDS);
+  }
+  try {
+    await pipeline.exec();
+  } catch (err) {
+    logger.warn(
+      { err, conversationId: hint.conversationId, messageId: hint.messageId, participantCount: participantIds.length },
+      "dm pending-queue enqueue failed"
+    );
+  }
+}
+
 export type DmEvent =
   | {
       type: "dm:conversation:create";
@@ -102,6 +135,17 @@ export async function publishDmEvent(event: DmEvent): Promise<void> {
         { conversationId: event.conversationId, messageId: event.message.messageId },
         "dm:message:create published to redis"
       );
+      // Queue a minimal hint per participant so realtime can drain it on
+      // the next WS connect even if the live fanout raced with a socket
+      // tearing down. Clients dedupe by messageId, so overlap with the
+      // live send is safe.
+      await enqueuePendingDmHint(event.participantIds, {
+        type: "dm:new_message",
+        conversationId: event.conversationId,
+        messageId: event.message.messageId,
+        authorId: event.message.authorId,
+        timeuuid: event.message.timeuuid,
+      });
     }
   } catch (err) {
     logger.error({ err, eventType: event.type, conversationId: event.conversationId }, "redis publish failed");

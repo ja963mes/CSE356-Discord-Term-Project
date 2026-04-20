@@ -72,6 +72,53 @@ function normUserId(id: string): string {
   return id.trim().toLowerCase();
 }
 
+/**
+ * Drain the per-user pending DM hint queue populated by the dms service
+ * (dm:pending:<userId>). These are hints that were emitted while the user's
+ * socket was either tearing down or had not yet reconnected. Drained
+ * atomically via MULTI so a second concurrent reconnect (other tab) does
+ * not replay the same hints. Clients still dedupe by messageId, so any
+ * overlap with live fanout is harmless.
+ */
+async function drainPendingDmHints(ws: WebSocket, userId: string): Promise<void> {
+  const key = `dm:pending:${userId}`;
+  let rawEntries: string[] | null = null;
+  try {
+    const result = await redis.multi().lrange(key, 0, -1).del(key).exec();
+    // ioredis exec() returns Array<[err, result]> | null
+    const first = result?.[0];
+    if (Array.isArray(first) && Array.isArray(first[1])) {
+      rawEntries = first[1] as string[];
+    }
+  } catch (err) {
+    logger.warn({ err, userId }, "dm pending-queue drain failed");
+    return;
+  }
+  if (!rawEntries || rawEntries.length === 0) return;
+
+  // LPUSH + LRANGE 0 -1 returns newest-first. Replay oldest-first so
+  // clients see hints in causal order.
+  const ordered = [...rawEntries].reverse();
+  logger.info({ userId, count: ordered.length }, "dm pending-queue drained");
+
+  for (const raw of ordered) {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    let hint: { type?: string; conversationId?: string; messageId?: string; authorId?: string; timeuuid?: string };
+    try {
+      hint = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    if (hint.type !== "dm:new_message" || !hint.messageId || !hint.authorId) continue;
+    safeSend(
+      ws,
+      JSON.stringify({ ...hint, source: "pending" }),
+      "dm_pending",
+      { userId, conversationId: hint.conversationId, messageId: hint.messageId }
+    );
+  }
+}
+
 async function listUserDmConversationIds(userId: string): Promise<string[]> {
   const result = await pg.query<{ conversation_id: string }>(
     "SELECT conversation_id FROM dm_participants WHERE user_id = $1::uuid",
@@ -362,9 +409,17 @@ wss.on("connection", async (ws, req) => {
   const { status: currentStatus, awayMessage: currentAwayMessage } = await buildPresencePayload(userId);
   await setLastKnownPresence(userId, currentStatus);
 
-  // Reconcile missed DMs after reconnect using Cassandra + read-state cursors.
+  // Reconcile missed DMs after reconnect. First drain the dm:pending queue
+  // populated by dms on publish (covers the "ws not open, readyState:3" race
+  // where live fanout tried to send to a socket tearing down), then fall
+  // back to Cassandra + read-state cursors for anything older than the
+  // queue's TTL or outside its capped window.
   setImmediate(() => {
-    void replayMissedDmHints(ws, userId);
+    void (async () => {
+      await drainPendingDmHints(ws, userId);
+      if (ws.readyState !== WebSocket.OPEN) return;
+      await replayMissedDmHints(ws, userId);
+    })();
   });
 
   // Send current presence snapshot to the newly connected client
