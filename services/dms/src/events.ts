@@ -1,4 +1,5 @@
 import { redis } from "./redis";
+import { logger } from "./logger";
 
 const CHANNEL = "dm:events";
 
@@ -79,10 +80,11 @@ export type DmEvent =
       timeuuid: string;
     };
 
-export const publishDmEvent = async (event: DmEvent): Promise<void> => {
+export async function publishDmEvent(event: DmEvent): Promise<void> {
   try {
     await redis.publish(CHANNEL, JSON.stringify(event));
   } catch (err) {
-    console.error("[dms] failed to publish event", event.type, err);
+    logger.error({ err, eventType: event.type, conversationId: event.conversationId }, "redis publish failed");
+    throw err;
   }
-};
+}
