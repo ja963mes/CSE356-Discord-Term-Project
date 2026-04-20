@@ -6,6 +6,8 @@ declare global {
 
     interface Request {
       user: AuthUser;
+      /** Set by `pino-http` (`genReqId`). */
+      id?: string;
     }
   }
 }

@@ -80,27 +80,31 @@ export type DmEvent =
       timeuuid: string;
     };
 
-export const publishDmEvent = async (event: DmEvent): Promise<void> => {
+export async function publishDmEvent(event: DmEvent): Promise<void> {
   if (event.type === "dm:message:create") {
-    logger.info({
-      conversationId: event.conversationId,
-      messageId: event.message.messageId,
-      authorId: event.message.authorId,
-      participantIds: event.participantIds,
-      participantCount: event.participantIds.length,
-      createdAt: event.message.createdAt,
-      timeuuid: event.message.timeuuid,
-    }, "dm:message:create publishing to redis");
+    logger.info(
+      {
+        conversationId: event.conversationId,
+        messageId: event.message.messageId,
+        authorId: event.message.authorId,
+        participantIds: event.participantIds,
+        participantCount: event.participantIds.length,
+        createdAt: event.message.createdAt,
+        timeuuid: event.message.timeuuid,
+      },
+      "dm:message:create publishing to redis"
+    );
   }
   try {
     await redis.publish(CHANNEL, JSON.stringify(event));
     if (event.type === "dm:message:create") {
-      logger.info({
-        conversationId: event.conversationId,
-        messageId: event.message.messageId,
-      }, "dm:message:create published to redis");
+      logger.info(
+        { conversationId: event.conversationId, messageId: event.message.messageId },
+        "dm:message:create published to redis"
+      );
     }
   } catch (err) {
-    logger.error({ err, eventType: event.type }, "failed to publish dm event");
+    logger.error({ err, eventType: event.type, conversationId: event.conversationId }, "redis publish failed");
+    throw err;
   }
-};
+}

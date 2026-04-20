@@ -1,19 +1,19 @@
-import dotenv from "dotenv";
 import { env } from "./env";
-import { initializeCassandra } from "./db";
+import { initializeCassandra } from "./cassandra";
 import { initializeBucket } from "./minio";
 import { app } from "./app";
-
-dotenv.config();
+import { logger } from "./logger";
 
 const port = Number(env.DMS_PORT);
-Promise.all([initializeCassandra(), initializeBucket()])
-  .then(() => {
+
+void (async () => {
+  try {
+    await Promise.all([initializeCassandra(), initializeBucket()]);
     app.listen(port, () => {
-      console.log(`DMS service running on port ${port}`);
+      logger.info({ port, keyspace: env.CASSANDRA_KEYSPACE }, "dms-service listening");
     });
-  })
-  .catch((error) => {
-    console.error("[dms] failed to initialize", error);
+  } catch (err) {
+    logger.error({ err }, "failed to initialize");
     process.exit(1);
-  });
+  }
+})();
