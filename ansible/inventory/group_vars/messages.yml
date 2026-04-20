@@ -1,0 +1,40 @@
+## Messages VM (messages-service only). Hosts must be in [messages] inventory group.
+messages_systemd_services:
+  - discord-messages
+
+messages_workspace_build_commands:
+  - npm run build --workspace messages-service
+
+## /etc/discord.env values for messages-service
+messages_log_level: info
+messages_log_pretty: "true"
+messages_port: "3003"
+
+## REQUIRED: set these to reachable endpoints (likely private IPs)
+messages_database_url: "postgresql://postgres:123456789@10.0.2.247:6432/auth_db"
+messages_database_url_direct: "postgresql://postgres:123456789@10.0.2.247:5433/auth_db"
+messages_redis_url: "redis://10.0.2.247:6379"
+
+## Cassandra cluster (channel message history)
+messages_cassandra_contact_points: "10.0.2.111,10.0.0.225,10.0.1.200"
+messages_cassandra_port: "9042"
+messages_cassandra_local_datacenter: "datacenter1"
+messages_cassandra_keyspace: "messaging"
+
+## Optional: auth to Cassandra if enabled
+# messages_cassandra_username: ""
+# messages_cassandra_password: ""
+
+## Replication/consistency knobs (match services/messages/src/env.ts)
+messages_cassandra_topology: "simple"
+messages_cassandra_replication_factor: "3"
+messages_cassandra_read_consistency: "localOne"
+messages_cassandra_write_consistency: "localQuorum"
+
+## MinIO / attachments (messages service issues presign URLs)
+messages_minio_endpoint: "http://10.0.2.247:9000"
+messages_minio_access_key: "minioadmin"
+messages_minio_secret_key: "minioadmin"
+messages_minio_bucket: "discord-attachments"
+messages_attachment_base_url: "http://130.245.136.45/attachments"
+
