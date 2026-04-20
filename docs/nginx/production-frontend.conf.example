@@ -48,6 +48,11 @@ upstream search_api {
     server 10.0.2.26:3004;
     keepalive 32;
 }
+upstream dms_api {
+    # Dedicated DMs VM nginx (see docs/nginx/production-dms.conf.example).
+    server 10.0.3.52:80;
+    keepalive 32;
+}
 
 # Catch-all HTTP vhost for IP probes / missing Host header.
 # Some monitors/autograders probe `http://<FRONTEND_IP>/...` and treat 404 as "outage".
@@ -103,7 +108,20 @@ server {
         proxy_send_timeout 30s;
     }
 
-    location ~ ^/(create-community|communities|channels|messages|attachments|dms|read-state)(/|$) {
+    location ^~ /dms {
+        proxy_pass http://dms_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    location ~ ^/(create-community|communities|channels|messages|attachments|read-state)(/|$) {
         proxy_pass http://backend_api;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -253,7 +271,7 @@ server {
     }
 
     location ^~ /dms {
-        proxy_pass http://backend_api;
+        proxy_pass http://dms_api;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
         proxy_set_header Host $host;
