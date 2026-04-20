@@ -2,11 +2,16 @@
 backend_systemd_services:
   - discord-communities
   - discord-create-community
-  - discord-messages
   - discord-read-state
 
 backend_workspace_build_commands:
   - npm run build --workspace communities-service
   - npm run build --workspace create-community-service
-  - npm run build --workspace messages-service
   - npm run build --workspace read-state-service
+
+# Units that used to run on this VM but have been moved to dedicated VMs.
+# Ansible stops + disables + masks them so systemd Restart=always can't revive
+# stale processes and no lingering unit file is left on disk.
+backend_decommissioned_systemd_services:
+  - discord-dms
+  - discord-messages
