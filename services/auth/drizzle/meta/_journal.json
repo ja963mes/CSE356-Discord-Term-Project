@@ -92,6 +92,13 @@
       "when": 1776544105225,
       "tag": "0012_yummy_thor",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1745193600000,
+      "tag": "0013_communities_scaling_indexes",
+      "breakpoints": true
     }
   ]
 }
