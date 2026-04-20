@@ -1,0 +1,33 @@
+## Read-state VM (read-state-service only). Hosts must be in [read-state] inventory group.
+read_state_systemd_services:
+  - discord-read-state
+
+read_state_workspace_build_commands:
+  - npm run build --workspace read-state-service
+
+## /etc/discord.env values for read-state-service
+read_state_log_level: info
+read_state_log_pretty: "true"
+read_state_port: "3008"
+
+## REQUIRED: set these to reachable endpoints (likely private IPs)
+read_state_database_url: "postgresql://postgres:123456789@10.0.2.247:6432/auth_db"
+read_state_redis_url: "redis://10.0.2.247:6379"
+
+## Cassandra cluster (read-state needs access to read_state + messaging + dms keyspaces)
+read_state_cassandra_contact_points: "10.0.2.111,10.0.0.225,10.0.1.200"
+read_state_cassandra_port: "9042"
+read_state_cassandra_local_datacenter: "datacenter1"
+read_state_cassandra_keyspace: "read_state"
+read_state_messages_cassandra_keyspace: "messaging"
+read_state_dms_cassandra_keyspace: "dms"
+
+## Optional: auth to Cassandra if enabled
+# read_state_cassandra_username: ""
+# read_state_cassandra_password: ""
+
+## Replication/consistency (match services/read-state/src/env.ts)
+read_state_cassandra_topology: "simple"
+read_state_cassandra_replication_factor: "3"
+read_state_cassandra_read_consistency: "localOne"
+read_state_cassandra_write_consistency: "localQuorum"

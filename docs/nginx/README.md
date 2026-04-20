@@ -14,6 +14,8 @@ Current split pattern:
 - `production-frontend.conf.example`
 - `production-backend.conf.example`
 - `production-search.conf.example`
+- `production-dms.conf.example`
+- `production-read-state.conf.example`
 
 ## Deprecated
 

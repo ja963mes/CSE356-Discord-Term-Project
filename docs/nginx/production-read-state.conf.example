@@ -1,0 +1,37 @@
+# Nginx — production read-state VM (read-state-service only)
+#
+# Use this on the dedicated read-state VM that runs the read-state Node service locally.
+# Frontend VM proxies /read-state traffic here (private IP 10.0.1.189:80).
+#
+# Service on localhost (this VM):
+#   3008 read-state
+
+upstream read_state_backend {
+    server 127.0.0.1:3008;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    server_name 10.0.1.189;
+
+    client_max_body_size 25m;
+
+    location ^~ /read-state {
+        proxy_pass http://read_state_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    # API-only host in split production
+    location / {
+        return 404;
+    }
+}
