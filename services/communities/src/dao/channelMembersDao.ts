@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import { channelMembers, communityMembers, users } from "../db/schema";
 import { PrivateChannelMemberRow } from "./types";
@@ -12,15 +12,15 @@ export async function addMemberNoConflict(channelId: string, userId: string): Pr
 }
 
 export async function addMembers(channelId: string, userIds: string[]): Promise<void> {
-  for (const userId of userIds) {
-    await addMember(channelId, userId);
-  }
+  if (userIds.length === 0) return;
+  const rows = userIds.map((userId) => ({ channel_id: channelId, user_id: userId }));
+  await db.insert(channelMembers).values(rows).onConflictDoNothing();
 }
 
 export async function addUserToChannels(userId: string, channelIds: string[]): Promise<void> {
-  for (const channelId of channelIds) {
-    await addMember(channelId, userId);
-  }
+  if (channelIds.length === 0) return;
+  const rows = channelIds.map((channelId) => ({ channel_id: channelId, user_id: userId }));
+  await db.insert(channelMembers).values(rows).onConflictDoNothing();
 }
 
 export async function removeMember(channelId: string, userId: string): Promise<boolean> {
@@ -33,9 +33,9 @@ export async function removeMember(channelId: string, userId: string): Promise<b
 
 export async function removeUserFromChannels(userId: string, channelIds: string[]): Promise<void> {
   if (channelIds.length === 0) return;
-  for (const channelId of channelIds) {
-    await db.delete(channelMembers).where(and(eq(channelMembers.channel_id, channelId), eq(channelMembers.user_id, userId)));
-  }
+  await db
+    .delete(channelMembers)
+    .where(and(eq(channelMembers.user_id, userId), inArray(channelMembers.channel_id, channelIds)));
 }
 
 export async function hasMembership(channelId: string, userId: string): Promise<boolean> {
