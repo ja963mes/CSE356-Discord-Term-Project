@@ -532,8 +532,69 @@ redisSub.on("message", (channel, message) => {
     const channelId = event.channelId as string;
     if (!channelId) return;
 
-    logger.info({ eventType: event.type, channelId, messageId: event.message && (event.message as { messageId?: string }).messageId }, "channel event received, fanning out");
-    void fanOutToChannel(channelId, JSON.stringify(event));
+    const chMsg = event.message as { messageId?: string; authorId?: string; timeuuid?: string; createdAt?: string } | undefined;
+
+    if (event.type === "channel:message:create") {
+      logger.info({
+        channelId,
+        messageId: chMsg?.messageId,
+        authorId: chMsg?.authorId,
+        timeuuid: chMsg?.timeuuid,
+        createdAt: chMsg?.createdAt,
+        receivedAt: new Date().toISOString(),
+      }, "channel:message:create received from redis");
+
+      void (async () => {
+        const payload = JSON.stringify(event);
+        const raw = await redis.smembers(`presence:channel:${channelId}`);
+        let sentCount = 0;
+        let notConnectedCount = 0;
+        for (const uid of raw) {
+          const conns = userConnections.get(normUserId(uid));
+          if (!conns || conns.size === 0) {
+            notConnectedCount++;
+            logger.info({
+              targetUid: uid,
+              channelId,
+              messageId: chMsg?.messageId,
+              authorId: chMsg?.authorId,
+            }, "channel fanout: target not connected on this instance");
+            continue;
+          }
+          for (const connId of conns) {
+            const conn = connections.get(connId);
+            if (conn) {
+              safeSend(conn.ws, payload, "channel");
+              sentCount++;
+              logger.info({
+                targetUid: uid,
+                connId,
+                channelId,
+                messageId: chMsg?.messageId,
+                authorId: chMsg?.authorId,
+                sentAt: new Date().toISOString(),
+              }, "channel fanout: sent to client");
+            }
+          }
+        }
+        logger.info({
+          channelId,
+          messageId: chMsg?.messageId,
+          authorId: chMsg?.authorId,
+          sentCount,
+          notConnectedCount,
+          totalSubscribed: raw.length,
+        }, "channel:message:create fanout complete");
+      })();
+    } else {
+      logger.info({
+        eventType: event.type,
+        channelId,
+        messageId: chMsg?.messageId,
+        receivedAt: new Date().toISOString(),
+      }, "channel event received, fanning out");
+      void fanOutToChannel(channelId, JSON.stringify(event));
+    }
     return;
   }
 
@@ -547,31 +608,80 @@ redisSub.on("message", (channel, message) => {
   }
 
   const targetUserIds = new Set((event.participantIds ?? []).map(normUserId));
+
+  const dmMsg = event.type === "dm:message:create" && event.message && typeof event.message === "object"
+    ? event.message as { messageId?: string; authorId?: string; timeuuid?: string; createdAt?: string }
+    : null;
+
+  if (event.type === "dm:message:create") {
+    logger.info({
+      conversationId: event.conversationId,
+      messageId: dmMsg?.messageId,
+      authorId: dmMsg?.authorId,
+      timeuuid: dmMsg?.timeuuid,
+      createdAt: dmMsg?.createdAt,
+      participantIds: event.participantIds ?? [],
+      participantCount: (event.participantIds ?? []).length,
+      receivedAt: new Date().toISOString(),
+    }, "dm:message:create received from redis");
+  }
+
   const outgoing =
     event.type === "dm:message:create"
       ? JSON.stringify({
           type: "dm:new_message",
           conversationId: event.conversationId,
-          messageId: event.message && typeof event.message === "object"
-            ? (event.message as { messageId?: string }).messageId
-            : undefined,
-          authorId: event.message && typeof event.message === "object"
-            ? (event.message as { authorId?: string }).authorId
-            : undefined,
-          timeuuid: event.message && typeof event.message === "object"
-            ? (event.message as { timeuuid?: string }).timeuuid
-            : undefined,
+          messageId: dmMsg?.messageId,
+          authorId: dmMsg?.authorId,
+          timeuuid: dmMsg?.timeuuid,
           source: "live",
         })
       : JSON.stringify(event);
 
+  let dmSentCount = 0;
+  let dmNotConnectedCount = 0;
   for (const targetUid of targetUserIds) {
     const conns = userConnections.get(targetUid);
-    if (!conns) continue;
+    if (!conns || conns.size === 0) {
+      if (event.type === "dm:message:create") {
+        dmNotConnectedCount++;
+        logger.info({
+          targetUid,
+          conversationId: event.conversationId,
+          messageId: dmMsg?.messageId,
+          authorId: dmMsg?.authorId,
+        }, "dm fanout: target not connected on this instance");
+      }
+      continue;
+    }
     for (const connId of conns) {
       const conn = connections.get(connId);
-      if (conn) safeSend(conn.ws, outgoing, "dm_event");
+      if (conn) {
+        safeSend(conn.ws, outgoing, "dm_event");
+        if (event.type === "dm:message:create") {
+          dmSentCount++;
+          logger.info({
+            targetUid,
+            connId,
+            conversationId: event.conversationId,
+            messageId: dmMsg?.messageId,
+            authorId: dmMsg?.authorId,
+            sentAt: new Date().toISOString(),
+          }, "dm fanout: sent to client");
+        }
+      }
     }
+  }
+
+  if (event.type === "dm:message:create") {
+    logger.info({
+      conversationId: event.conversationId,
+      messageId: dmMsg?.messageId,
+      authorId: dmMsg?.authorId,
+      sentCount: dmSentCount,
+      notConnectedCount: dmNotConnectedCount,
+      totalTargets: targetUserIds.size,
+    }, "dm:message:create fanout complete");
   }
 
   if (event.type === "dm:conversation:create") {

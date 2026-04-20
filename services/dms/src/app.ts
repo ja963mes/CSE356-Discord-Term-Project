@@ -7,6 +7,7 @@ import { types } from "cassandra-driver";
 import { z } from "zod";
 import { requireAuth } from "./middleware/session";
 import { presignUpload } from "./minio";
+import { logger } from "./logger";
 import {
   createConversation,
   createMessage,
@@ -135,12 +136,24 @@ app.post("/dms/:id/messages", requireAuth, async (req, res, next) => {
   try {
     const conversationId = z.string().uuid().parse(req.params.id);
     const body = createMessageSchema.parse(req.body);
+    logger.info({
+      conversationId,
+      authorId: req.user.internal_id,
+      receivedAt: new Date().toISOString(),
+    }, "dm POST received");
     const message = await createMessage({
       conversationId,
       authorId: req.user.internal_id,
       content: body.content,
       attachmentKeys: body.attachmentKeys,
     });
+    logger.info({
+      conversationId,
+      messageId: message.messageId,
+      authorId: message.authorId,
+      createdAt: message.createdAt,
+      timeuuid: message.timeuuid,
+    }, "dm POST responded 201");
     res.status(201).json({ message });
   } catch (error) {
     next(error);
