@@ -151,17 +151,22 @@ async function replayMissedDmHints(ws: WebSocket, userId: string): Promise<void>
   }
 }
 
-function safeSend(ws: WebSocket, payload: string, label: string): void {
+function safeSend(
+  ws: WebSocket,
+  payload: string,
+  label: string,
+  ctx?: { userId?: string; connId?: string; conversationId?: string; messageId?: string }
+): void {
   if (ws.readyState !== WebSocket.OPEN) {
     if (label === "dm_event") {
-      logger.warn({ label, readyState: ws.readyState }, "ws not open, dropping send");
+      logger.warn({ label, readyState: ws.readyState, ...ctx }, "ws not open, dropping send");
     }
     return;
   }
   try {
     ws.send(payload);
   } catch (err) {
-    logger.warn({ err, label }, "ws fanout send failed");
+    logger.warn({ err, label, ...ctx }, "ws fanout send failed");
   }
 }
 
@@ -645,7 +650,7 @@ redisSub.on("message", (channel, message) => {
     if (!conns || conns.size === 0) {
       if (event.type === "dm:message:create") {
         dmNotConnectedCount++;
-        logger.info({
+        logger.warn({
           targetUid,
           conversationId: event.conversationId,
           messageId: dmMsg?.messageId,
@@ -657,7 +662,12 @@ redisSub.on("message", (channel, message) => {
     for (const connId of conns) {
       const conn = connections.get(connId);
       if (conn) {
-        safeSend(conn.ws, outgoing, "dm_event");
+        safeSend(conn.ws, outgoing, "dm_event", {
+          userId: targetUid,
+          connId,
+          conversationId: event.conversationId as string | undefined,
+          messageId: dmMsg?.messageId,
+        });
         if (event.type === "dm:message:create") {
           dmSentCount++;
           logger.info({
