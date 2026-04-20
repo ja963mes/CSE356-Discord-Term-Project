@@ -5,7 +5,10 @@
 #
 # Services on localhost (this VM):
 #   3002 communities   3003 messages
-#   3006 create-community   3007 dms   3008 read-state
+#   3006 create-community   3008 read-state
+#
+# DMs run on a dedicated DMs VM (10.0.3.52) — frontend nginx proxies /dms there,
+# not via this host. See docs/nginx/production-dms.conf.example.
 #
 # Realtime (WebSocket /ws): two instances on dedicated realtime VM (private network).
 # Upstream below uses 10.0.3.180 — keep in sync with inventory / firewall (backend must reach :3005 and :3009).
@@ -34,10 +37,6 @@ upstream backend_realtime {
 upstream backend_create_community {
     server 127.0.0.1:3006;
     keepalive 16;
-}
-upstream backend_dms {
-    server 127.0.0.1:3007;
-    keepalive 32;
 }
 upstream backend_read_state {
     server 127.0.0.1:3008;
@@ -102,16 +101,6 @@ server {
 
     location ^~ /search-communities {
         proxy_pass http://backend_communities;
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    location ^~ /dms {
-        proxy_pass http://backend_dms;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
         proxy_set_header Host $host;

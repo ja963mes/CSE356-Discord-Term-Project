@@ -16,6 +16,12 @@
   roles:
     - messages
 
+- name: Configure and deploy dms VM
+  hosts: dms
+  become: true
+  roles:
+    - dms
+
 - name: Configure and deploy auth VM
   hosts: auth
   become: true

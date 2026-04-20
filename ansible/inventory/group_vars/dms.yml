@@ -1,0 +1,39 @@
+## DMs VM (dms-service only). Hosts must be in [dms] inventory group.
+dms_systemd_services:
+  - discord-dms
+
+dms_workspace_build_commands:
+  - npm run build --workspace dms-service
+
+## /etc/discord.env values for dms-service
+dms_log_level: info
+dms_log_pretty: "true"
+dms_port: "3007"
+
+## REQUIRED: set these to reachable endpoints (likely private IPs)
+dms_database_url: "postgresql://postgres:123456789@10.0.2.247:6432/auth_db"
+dms_redis_url: "redis://10.0.2.247:6379"
+dms_redis_command_timeout_ms: "5000"
+
+## Cassandra cluster (DM history)
+dms_cassandra_contact_points: "10.0.2.111,10.0.0.225,10.0.1.200"
+dms_cassandra_port: "9042"
+dms_cassandra_local_datacenter: "datacenter1"
+dms_cassandra_keyspace: "dms"
+
+## Optional: auth to Cassandra if enabled
+# dms_cassandra_username: ""
+# dms_cassandra_password: ""
+
+## Replication/consistency (match services/dms/src/env.ts)
+dms_cassandra_topology: "simple"
+dms_cassandra_replication_factor: "3"
+dms_cassandra_read_consistency: "localQuorum"
+dms_cassandra_write_consistency: "localQuorum"
+
+## MinIO / attachments (dms service issues presign URLs)
+dms_minio_endpoint: "http://10.0.2.247:9000"
+dms_minio_access_key: "minioadmin"
+dms_minio_secret_key: "minioadmin"
+dms_minio_bucket: "discord-attachments"
+dms_attachment_base_url: "http://130.245.136.45/attachments"
