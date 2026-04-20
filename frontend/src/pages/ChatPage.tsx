@@ -18,7 +18,7 @@ import {
   listCommunities,
   removeChannelMember,
 } from "../api/discord";
-import { getMe, getDmUsers, logout, Me, DmUser, displayNameForDmUser } from "../api/auth";
+import { getMe, getDmUsers, getDmUsersByIds, logout, Me, DmUser, displayNameForDmUser } from "../api/auth";
 import { getDmReadState, listConversations } from "../api/dms";
 import { IncomingMessage, useWebSocket } from "../hooks/useWebSocket";
 import { useActivityDetection } from "../hooks/useActivityDetection";
@@ -188,6 +188,36 @@ export default function ChatPage() {
       })
       .catch(() => setMe(null));
   }, []);
+
+  // Backfill dmUsers with any conversation participants not in the /auth/dm-users slice
+  // (e.g. when the total user count exceeds the 200-row cap).
+  useEffect(() => {
+    if (!me) return;
+    const known = new Set(dmUsers.map((u) => u.internal_id));
+    known.add(me.internal_id);
+    const missing: string[] = [];
+    for (const c of dmConversations) {
+      for (const pid of c.participantIds ?? []) {
+        if (!known.has(pid)) {
+          known.add(pid);
+          missing.push(pid);
+        }
+      }
+    }
+    if (missing.length === 0) return;
+    let cancelled = false;
+    getDmUsersByIds(missing)
+      .then((extra) => {
+        if (cancelled || extra.length === 0) return;
+        setDmUsers((prev) => {
+          const byId = new Map(prev.map((u) => [u.internal_id, u]));
+          for (const u of extra) byId.set(u.internal_id, u);
+          return Array.from(byId.values());
+        });
+      })
+      .catch((err) => console.error("[ChatPage] getDmUsersByIds failed:", err));
+    return () => { cancelled = true; };
+  }, [dmConversations, dmUsers, me]);
 
   const { send } = useWebSocket(handleMessage);
   useActivityDetection(send);

@@ -8,7 +8,7 @@ import multer from "multer";
 import { db } from "../db";
 import { users, identities } from "../db/schema";
 import { redis } from "../db/redis";
-import { eq, and, ilike, ne } from "drizzle-orm";
+import { eq, and, ilike, ne, inArray } from "drizzle-orm";
 import { requireAuth } from "../middleware/session";
 import { env } from "../config/env";
 import {
@@ -636,10 +636,19 @@ router.get("/dm-users", requireAuth, async (req: Request, res: Response): Promis
     const limitRaw = Number(req.query.limit ?? 200);
     const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : 200, 1), 500);
 
-    const where = and(
-      ne(users.internal_id, internal_id),
-      q ? ilike(users.username, `%${q}%`) : undefined
-    );
+    const idsRaw = String(req.query.ids ?? "");
+    const ids = idsRaw
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => /^[0-9a-fA-F-]{36}$/.test(s))
+      .slice(0, 500);
+
+    const where = ids.length > 0
+      ? inArray(users.internal_id, ids)
+      : and(
+          ne(users.internal_id, internal_id),
+          q ? ilike(users.username, `%${q}%`) : undefined
+        );
 
     const rows = await db
       .select({

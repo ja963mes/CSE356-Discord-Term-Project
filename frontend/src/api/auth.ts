@@ -161,6 +161,27 @@ export async function getDmUsers(): Promise<DmUser[]> {
   return normalizeDmUsersPayload(body);
 }
 
+export async function getDmUsersByIds(ids: string[]): Promise<DmUser[]> {
+  const uniq = Array.from(new Set(ids.filter((id) => typeof id === "string" && id.length > 0)));
+  if (uniq.length === 0) return [];
+  const out: DmUser[] = [];
+  const CHUNK = 100;
+  for (let i = 0; i < uniq.length; i += CHUNK) {
+    const slice = uniq.slice(i, i + CHUNK);
+    const qs = new URLSearchParams({ ids: slice.join(","), limit: String(slice.length) }).toString();
+    const res = await fetch(`/auth/dm-users?${qs}`, { credentials: "include" });
+    if (!res.ok) continue;
+    let body: unknown;
+    try {
+      body = await res.json();
+    } catch {
+      continue;
+    }
+    out.push(...normalizeDmUsersPayload(body));
+  }
+  return out;
+}
+
 export async function uploadAvatar(file: File): Promise<string> {
   const form = new FormData();
   form.append("avatar", file);
