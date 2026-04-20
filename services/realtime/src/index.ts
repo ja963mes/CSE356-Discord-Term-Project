@@ -80,9 +80,92 @@ async function listUserDmConversationIds(userId: string): Promise<string[]> {
   return result.rows.map((r) => String(r.conversation_id));
 }
 
+async function withRetry<T>(
+  label: string,
+  ctx: Record<string, unknown>,
+  fn: () => Promise<T>
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    const e = err as { name?: string; info?: string };
+    const isTimeout =
+      e?.name === "OperationTimedOutError" ||
+      (typeof e?.info === "string" && e.info.includes("did not reply before timeout"));
+    if (!isTimeout) throw err;
+    logger.warn({ err, label, ...ctx }, "cassandra timeout; retrying once");
+    return await fn();
+  }
+}
+
+async function catchUpOneConversation(ws: WebSocket, userId: string, conversationId: string): Promise<void> {
+  if (ws.readyState !== WebSocket.OPEN) return;
+
+  let lastRead: string | null = null;
+  let latest: string | null = null;
+  try {
+    [lastRead, latest] = await Promise.all([
+      withRetry("getLastReadTimeuuidForDm", { userId, conversationId }, () =>
+        getLastReadTimeuuidForDm(userId, conversationId)
+      ),
+      withRetry("getLatestDmTimeuuid", { userId, conversationId }, () =>
+        getLatestDmTimeuuid(conversationId)
+      ),
+    ]);
+  } catch (err) {
+    logger.warn({ err, userId, conversationId }, "dm catch-up failed to read cursor");
+    return;
+  }
+
+  if (!latest) return;
+  if (lastRead) {
+    try {
+      const latestTuuid = cassandraTypes.TimeUuid.fromString(latest);
+      const lastReadTuuid = cassandraTypes.TimeUuid.fromString(lastRead);
+      if (latestTuuid.getBuffer().compare(lastReadTuuid.getBuffer()) <= 0) {
+        return;
+      }
+    } catch (err) {
+      logger.warn({ err, userId, conversationId }, "dm catch-up timeuuid compare failed");
+    }
+  }
+
+  let rows;
+  try {
+    rows = await withRetry("listDmMessagesNewerThan", { userId, conversationId }, () =>
+      listDmMessagesNewerThan({
+        conversationId,
+        afterTimeuuid: lastRead,
+        limit: 25,
+      })
+    );
+  } catch (err) {
+    logger.warn({ err, userId, conversationId }, "dm catch-up failed to list messages");
+    return;
+  }
+
+  // Cassandra rows come back newest-first; replay hints oldest-first.
+  for (const row of [...rows].reverse()) {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    safeSend(
+      ws,
+      JSON.stringify({
+        type: "dm:new_message",
+        conversationId,
+        messageId: row.messageId,
+        authorId: row.authorId,
+        timeuuid: row.timeuuid,
+        source: "catchup",
+      }),
+      "dm_catchup",
+      { userId, conversationId, messageId: row.messageId }
+    );
+  }
+}
+
 async function replayMissedDmHints(ws: WebSocket, userId: string): Promise<void> {
   const MAX_CONVERSATIONS = 50;
-  const PER_CONVERSATION_LIMIT = 25;
+  const CONCURRENCY = 5;
 
   let conversationIds: string[];
   try {
@@ -92,76 +175,34 @@ async function replayMissedDmHints(ws: WebSocket, userId: string): Promise<void>
     return;
   }
 
-  for (const conversationId of conversationIds.slice(0, MAX_CONVERSATIONS)) {
-    if (ws.readyState !== WebSocket.OPEN) return;
-
-    let lastRead: string | null = null;
-    let latest: string | null = null;
-    try {
-      [lastRead, latest] = await Promise.all([
-        getLastReadTimeuuidForDm(userId, conversationId),
-        getLatestDmTimeuuid(conversationId),
-      ]);
-    } catch (err) {
-      logger.warn({ err, userId, conversationId }, "dm catch-up failed to read cursor");
-      continue;
-    }
-
-    if (!latest) continue;
-    if (lastRead) {
-      try {
-        const latestTuuid = cassandraTypes.TimeUuid.fromString(latest);
-        const lastReadTuuid = cassandraTypes.TimeUuid.fromString(lastRead);
-        if (latestTuuid.getBuffer().compare(lastReadTuuid.getBuffer()) <= 0) {
-          continue;
-        }
-      } catch (err) {
-        logger.warn({ err, userId, conversationId }, "dm catch-up timeuuid compare failed");
-      }
-    }
-
-    let rows;
-    try {
-      rows = await listDmMessagesNewerThan({
-        conversationId,
-        afterTimeuuid: lastRead,
-        limit: PER_CONVERSATION_LIMIT,
-      });
-    } catch (err) {
-      logger.warn({ err, userId, conversationId }, "dm catch-up failed to list messages");
-      continue;
-    }
-
-    // Cassandra rows come back newest-first; replay hints oldest-first.
-    for (const row of [...rows].reverse()) {
+  const queue = conversationIds.slice(0, MAX_CONVERSATIONS);
+  let idx = 0;
+  const worker = async (): Promise<void> => {
+    while (idx < queue.length) {
+      const i = idx++;
       if (ws.readyState !== WebSocket.OPEN) return;
-      safeSend(
-        ws,
-        JSON.stringify({
-          type: "dm:new_message",
-          conversationId,
-          messageId: row.messageId,
-          authorId: row.authorId,
-          timeuuid: row.timeuuid,
-          source: "catchup",
-        }),
-        "dm_catchup"
-      );
+      await catchUpOneConversation(ws, userId, queue[i]);
     }
-  }
+  };
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
 }
 
-function safeSend(ws: WebSocket, payload: string, label: string): void {
+function safeSend(
+  ws: WebSocket,
+  payload: string,
+  label: string,
+  ctx?: { userId?: string; connId?: string; conversationId?: string; messageId?: string }
+): void {
   if (ws.readyState !== WebSocket.OPEN) {
     if (label === "dm_event") {
-      logger.warn({ label, readyState: ws.readyState }, "ws not open, dropping send");
+      logger.warn({ label, readyState: ws.readyState, ...ctx }, "ws not open, dropping send");
     }
     return;
   }
   try {
     ws.send(payload);
   } catch (err) {
-    logger.warn({ err, label }, "ws fanout send failed");
+    logger.warn({ err, label, ...ctx }, "ws fanout send failed");
   }
 }
 
@@ -645,7 +686,7 @@ redisSub.on("message", (channel, message) => {
     if (!conns || conns.size === 0) {
       if (event.type === "dm:message:create") {
         dmNotConnectedCount++;
-        logger.info({
+        logger.warn({
           targetUid,
           conversationId: event.conversationId,
           messageId: dmMsg?.messageId,
@@ -657,7 +698,12 @@ redisSub.on("message", (channel, message) => {
     for (const connId of conns) {
       const conn = connections.get(connId);
       if (conn) {
-        safeSend(conn.ws, outgoing, "dm_event");
+        safeSend(conn.ws, outgoing, "dm_event", {
+          userId: targetUid,
+          connId,
+          conversationId: event.conversationId as string | undefined,
+          messageId: dmMsg?.messageId,
+        });
         if (event.type === "dm:message:create") {
           dmSentCount++;
           logger.info({
