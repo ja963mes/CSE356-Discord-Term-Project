@@ -1,7 +1,21 @@
+import http from "http";
+import { URL } from "url";
 import { redis } from "./redis";
 import { logger } from "./logger";
 
 const CHANNEL = "dm:events";
+
+/**
+ * Keep-alive HTTP pool for direct fanout. Node's global fetch opens a fresh
+ * TCP connection per call, which costs ~1 RTT per DM event on the private
+ * network. Reusing sockets across events removes that handshake.
+ */
+const realtimeHttpAgent = new http.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 10_000,
+  maxSockets: 32,
+  maxFreeSockets: 16,
+});
 
 /**
  * Outbound-queue parameters. Each participant has a capped Redis list of
@@ -23,7 +37,10 @@ const PENDING_TTL_SECONDS = 3600;
 const INSTANCE_REGISTRY_KEY = "realtime:instances";
 const DIRECT_FANOUT_TIMEOUT_MS = 500;
 
-async function directHttpFanout(event: DmEvent): Promise<void> {
+/** Wire event — DmEvent plus transport-level fields (publishedAt for per-hop timing). */
+type WireDmEvent = DmEvent & { publishedAt: number };
+
+async function directHttpFanout(event: WireDmEvent): Promise<void> {
   let instances: Record<string, string>;
   try {
     instances = await redis.hgetall(INSTANCE_REGISTRY_KEY);
@@ -38,29 +55,68 @@ async function directHttpFanout(event: DmEvent): Promise<void> {
   await Promise.all(
     entries.map(async ([instanceId, url]) => {
       if (!url) return;
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), DIRECT_FANOUT_TIMEOUT_MS);
       try {
-        const res = await fetch(`${url}/internal/deliver-dm`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body,
-          signal: controller.signal,
-        });
-        if (!res.ok) {
+        await postDeliverDm(url, body);
+      } catch (err) {
+        const status = (err as { statusCode?: number }).statusCode;
+        if (typeof status === "number") {
           logger.warn(
-            { instanceId, url, status: res.status, eventType: event.type },
+            { instanceId, url, status, eventType: event.type },
             "direct fanout: non-2xx response"
           );
+        } else {
+          // Instance down or slow. Pubsub is still the fallback path.
+          logger.warn({ err, instanceId, url, eventType: event.type }, "direct fanout: POST failed");
         }
-      } catch (err) {
-        // Instance down or slow. Pubsub is still the fallback path.
-        logger.warn({ err, instanceId, url, eventType: event.type }, "direct fanout: POST failed");
-      } finally {
-        clearTimeout(timer);
       }
     })
   );
+}
+
+function postDeliverDm(baseUrl: string, body: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let parsed: URL;
+    try {
+      parsed = new URL("/internal/deliver-dm", baseUrl);
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    const req = http.request(
+      {
+        agent: realtimeHttpAgent,
+        protocol: parsed.protocol,
+        hostname: parsed.hostname,
+        port: parsed.port || 80,
+        path: parsed.pathname,
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": Buffer.byteLength(body).toString(),
+        },
+        timeout: DIRECT_FANOUT_TIMEOUT_MS,
+      },
+      (res) => {
+        // Drain body so socket returns to pool.
+        res.resume();
+        res.on("end", () => {
+          const status = res.statusCode ?? 0;
+          if (status >= 200 && status < 300) {
+            resolve();
+          } else {
+            reject(Object.assign(new Error(`status ${status}`), { statusCode: status }));
+          }
+        });
+        res.on("error", reject);
+      }
+    );
+    req.on("timeout", () => {
+      req.destroy(new Error("direct fanout timeout"));
+    });
+    req.on("error", reject);
+    req.write(body);
+    req.end();
+  });
 }
 
 async function enqueuePendingDmHint(
@@ -164,6 +220,10 @@ export type DmEvent =
     };
 
 export async function publishDmEvent(event: DmEvent): Promise<void> {
+  // publishedAt rides on the wire payload so realtime can log per-hop
+  // latency (pubsub receive, direct-HTTP receive, ws.send) as deltas.
+  const publishedAt = Date.now();
+  const wireEvent: WireDmEvent = { ...event, publishedAt } as WireDmEvent;
   if (event.type === "dm:message:create") {
     logger.info(
       {
@@ -174,15 +234,21 @@ export async function publishDmEvent(event: DmEvent): Promise<void> {
         participantCount: event.participantIds.length,
         createdAt: event.message.createdAt,
         timeuuid: event.message.timeuuid,
+        publishedAt,
       },
       "dm:message:create publishing to redis"
     );
   }
   try {
-    await redis.publish(CHANNEL, JSON.stringify(event));
+    await redis.publish(CHANNEL, JSON.stringify(wireEvent));
     if (event.type === "dm:message:create") {
       logger.info(
-        { conversationId: event.conversationId, messageId: event.message.messageId },
+        {
+          conversationId: event.conversationId,
+          messageId: event.message.messageId,
+          publishedAt,
+          publishDurationMs: Date.now() - publishedAt,
+        },
         "dm:message:create published to redis"
       );
       // Queue a minimal hint per participant so realtime can drain it on
@@ -200,7 +266,7 @@ export async function publishDmEvent(event: DmEvent): Promise<void> {
     // Parallel direct-HTTP fanout to every realtime instance. Does not block
     // the caller's success path — pubsub + pending queue already guarantee
     // durability. This is purely a latency-cut for live delivery.
-    void directHttpFanout(event);
+    void directHttpFanout(wireEvent);
   } catch (err) {
     logger.error({ err, eventType: event.type, conversationId: event.conversationId }, "redis publish failed");
     throw err;

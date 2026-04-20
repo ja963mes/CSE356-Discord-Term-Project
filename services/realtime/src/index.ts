@@ -310,9 +310,10 @@ async function updateAndBroadcast(userId: string, prevStatus: PresenceStatus): P
 // cluster-wide reach publish via redis AND/OR POST to every instance.
 type DmFanoutSource = "pubsub" | "direct";
 function fanOutDmEventLocal(
-  event: { type: string; participantIds?: string[]; conversationId?: unknown; message?: unknown; [k: string]: unknown },
+  event: { type: string; participantIds?: string[]; conversationId?: unknown; message?: unknown; publishedAt?: unknown; [k: string]: unknown },
   source: DmFanoutSource
 ): { delivered: number; localMiss: number; totalTargets: number } {
+  const publishedAt = typeof event.publishedAt === "number" ? event.publishedAt : undefined;
   const targetUserIds = new Set((event.participantIds ?? []).map(normUserId));
   const dmMsg = event.type === "dm:message:create" && event.message && typeof event.message === "object"
     ? event.message as { messageId?: string; authorId?: string; timeuuid?: string; createdAt?: string }
@@ -380,6 +381,7 @@ function fanOutDmEventLocal(
         });
         if (event.type === "dm:message:create") {
           dmSentCount++;
+          const sentAtMs = Date.now();
           logger.info({
             targetUid,
             connId,
@@ -387,7 +389,9 @@ function fanOutDmEventLocal(
             messageId: dmMsg?.messageId,
             authorId: dmMsg?.authorId,
             source,
-            sentAt: new Date().toISOString(),
+            sentAt: new Date(sentAtMs).toISOString(),
+            publishedAt,
+            totalLatencyMs: publishedAt !== undefined ? sentAtMs - publishedAt : undefined,
           }, "dm fanout: sent to client");
         }
       }
@@ -439,11 +443,24 @@ app.get("/internal/presence/:userId", async (req, res) => {
 app.post("/internal/deliver-dm", (req, res) => {
   const body = req.body as { event?: unknown } | undefined;
   const event = body?.event as
-    | { type: string; participantIds?: string[]; [key: string]: unknown }
+    | { type: string; participantIds?: string[]; publishedAt?: unknown; [key: string]: unknown }
     | undefined;
   if (!event || typeof event !== "object" || typeof event.type !== "string") {
     res.status(400).json({ error: "event required" });
     return;
+  }
+  if (event.type === "dm:message:create") {
+    const publishedAt = typeof event.publishedAt === "number" ? event.publishedAt : undefined;
+    const dmMsg = event.message && typeof event.message === "object"
+      ? (event.message as { messageId?: string })
+      : null;
+    logger.info({
+      conversationId: event.conversationId,
+      messageId: dmMsg?.messageId,
+      publishedAt,
+      transitMs: publishedAt !== undefined ? Date.now() - publishedAt : undefined,
+      path: "direct",
+    }, "dm:message:create direct-HTTP received");
   }
   const result = fanOutDmEventLocal(event, "direct");
   res.json(result);
@@ -841,6 +858,8 @@ redisSub.on("message", (channel, message) => {
     : null;
 
   if (event.type === "dm:message:create") {
+    const rawPublishedAt = (event as unknown as { publishedAt?: unknown }).publishedAt;
+    const publishedAt = typeof rawPublishedAt === "number" ? rawPublishedAt : undefined;
     logger.info({
       conversationId: event.conversationId,
       messageId: dmMsg?.messageId,
@@ -850,6 +869,9 @@ redisSub.on("message", (channel, message) => {
       participantIds: event.participantIds ?? [],
       participantCount: (event.participantIds ?? []).length,
       receivedAt: new Date().toISOString(),
+      publishedAt,
+      transitMs: publishedAt !== undefined ? Date.now() - publishedAt : undefined,
+      path: "pubsub",
     }, "dm:message:create received from redis");
   }
 
