@@ -62,14 +62,23 @@ export async function listDmMessagesNewerThan(params: {
         { prepare: true }
       );
 
-  return result.rows.map((row) => {
-    const createdAt = row.get("created_at") as types.TimeUuid;
-    return {
+  const out: DmCatchupRow[] = [];
+  for (const row of result.rows) {
+    const createdAt = row.get("created_at") as types.TimeUuid | null;
+    const messageId = row.get("message_id");
+    const authorId = row.get("author_id");
+    // Skip phantom / soft-delete rows that have no author or no message id.
+    // These appear because UPDATE upserts leave a row with only the touched
+    // columns + PK populated; sending them would push a useless hint with
+    // authorId/messageId = undefined to the client.
+    if (!createdAt || messageId == null || authorId == null) continue;
+    out.push({
       conversationId,
       timeuuid: createdAt.toString(),
-      messageId: row.get("message_id")?.toString(),
-      authorId: row.get("author_id")?.toString(),
-    };
-  });
+      messageId: messageId.toString(),
+      authorId: authorId.toString(),
+    });
+  }
+  return out;
 }
 
