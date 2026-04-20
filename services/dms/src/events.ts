@@ -13,6 +13,56 @@ const PENDING_KEY_PREFIX = "dm:pending:";
 const PENDING_MAX_PER_USER = 100;
 const PENDING_TTL_SECONDS = 3600;
 
+/**
+ * Direct HTTP fanout — parallel to redis pubsub. Each realtime instance
+ * self-registers under `realtime:instances` hash on startup. We HGETALL and
+ * POST the event to every instance's /internal/deliver-dm in parallel. Redis
+ * pubsub remains the durability backstop; this path trades one extra HTTP
+ * hop for lower cross-VM latency variance. Client dedupes by messageId.
+ */
+const INSTANCE_REGISTRY_KEY = "realtime:instances";
+const DIRECT_FANOUT_TIMEOUT_MS = 500;
+
+async function directHttpFanout(event: DmEvent): Promise<void> {
+  let instances: Record<string, string>;
+  try {
+    instances = await redis.hgetall(INSTANCE_REGISTRY_KEY);
+  } catch (err) {
+    logger.warn({ err, eventType: event.type }, "direct fanout: instance registry read failed");
+    return;
+  }
+  const entries = Object.entries(instances);
+  if (entries.length === 0) return;
+
+  const body = JSON.stringify({ event });
+  await Promise.all(
+    entries.map(async ([instanceId, url]) => {
+      if (!url) return;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), DIRECT_FANOUT_TIMEOUT_MS);
+      try {
+        const res = await fetch(`${url}/internal/deliver-dm`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+          signal: controller.signal,
+        });
+        if (!res.ok) {
+          logger.warn(
+            { instanceId, url, status: res.status, eventType: event.type },
+            "direct fanout: non-2xx response"
+          );
+        }
+      } catch (err) {
+        // Instance down or slow. Pubsub is still the fallback path.
+        logger.warn({ err, instanceId, url, eventType: event.type }, "direct fanout: POST failed");
+      } finally {
+        clearTimeout(timer);
+      }
+    })
+  );
+}
+
 async function enqueuePendingDmHint(
   participantIds: string[],
   hint: { type: "dm:new_message"; conversationId: string; messageId: string; authorId: string; timeuuid: string }
@@ -147,6 +197,10 @@ export async function publishDmEvent(event: DmEvent): Promise<void> {
         timeuuid: event.message.timeuuid,
       });
     }
+    // Parallel direct-HTTP fanout to every realtime instance. Does not block
+    // the caller's success path — pubsub + pending queue already guarantee
+    // durability. This is purely a latency-cut for live delivery.
+    void directHttpFanout(event);
   } catch (err) {
     logger.error({ err, eventType: event.type, conversationId: event.conversationId }, "redis publish failed");
     throw err;

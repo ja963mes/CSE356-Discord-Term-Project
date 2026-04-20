@@ -20,4 +20,7 @@ export const env = {
   CASSANDRA_PORT: parseInt(process.env.CASSANDRA_PORT ?? "9042", 10),
   CASSANDRA_LOCAL_DATACENTER: process.env.CASSANDRA_LOCAL_DATACENTER ?? "datacenter1",
   CASSANDRA_KEYSPACE: process.env.CASSANDRA_KEYSPACE ?? "dms",
+  // URL other services use to reach this instance for direct (non-pubsub) fanout.
+  // Empty = don't register; this instance receives dm events only via redis pubsub.
+  REALTIME_INTERNAL_URL: process.env.REALTIME_INTERNAL_URL ?? "",
 };

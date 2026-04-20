@@ -305,7 +305,121 @@ async function updateAndBroadcast(userId: string, prevStatus: PresenceStatus): P
   }
 }
 
+// Shared DM fanout: invoked by both pubsub handler and the /internal/deliver-dm
+// endpoint. Local-conn fanout only — does not republish. Callers that want
+// cluster-wide reach publish via redis AND/OR POST to every instance.
+type DmFanoutSource = "pubsub" | "direct";
+function fanOutDmEventLocal(
+  event: { type: string; participantIds?: string[]; conversationId?: unknown; message?: unknown; [k: string]: unknown },
+  source: DmFanoutSource
+): { delivered: number; localMiss: number; totalTargets: number } {
+  const targetUserIds = new Set((event.participantIds ?? []).map(normUserId));
+  const dmMsg = event.type === "dm:message:create" && event.message && typeof event.message === "object"
+    ? event.message as { messageId?: string; authorId?: string; timeuuid?: string; createdAt?: string }
+    : null;
+
+  const outgoing =
+    event.type === "dm:message:create"
+      ? JSON.stringify({
+          type: "dm:new_message",
+          conversationId: event.conversationId,
+          messageId: dmMsg?.messageId,
+          authorId: dmMsg?.authorId,
+          timeuuid: dmMsg?.timeuuid,
+          source,
+        })
+      : JSON.stringify(event);
+
+  let dmSentCount = 0;
+  let dmNotConnectedCount = 0;
+  const authorIdNorm = dmMsg?.authorId ? normUserId(dmMsg.authorId) : null;
+
+  for (const targetUid of targetUserIds) {
+    const conns = userConnections.get(targetUid);
+    if (!conns || conns.size === 0) {
+      if (event.type === "dm:message:create") {
+        const isSelfEcho = authorIdNorm !== null && targetUid === authorIdNorm;
+        if (isSelfEcho) continue;
+        dmNotConnectedCount++;
+        // Only warn from pubsub path; the direct path is per-instance targeted
+        // so a miss here is expected for instances that don't hold that user.
+        if (source === "pubsub") {
+          void (async () => {
+            try {
+              const elsewhere = await hasRegisteredConnections(redis, targetUid);
+              if (elsewhere) return;
+              logger.warn({
+                targetUid,
+                conversationId: event.conversationId,
+                messageId: dmMsg?.messageId,
+                authorId: dmMsg?.authorId,
+                offline: true,
+              }, "dm fanout: target offline cluster-wide");
+            } catch (err) {
+              logger.warn({
+                err,
+                targetUid,
+                conversationId: event.conversationId,
+                messageId: dmMsg?.messageId,
+                authorId: dmMsg?.authorId,
+              }, "dm fanout: presence check failed");
+            }
+          })();
+        }
+      }
+      continue;
+    }
+    for (const connId of conns) {
+      const conn = connections.get(connId);
+      if (conn) {
+        safeSend(conn.ws, outgoing, "dm_event", {
+          userId: targetUid,
+          connId,
+          conversationId: event.conversationId as string | undefined,
+          messageId: dmMsg?.messageId,
+        });
+        if (event.type === "dm:message:create") {
+          dmSentCount++;
+          logger.info({
+            targetUid,
+            connId,
+            conversationId: event.conversationId,
+            messageId: dmMsg?.messageId,
+            authorId: dmMsg?.authorId,
+            source,
+            sentAt: new Date().toISOString(),
+          }, "dm fanout: sent to client");
+        }
+      }
+    }
+  }
+
+  return { delivered: dmSentCount, localMiss: dmNotConnectedCount, totalTargets: targetUserIds.size };
+}
+
+// Instance registry — dms service reads this hash to discover realtime instances
+// for direct HTTP fanout. Refreshed periodically so stale instances age out.
+const INSTANCE_REGISTRY_KEY = "realtime:instances";
+const INSTANCE_REGISTRY_TTL_SEC = 30;
+const INSTANCE_REGISTRY_REFRESH_MS = 10_000;
+
+async function registerInstance(): Promise<void> {
+  if (!env.REALTIME_INTERNAL_URL) return;
+  await redis.hset(INSTANCE_REGISTRY_KEY, instanceId, env.REALTIME_INTERNAL_URL);
+  await redis.expire(INSTANCE_REGISTRY_KEY, INSTANCE_REGISTRY_TTL_SEC);
+}
+
+async function unregisterInstance(): Promise<void> {
+  if (!env.REALTIME_INTERNAL_URL) return;
+  try {
+    await redis.hdel(INSTANCE_REGISTRY_KEY, instanceId);
+  } catch {
+    // best effort on shutdown
+  }
+}
+
 const app = express();
+app.use(express.json({ limit: "256kb" }));
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "realtime-service", connections: connections.size });
@@ -316,6 +430,23 @@ app.get("/internal/presence/:userId", async (req, res) => {
   const { userId } = req.params;
   const { status, awayMessage } = await buildPresencePayload(userId);
   res.json({ userId, status, awayMessage });
+});
+
+// Direct DM delivery path — dms service POSTs here in parallel to redis pubsub.
+// Redis pubsub remains the durability backstop; direct path cuts cross-VM
+// latency variance for the hot case where the target is already connected.
+// Client dedupes by messageId so overlap with pubsub is harmless.
+app.post("/internal/deliver-dm", (req, res) => {
+  const body = req.body as { event?: unknown } | undefined;
+  const event = body?.event as
+    | { type: string; participantIds?: string[]; [key: string]: unknown }
+    | undefined;
+  if (!event || typeof event !== "object" || typeof event.type !== "string") {
+    res.status(400).json({ error: "event required" });
+    return;
+  }
+  const result = fanOutDmEventLocal(event, "direct");
+  res.json(result);
 });
 
 const server = http.createServer(app);
@@ -722,87 +853,16 @@ redisSub.on("message", (channel, message) => {
     }, "dm:message:create received from redis");
   }
 
-  const outgoing =
-    event.type === "dm:message:create"
-      ? JSON.stringify({
-          type: "dm:new_message",
-          conversationId: event.conversationId,
-          messageId: dmMsg?.messageId,
-          authorId: dmMsg?.authorId,
-          timeuuid: dmMsg?.timeuuid,
-          source: "live",
-        })
-      : JSON.stringify(event);
-
-  let dmSentCount = 0;
-  let dmNotConnectedCount = 0;
-  const authorIdNorm = dmMsg?.authorId ? normUserId(dmMsg.authorId) : null;
-  for (const targetUid of targetUserIds) {
-    const conns = userConnections.get(targetUid);
-    if (!conns || conns.size === 0) {
-      if (event.type === "dm:message:create") {
-        // Author self-echo on an instance where author not connected = not a miss.
-        // Author already got HTTP 201 with the message; live fanout to self is redundant.
-        const isSelfEcho = authorIdNorm !== null && targetUid === authorIdNorm;
-        if (isSelfEcho) continue;
-        dmNotConnectedCount++;
-        // Distinguish local-miss (delivered on other instance) from true offline.
-        void (async () => {
-          try {
-            const elsewhere = await hasRegisteredConnections(redis, targetUid);
-            if (elsewhere) return; // other instance will deliver, silent
-            logger.warn({
-              targetUid,
-              conversationId: event.conversationId,
-              messageId: dmMsg?.messageId,
-              authorId: dmMsg?.authorId,
-              offline: true,
-            }, "dm fanout: target offline cluster-wide");
-          } catch (err) {
-            logger.warn({
-              err,
-              targetUid,
-              conversationId: event.conversationId,
-              messageId: dmMsg?.messageId,
-              authorId: dmMsg?.authorId,
-            }, "dm fanout: presence check failed");
-          }
-        })();
-      }
-      continue;
-    }
-    for (const connId of conns) {
-      const conn = connections.get(connId);
-      if (conn) {
-        safeSend(conn.ws, outgoing, "dm_event", {
-          userId: targetUid,
-          connId,
-          conversationId: event.conversationId as string | undefined,
-          messageId: dmMsg?.messageId,
-        });
-        if (event.type === "dm:message:create") {
-          dmSentCount++;
-          logger.info({
-            targetUid,
-            connId,
-            conversationId: event.conversationId,
-            messageId: dmMsg?.messageId,
-            authorId: dmMsg?.authorId,
-            sentAt: new Date().toISOString(),
-          }, "dm fanout: sent to client");
-        }
-      }
-    }
-  }
+  const { delivered, localMiss, totalTargets } = fanOutDmEventLocal(event, "pubsub");
 
   if (event.type === "dm:message:create") {
     logger.info({
       conversationId: event.conversationId,
       messageId: dmMsg?.messageId,
       authorId: dmMsg?.authorId,
-      sentCount: dmSentCount,
-      notConnectedCount: dmNotConnectedCount,
-      totalTargets: targetUserIds.size,
+      sentCount: delivered,
+      notConnectedCount: localMiss,
+      totalTargets,
     }, "dm:message:create fanout complete");
   }
 
@@ -844,10 +904,26 @@ initDb()
   })
   .then(() => {
     server.listen(Number(env.PORT), () => {
-      logger.info({ port: env.PORT }, "realtime service running");
+      logger.info({ port: env.PORT, internalUrl: env.REALTIME_INTERNAL_URL || "(not set)" }, "realtime service running");
     });
+    void registerInstance().catch((err) =>
+      logger.warn({ err }, "instance registry: initial registration failed")
+    );
+    setInterval(() => {
+      void registerInstance().catch((err) =>
+        logger.warn({ err }, "instance registry: refresh failed")
+      );
+    }, INSTANCE_REGISTRY_REFRESH_MS);
   })
   .catch((err) => {
     logger.error({ err }, "failed to initialize DB");
     process.exit(1);
   });
+
+async function gracefulShutdown(signal: string): Promise<void> {
+  logger.info({ signal }, "shutting down");
+  await unregisterInstance();
+  process.exit(0);
+}
+process.on("SIGTERM", () => void gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => void gracefulShutdown("SIGINT"));
