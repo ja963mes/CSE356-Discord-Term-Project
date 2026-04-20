@@ -66,7 +66,12 @@ export default function DmChatView({
   const hintRefreshPendingRef = useRef(false);
 
   const conversationId = conversation.conversationId;
-  const label = conversation.name ?? (conversation.conversationType === "one_to_one" ? "Direct Message" : "Group DM");
+  const otherId = conversation.conversationType === "one_to_one"
+    ? conversation.participantIds.find((id) => id !== currentUserId)
+    : undefined;
+  const label = otherId
+    ? (displayNameByUserId[otherId] ?? "Direct Message")
+    : (conversation.name ?? (conversation.conversationType === "one_to_one" ? "Direct Message" : "Group DM"));
   const participantSet = new Set(conversation.participantIds);
 
   const isTimeuuidAfter = useCallback((a: string | null | undefined, b: string | null | undefined): boolean => {
