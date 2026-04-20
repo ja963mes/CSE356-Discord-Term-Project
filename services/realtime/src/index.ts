@@ -736,17 +736,38 @@ redisSub.on("message", (channel, message) => {
 
   let dmSentCount = 0;
   let dmNotConnectedCount = 0;
+  const authorIdNorm = dmMsg?.authorId ? normUserId(dmMsg.authorId) : null;
   for (const targetUid of targetUserIds) {
     const conns = userConnections.get(targetUid);
     if (!conns || conns.size === 0) {
       if (event.type === "dm:message:create") {
+        // Author self-echo on an instance where author not connected = not a miss.
+        // Author already got HTTP 201 with the message; live fanout to self is redundant.
+        const isSelfEcho = authorIdNorm !== null && targetUid === authorIdNorm;
+        if (isSelfEcho) continue;
         dmNotConnectedCount++;
-        logger.warn({
-          targetUid,
-          conversationId: event.conversationId,
-          messageId: dmMsg?.messageId,
-          authorId: dmMsg?.authorId,
-        }, "dm fanout: target not connected on this instance");
+        // Distinguish local-miss (delivered on other instance) from true offline.
+        void (async () => {
+          try {
+            const elsewhere = await hasRegisteredConnections(redis, targetUid);
+            if (elsewhere) return; // other instance will deliver, silent
+            logger.warn({
+              targetUid,
+              conversationId: event.conversationId,
+              messageId: dmMsg?.messageId,
+              authorId: dmMsg?.authorId,
+              offline: true,
+            }, "dm fanout: target offline cluster-wide");
+          } catch (err) {
+            logger.warn({
+              err,
+              targetUid,
+              conversationId: event.conversationId,
+              messageId: dmMsg?.messageId,
+              authorId: dmMsg?.authorId,
+            }, "dm fanout: presence check failed");
+          }
+        })();
       }
       continue;
     }
