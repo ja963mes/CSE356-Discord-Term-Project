@@ -6,6 +6,7 @@ import { pg } from "../db/pg";
 import { directConversations, dmParticipants } from "../db/pgSchema";
 import { publishDmEvent } from "../events";
 import { keyToUrl } from "../minio";
+import { logger } from "../logger";
 
 /** Derives a deterministic conversation ID from two user IDs. Always the same regardless of argument order. */
 const oneToOneConversationId = (a: string, b: string): string =>
@@ -373,6 +374,14 @@ export const createMessage = async (params: {
     ],
     { prepare: true }
   );
+
+  logger.info({
+    conversationId: params.conversationId,
+    messageId,
+    authorId: params.authorId,
+    timeuuid: createdAt.toString(),
+    storedAt: new Date().toISOString(),
+  }, "dm message stored in cassandra");
 
   void touchConversation(params.conversationId); // fire-and-forget, not on critical path
 

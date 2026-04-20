@@ -165,6 +165,7 @@ app.post("/messages", requireAuth, async (req: Request, res: Response) => {
   }
 
   const userId = req.user!.internal_id;
+  logger.info({ userId, channelId, receivedAt: new Date().toISOString() }, "channel message POST received");
   const access = await assertChannelAccess(userId, channelId);
   if (!access.ok) {
     res.status(access.status).json({ error: access.status === 404 ? "Channel not found" : "Forbidden" });
@@ -183,7 +184,7 @@ app.post("/messages", requireAuth, async (req: Request, res: Response) => {
     attachmentKeys,
   });
 
-  logger.info({ userId, channelId, messageId }, "message stored");
+  logger.info({ userId, channelId, messageId, timeuuid: createdAt.toString(), storedAt: new Date().toISOString() }, "channel message stored");
 
   const message = {
     id: messageId,
@@ -206,7 +207,7 @@ app.post("/messages", requireAuth, async (req: Request, res: Response) => {
     message,
   });
 
-  logger.info({ userId, channelId, messageId, type: "channel:message:create" }, "channel event published");
+  logger.info({ userId, channelId, messageId, timeuuid: createdAt.toString(), publishedAt: new Date().toISOString(), type: "channel:message:create" }, "channel event published");
 
   res.status(201).json({ message });
 });
