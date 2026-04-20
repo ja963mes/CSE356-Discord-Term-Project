@@ -10,6 +10,12 @@
   roles:
     - realtime
 
+- name: Configure and deploy messages VM
+  hosts: messages
+  become: true
+  roles:
+    - messages
+
 - name: Configure and deploy auth VM
   hosts: auth
   become: true

@@ -10,5 +10,8 @@ auth-vm ansible_host=10.0.3.158
 [search]
 search-vm ansible_host=130.245.136.135
 
+[messages]
+messages-vm ansible_host=10.0.3.199
+
 [all:vars]
 ansible_user=deploy
