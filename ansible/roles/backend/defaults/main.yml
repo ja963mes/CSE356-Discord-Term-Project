@@ -2,13 +2,12 @@ backend_workspace_build_commands:
   - npm run build --workspace auth-service
   - npm run build --workspace communities-service
   - npm run build --workspace create-community-service
+  - npm run build --workspace messages-service
   - npm run build --workspace read-state-service
 
 backend_systemd_services:
   - discord-auth
   - discord-communities
   - discord-create-community
+  - discord-messages
   - discord-read-state
-
-# Overridden by group_vars/backend.yml where applicable.
-backend_decommissioned_systemd_services: []

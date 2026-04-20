@@ -35,36 +35,6 @@
         var: migration_output.stdout_lines
       when: migration_output.stdout_lines is defined and migration_output.stdout_lines | length > 0
 
-- name: Tear down decommissioned backend services
-  when: backend_decommissioned_systemd_services | default([]) | length > 0
-  block:
-    - name: Stop and disable decommissioned backend services
-      ansible.builtin.systemd:
-        name: "{{ item }}"
-        state: stopped
-        enabled: false
-      loop: "{{ backend_decommissioned_systemd_services }}"
-      failed_when: false
-
-    - name: Mask decommissioned backend services so they cannot restart
-      ansible.builtin.systemd:
-        name: "{{ item }}"
-        masked: true
-      loop: "{{ backend_decommissioned_systemd_services }}"
-      failed_when: false
-
-    - name: Remove decommissioned backend unit files
-      ansible.builtin.file:
-        path: "/etc/systemd/system/{{ item }}.service"
-        state: absent
-      loop: "{{ backend_decommissioned_systemd_services }}"
-      register: backend_decommissioned_files_removed
-
-    - name: Reload systemd daemon after tearing down decommissioned units
-      ansible.builtin.systemd:
-        daemon_reload: true
-      when: backend_decommissioned_files_removed.changed
-
 - name: Manage systemd service files (optional, fixes path mismatches)
   when: manage_systemd_services | default(false)
   block:
