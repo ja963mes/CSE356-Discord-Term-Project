@@ -290,7 +290,7 @@ async function getAwayMessage(userId: string): Promise<string | undefined> {
 }
 
 async function buildPresencePayload(userId: string): Promise<{ status: PresenceStatus; awayMessage?: string }> {
-  const status = await computePresence(redis, userId);
+  const status = await computePresence(redis, userId, liveInstanceIds);
   const awayMessage = status === "away" ? await getAwayMessage(userId) : undefined;
   return { status, awayMessage };
 }
@@ -347,7 +347,7 @@ function fanOutDmEventLocal(
         if (source === "pubsub") {
           void (async () => {
             try {
-              const elsewhere = await hasRegisteredConnections(redis, targetUid);
+              const elsewhere = await hasRegisteredConnections(redis, targetUid, liveInstanceIds);
               if (elsewhere) return;
               logger.warn({
                 targetUid,
@@ -406,11 +406,27 @@ function fanOutDmEventLocal(
 const INSTANCE_REGISTRY_KEY = "realtime:instances";
 const INSTANCE_REGISTRY_TTL_SEC = 30;
 const INSTANCE_REGISTRY_REFRESH_MS = 10_000;
+const STALE_REAPER_INTERVAL_MS = 30_000;
+
+// In-memory cache of currently-live realtime instance ids (own + peers from registry).
+// Refreshed alongside registerInstance(). Used by hasRegisteredConnections + the reaper
+// so we never trust hash fields whose owning instance no longer exists.
+let liveInstanceIds: Set<string> = new Set([instanceId]);
+
+async function refreshLiveInstanceIds(): Promise<void> {
+  try {
+    const registry = await redis.hgetall(INSTANCE_REGISTRY_KEY);
+    liveInstanceIds = new Set([instanceId, ...Object.keys(registry)]);
+  } catch (err) {
+    logger.warn({ err }, "live instance refresh failed");
+  }
+}
 
 async function registerInstance(): Promise<void> {
   if (!env.REALTIME_INTERNAL_URL) return;
   await redis.hset(INSTANCE_REGISTRY_KEY, instanceId, env.REALTIME_INTERNAL_URL);
   await redis.expire(INSTANCE_REGISTRY_KEY, INSTANCE_REGISTRY_TTL_SEC);
+  await refreshLiveInstanceIds();
 }
 
 async function unregisterInstance(): Promise<void> {
@@ -420,6 +436,29 @@ async function unregisterInstance(): Promise<void> {
   } catch {
     // best effort on shutdown
   }
+}
+
+// Reap presence:conns hash fields whose owning instanceId is no longer live.
+// Without this, every realtime restart leaves orphaned fields that cause
+// hasRegisteredConnections to lie ("user is online" when actually offline),
+// silently dropping DM fanout with no warning.
+async function reapStaleConnFields(): Promise<void> {
+  await refreshLiveInstanceIds();
+  let cursor = "0";
+  let reaped = 0;
+  do {
+    const [next, keys] = await redis.scan(cursor, "MATCH", "presence:conns:*", "COUNT", 200);
+    cursor = next;
+    for (const key of keys) {
+      const fields = await redis.hkeys(key);
+      const stale = fields.filter((f) => !liveInstanceIds.has(f.split(":")[0]));
+      if (stale.length > 0) {
+        await redis.hdel(key, ...stale);
+        reaped += stale.length;
+      }
+    }
+  } while (cursor !== "0");
+  if (reaped > 0) logger.info({ reaped, liveInstances: [...liveInstanceIds] }, "reaped stale presence:conns fields");
 }
 
 const app = express();
@@ -514,7 +553,7 @@ wss.on("connection", async (ws, req) => {
     (ws as WebSocket & { isAlive?: boolean }).isAlive = true;
   });
   // Get the user's current presence before registering the new connection
-  const prevStatus = await computePresence(redis, userId);
+  const prevStatus = await computePresence(redis, userId, liveInstanceIds);
 
   connections.set(connId, { ws, userId });
   const normId = normUserId(userId);
@@ -534,9 +573,9 @@ wss.on("connection", async (ws, req) => {
       if (userConns.size === 0) userConnections.delete(closeNormId);
     }
     logger.info({ userId, connId, total: connections.size }, "client disconnected");
-    const prev = await computePresence(redis, userId);
+    const prev = await computePresence(redis, userId, liveInstanceIds);
     await removeConnection(redis, userId, connId, instanceId);
-    const stillConnectedElsewhere = await hasRegisteredConnections(redis, userId);
+    const stillConnectedElsewhere = await hasRegisteredConnections(redis, userId, liveInstanceIds);
     // Broadcast BEFORE unsubscribing — targets are looked up from context sets,
     // which must still be in Redis when broadcastPresenceChange runs.
     await updateAndBroadcast(userId, prev);
@@ -606,7 +645,7 @@ wss.on("connection", async (ws, req) => {
       return;
     }
 
-    const prev = await computePresence(redis, userId);
+    const prev = await computePresence(redis, userId, liveInstanceIds);
 
     if (msg.type === "ping") {
       // Keep activity updated on pings
@@ -936,6 +975,10 @@ initDb()
         logger.warn({ err }, "instance registry: refresh failed")
       );
     }, INSTANCE_REGISTRY_REFRESH_MS);
+    void reapStaleConnFields().catch((err) => logger.warn({ err }, "initial stale reap failed"));
+    setInterval(() => {
+      void reapStaleConnFields().catch((err) => logger.warn({ err }, "stale reap failed"));
+    }, STALE_REAPER_INTERVAL_MS);
   })
   .catch((err) => {
     logger.error({ err }, "failed to initialize DB");
