@@ -84,6 +84,21 @@ Changes made to eliminate `Delivery timeout` errors under load:
 
 ---
 
+## Node.js cluster scaling
+
+Services on multi-core VMs run under a `cluster.ts` entry point that forks one worker per CPU core. Primary restarts crashed workers automatically.
+
+| Service | VM | Cores | Clustered |
+|---------|-----|-------|-----------|
+| communities | discord-development (4G) | 2 | Yes |
+| auth | auth-vm-1 (4G) | 2 | Yes |
+| messages | messages-vm-1 (4G) | 2 | Yes |
+| realtime | real-time-vm (4G) | 2 | No — event-loop I/O bound; already designed for multi-instance via instance registry. Cluster if CPU saturation observed under load. |
+| dms | dms (2G) | 1 | N/A |
+| read-state | read-state (2G) | 1 | N/A |
+
+---
+
 ## Future work (not a status claim)
 
 - **RabbitMQ (or similar)** for async domain events between services.
