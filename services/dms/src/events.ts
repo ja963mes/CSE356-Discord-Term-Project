@@ -3,7 +3,13 @@ import { URL } from "url";
 import { redis } from "./redis";
 import { logger } from "./logger";
 
-const CHANNEL = "dm:events";
+// Must match USER_FEED_SHARD_COUNT in realtime service
+const USER_FEED_SHARD_COUNT = 20;
+
+function userFeedChannel(userId: string): string {
+  const shard = parseInt(userId.replace(/-/g, "").substring(0, 8), 16) % USER_FEED_SHARD_COUNT;
+  return `dm:userfeed:${shard}`;
+}
 
 /**
  * Keep-alive HTTP pool for direct fanout. Node's global fetch opens a fresh
@@ -25,7 +31,7 @@ const realtimeHttpAgent = new http.Agent({
  */
 const PENDING_KEY_PREFIX = "dm:pending:";
 const PENDING_MAX_PER_USER = 100;
-const PENDING_TTL_SECONDS = 3600;
+const PENDING_TTL_SECONDS = 7200;
 
 /**
  * Direct HTTP fanout — parallel to redis pubsub. Each realtime instance
@@ -87,7 +93,7 @@ function postDeliverDm(baseUrl: string, body: string): Promise<void> {
         agent: realtimeHttpAgent,
         protocol: parsed.protocol,
         hostname: parsed.hostname,
-        port: parsed.port || 80,
+        port: Number(parsed.port) || 80,
         path: parsed.pathname,
         method: "POST",
         headers: {
@@ -239,36 +245,47 @@ export async function publishDmEvent(event: DmEvent): Promise<void> {
       "dm:message:create publishing to redis"
     );
   }
-  try {
-    await redis.publish(CHANNEL, JSON.stringify(wireEvent));
-    if (event.type === "dm:message:create") {
-      logger.info(
-        {
-          conversationId: event.conversationId,
-          messageId: event.message.messageId,
-          publishedAt,
-          publishDurationMs: Date.now() - publishedAt,
-        },
-        "dm:message:create published to redis"
-      );
-      // Queue a minimal hint per participant so realtime can drain it on
-      // the next WS connect even if the live fanout raced with a socket
-      // tearing down. Clients dedupe by messageId, so overlap with the
-      // live send is safe.
-      await enqueuePendingDmHint(event.participantIds, {
-        type: "dm:new_message",
+  // Per-participant shard publish. Each realtime instance subscribes to all
+  // shard channels but routes each message to only the targeted user — O(1)
+  // lookup vs O(participants) scan on every instance for every event.
+  const participants = event.participantIds ?? [];
+  let publishErr: unknown;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const pipeline = redis.pipeline();
+      for (const participantId of participants) {
+        pipeline.publish(userFeedChannel(participantId), JSON.stringify({ targetUserId: participantId, event: wireEvent }));
+      }
+      await pipeline.exec();
+      publishErr = undefined;
+      break;
+    } catch (err) {
+      publishErr = err;
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 50 * attempt));
+    }
+  }
+  if (publishErr) {
+    logger.error({ err: publishErr, eventType: event.type, conversationId: event.conversationId }, "redis shard publish failed after retries");
+    throw publishErr;
+  }
+
+  if (event.type === "dm:message:create") {
+    logger.info(
+      {
         conversationId: event.conversationId,
         messageId: event.message.messageId,
-        authorId: event.message.authorId,
-        timeuuid: event.message.timeuuid,
-      });
-    }
-    // Parallel direct-HTTP fanout to every realtime instance. Does not block
-    // the caller's success path — pubsub + pending queue already guarantee
-    // durability. This is purely a latency-cut for live delivery.
-    void directHttpFanout(wireEvent);
-  } catch (err) {
-    logger.error({ err, eventType: event.type, conversationId: event.conversationId }, "redis publish failed");
-    throw err;
+        publishedAt,
+        publishDurationMs: Date.now() - publishedAt,
+      },
+      "dm:message:create published to redis"
+    );
+    await enqueuePendingDmHint(event.participantIds, {
+      type: "dm:new_message",
+      conversationId: event.conversationId,
+      messageId: event.message.messageId,
+      authorId: event.message.authorId,
+      timeuuid: event.message.timeuuid,
+    });
   }
+  void directHttpFanout(wireEvent);
 }
