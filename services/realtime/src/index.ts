@@ -978,6 +978,10 @@ initDb()
     server.listen(Number(env.PORT), () => {
       logger.info({ port: env.PORT, internalUrl: env.REALTIME_INTERNAL_URL || "(not set)" }, "realtime service running");
     });
+    // keepAliveTimeout > nginx upstream keepalive_timeout (60s default) + headersTimeout > keepAliveTimeout
+    // Prevents ERR_INCOMPLETE_CHUNKED_ENCODING on /internal/* HTTP routes when nginx reuses a socket Node just closed.
+    server.keepAliveTimeout = 65_000;
+    server.headersTimeout = 66_000;
     void registerInstance().catch((err) =>
       logger.warn({ err }, "instance registry: initial registration failed")
     );

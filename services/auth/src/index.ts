@@ -58,6 +58,10 @@ app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
   res.status(500).json({ error: "Internal server error" });
 });
 
-app.listen(Number(env.PORT), () => {
+const server = app.listen(Number(env.PORT), () => {
   logger.info({ port: env.PORT }, "auth-service listening");
 });
+// keepAliveTimeout > nginx upstream keepalive_timeout (60s default) + headersTimeout > keepAliveTimeout
+// Prevents ERR_INCOMPLETE_CHUNKED_ENCODING when nginx reuses a socket Node just closed.
+server.keepAliveTimeout = 65_000;
+server.headersTimeout = 66_000;

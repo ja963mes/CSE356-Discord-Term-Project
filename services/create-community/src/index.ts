@@ -110,6 +110,10 @@ app.post("/create-community", requireAuth, async (req: Request, res: Response) =
 });
 
 const port = Number(env.CREATE_COMMUNITY_PORT);
-app.listen(port, () => {
+const server = app.listen(port, () => {
   console.log(`Create-community service running on port ${port}`);
 });
+// keepAliveTimeout > nginx upstream keepalive_timeout (60s default) + headersTimeout > keepAliveTimeout
+// Prevents ERR_INCOMPLETE_CHUNKED_ENCODING when nginx reuses a socket Node just closed.
+server.keepAliveTimeout = 65_000;
+server.headersTimeout = 66_000;
