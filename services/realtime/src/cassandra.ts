@@ -44,6 +44,34 @@ export type DmCatchupRow = {
   timeuuid: string;
 };
 
+export async function listDmMessagesNewerThanTimestamp(params: {
+  conversationId: string;
+  sinceMs: number;
+  limit: number;
+}): Promise<DmCatchupRow[]> {
+  const { conversationId, sinceMs, limit } = params;
+  const minTimeuuid = types.TimeUuid.fromDate(new Date(sinceMs));
+  const result = await cassandra.execute(
+    "SELECT created_at, message_id, author_id FROM dms.messages_by_conversation WHERE conversation_id = ? AND created_at > ? LIMIT ?",
+    [toUuid(conversationId), minTimeuuid, limit],
+    { prepare: true }
+  );
+  const out: DmCatchupRow[] = [];
+  for (const row of result.rows) {
+    const createdAt = row.get("created_at") as types.TimeUuid | null;
+    const messageId = row.get("message_id");
+    const authorId = row.get("author_id");
+    if (!createdAt || messageId == null || authorId == null) continue;
+    out.push({
+      conversationId,
+      timeuuid: createdAt.toString(),
+      messageId: messageId.toString(),
+      authorId: authorId.toString(),
+    });
+  }
+  return out;
+}
+
 export async function listDmMessagesNewerThan(params: {
   conversationId: string;
   afterTimeuuid: string | null;

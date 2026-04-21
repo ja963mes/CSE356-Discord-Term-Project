@@ -11,9 +11,9 @@ What this repository implements today versus typical course expectations (multi-
 | **Auth** | Local + OAuth (Google, GitHub, OIDC); Redis sessions; Postgres users/identities |
 | **Communities & channels** | Postgres + Drizzle; CRUD, ACLs; `GET /search-communities` proxies to **search** (ES); DAO layer for Postgres |
 | **Channel messages** | Cassandra history; Postgres ACL; MinIO presign for attachments |
-| **DMs** | Dedicated service; Cassandra; REST under `/dms` |
+| **DMs** | Dedicated service; Cassandra; REST under `/dms`; reliable delivery via sharded pubsub, pending queue, and Cassandra replay on reconnect |
 | **Search** | Elasticsearch + search microservice: `GET /search/messages` (session-scoped), `GET /directory/communities` (directory; Postgres → ES reindex + events) |
-| **Realtime** | WebSocket `/ws` on `realtime` service; fan-out to clients |
+| **Realtime** | WebSocket `/ws` on `realtime` service; per-socket outbound queue; server-side dedup; multi-instance via instance registry |
 | **Read state** | Service on **:3008**; Postgres (Drizzle) + Cassandra + Redis as implemented in `services/read-state/` |
 | **Frontend** | React 18 + Vite + Tailwind; proxies in `frontend/vite.config.ts` |
 | **Reverse proxy (prod)** | **Supported:** split VM examples — `docs/nginx/production-frontend.conf.example` + `...-backend.conf.example` ([`PROD-SPLIT-NGINX.md`](./PROD-SPLIT-NGINX.md)). Older single-file nginx examples are **deprecated** (kept for reference only). |
@@ -62,6 +62,40 @@ The SPA talks to backends through **path-based proxies** in `frontend/vite.confi
 ## Docker Compose (repo root)
 
 `docker compose up -d` is intended for **data plane dependencies**. Check [`docker-compose.yml`](../docker-compose.yml) for the current list; typically includes **Postgres**, **PgBouncer**, **Redis**, **Elasticsearch**, and **MinIO**. **Cassandra** may be optional/commented—enable or run Cassandra separately for messages/DMs/read-state.
+
+---
+
+## DM delivery reliability
+
+Changes made to eliminate `Delivery timeout` errors under load:
+
+| Layer | Change |
+|-------|--------|
+| **pubsub sharding** | DM events publish to 1 of 20 `dm:userfeed:{shard}` channels (keyed by userId). Each realtime instance subscribes all 20 shards; routes only to locally-connected users. Reduces per-instance fan-out cost vs a single broadcast channel. |
+| **per-socket outbound queue** | Each WebSocket connection has an in-process queue drained via `setImmediate`. Decouples Redis callback from `ws.send` latency. Kills connection if queue exceeds 512 messages or `bufferedAmount ≥ 1 MB` (backpressure). |
+| **dead socket eviction** | `ws.send` failure → immediate eviction from connection maps + `ws.terminate()`. Close handler fires, writes richer offline marker. No longer waits up to 25s for heartbeat to detect dead socket. |
+| **richer offline marker** | `presence:offline:{userId}` stores `{ disconnectedAt, closeCode }` JSON (TTL 2h) instead of plain `"1"`. Enables timestamp-based replay window on reconnect. |
+| **timestamp-based Cassandra replay** | On reconnect, if offline marker present: compute `sinceMs = disconnectedAt - gracePeriod` (30s for abnormal close, 5s for clean). Query each conversation for messages newer than that timestamp — no per-conversation read-state cursor needed (saves ~1 Cassandra read per conversation). |
+| **server-side dedup** | Each connection tracks last 512 messageIds sent. Both pubsub and direct-HTTP fanout paths check this set — client never receives duplicate `dm:new_message` from the two delivery paths. |
+| **Redis publish retries** | DMs service retries publish up to 3 times (50ms / 100ms backoff) before failing. |
+| **pending queue** | Per-user Redis list of missed hints (`dm:pending:{userId}`) — drained on WS connect, bridging reconnect gap before Cassandra replay runs. Cap 100, TTL 2h. |
+
+**Deploy note:** `dms` and `realtime` services must be deployed together. DMS publishes to `dm:userfeed:*` shard channels; realtime subscribes to them. Deploying one without the other creates a window where messages are silently dropped. Ansible `site.yml` deploys realtime before dms — safe ordering.
+
+---
+
+## Node.js cluster scaling
+
+Services on multi-core VMs run under a `cluster.ts` entry point that forks one worker per CPU core. Primary restarts crashed workers automatically.
+
+| Service | VM | Cores | Clustered |
+|---------|-----|-------|-----------|
+| communities | discord-development (4G) | 2 | Yes |
+| auth | auth-vm-1 (4G) | 2 | Yes |
+| messages | messages-vm-1 (4G) | 2 | Yes |
+| realtime | real-time-vm (4G) | 2 | No — event-loop I/O bound; already designed for multi-instance via instance registry. Cluster if CPU saturation observed under load. |
+| dms | dms (2G) | 1 | N/A |
+| read-state | read-state (2G) | 1 | N/A |
 
 ---
 

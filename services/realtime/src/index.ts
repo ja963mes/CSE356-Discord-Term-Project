@@ -4,7 +4,6 @@ import { WebSocketServer, WebSocket } from "ws";
 import { parse as parseCookie } from "cookie";
 import Redis from "ioredis";
 import { randomUUID } from "crypto";
-import { types as cassandraTypes } from "cassandra-driver";
 import { env } from "./env";
 import { initDb, pg } from "./db";
 import {
@@ -32,7 +31,7 @@ import {
   subscribeAllMembersForChannel,
 } from "./subscriptions";
 import { logger } from "./logger";
-import { getLastReadTimeuuidForDm, getLatestDmTimeuuid, initCassandra, listDmMessagesNewerThan } from "./cassandra";
+import { initCassandra, listDmMessagesNewerThanTimestamp } from "./cassandra";
 
 // Unique ID for this instance — used to namespace presence:conns fields
 // so multiple instances don't stomp on each other's connection data at startup
@@ -43,17 +42,29 @@ const redis = new Redis(env.REDIS_URL);
 redis.on("connect", async () => {
   logger.info("redis connected");
   // Clear only this instance's stale connection fields from previous runs.
-  // Other instances' fields are left intact so their presence tracking is unaffected.
-  const keys = await redis.keys("presence:conns:*");
+  // Use SCAN (not KEYS) to avoid blocking Redis during startup.
+  let cursor = "0";
   let cleared = 0;
-  for (const key of keys) {
-    const fields = await redis.hkeys(key);
-    const stale = fields.filter((f) => f.startsWith(`${instanceId}:`));
-    if (stale.length > 0) {
-      await redis.hdel(key, ...stale);
-      cleared += stale.length;
-    }
-  }
+  do {
+    const [next, keys] = await redis.scan(cursor, "MATCH", "presence:conns:*", "COUNT", 200);
+    cursor = next;
+    if (keys.length === 0) continue;
+    const pipeline = redis.pipeline();
+    for (const key of keys) pipeline.hkeys(key);
+    const results = await pipeline.exec();
+    const delPipeline = redis.pipeline();
+    let hasDeletes = false;
+    results?.forEach((result, i) => {
+      const fields = (result?.[1] as string[]) ?? [];
+      const stale = fields.filter((f) => f.startsWith(`${instanceId}:`));
+      if (stale.length > 0) {
+        delPipeline.hdel(keys[i], ...stale);
+        cleared += stale.length;
+        hasDeletes = true;
+      }
+    });
+    if (hasDeletes) await delPipeline.exec();
+  } while (cursor !== "0");
   if (cleared > 0) logger.info({ cleared, instanceId }, "cleared stale presence fields");
 });
 redis.on("error", (err) => logger.error({ err }, "redis error"));
@@ -62,14 +73,93 @@ redis.on("error", (err) => logger.error({ err }, "redis error"));
 const redisSub = new Redis(env.REDIS_URL);
 redisSub.on("error", (err) => logger.error({ err }, "redis sub error"));
 
-// Track active connections: connId -> { ws, userId }
-const connections = new Map<string, { ws: WebSocket; userId: string }>();
+// Per-socket outbound queue limits
+const WS_OUTBOUND_QUEUE_MAX = 512;       // kill connection if message queue exceeds this
+const WS_BACKPRESSURE_KILL_BYTES = 1 * 1024 * 1024; // 1 MB buffered → kill
+const WS_DEDUP_MAX = 512;               // max recent messageIds to track per socket
+
+type ConnEntry = {
+  ws: WebSocket;
+  userId: string;
+  recentMessageIds: Set<string>;
+  outboundQueue: string[];
+  draining: boolean;
+};
+
+// Track active connections: connId -> ConnEntry
+const connections = new Map<string, ConnEntry>();
 // Reverse index: normalizedUserId -> Set<connId> for O(1) fanout lookup
 const userConnections = new Map<string, Set<string>>();
+// WebSocket → connId reverse lookup for enqueueSend called with only ws
+const wsConnId = new WeakMap<WebSocket, string>();
 
 /** Normalize user ids for Set membership (Postgres JSON vs session can differ in UUID case). */
 function normUserId(id: string): string {
   return id.trim().toLowerCase();
+}
+
+/** Synchronously evict a connection from local maps then terminate the socket.
+ *  The close event fires asynchronously after terminate(), running the Redis
+ *  cleanup and writing the offline marker. Sync eviction ensures no further
+ *  fanout reaches this socket before that happens. */
+function evictAndTerminate(connId: string, ws: WebSocket): void {
+  const conn = connections.get(connId);
+  connections.delete(connId);
+  wsConnId.delete(ws);
+  if (conn) {
+    const normId = normUserId(conn.userId);
+    const userConns = userConnections.get(normId);
+    if (userConns) {
+      userConns.delete(connId);
+      if (userConns.size === 0) userConnections.delete(normId);
+    }
+  }
+  ws.terminate();
+}
+
+function scheduleFlush(connId: string): void {
+  const conn = connections.get(connId);
+  if (!conn || conn.draining) return;
+  conn.draining = true;
+  setImmediate(() => { flushQueue(connId); });
+}
+
+function flushQueue(connId: string): void {
+  const conn = connections.get(connId);
+  if (!conn) return; // evicted
+
+  const { ws, outboundQueue } = conn;
+
+  if (ws.readyState !== WebSocket.OPEN) {
+    conn.draining = false;
+    return;
+  }
+
+  if (ws.bufferedAmount >= WS_BACKPRESSURE_KILL_BYTES) {
+    logger.warn({ connId, userId: conn.userId, bufferedAmount: ws.bufferedAmount }, "ws backpressure kill");
+    evictAndTerminate(connId, ws);
+    return;
+  }
+
+  const payload = outboundQueue.shift();
+  if (payload === undefined) {
+    conn.draining = false;
+    return;
+  }
+
+  try {
+    ws.send(payload);
+  } catch (err) {
+    logger.warn({ err, connId, userId: conn.userId }, "ws send failed; terminating");
+    evictAndTerminate(connId, ws);
+    return;
+  }
+
+  if (outboundQueue.length > 0) {
+    setImmediate(() => { flushQueue(connId); });
+  } else {
+    conn.draining = false;
+  }
 }
 
 /**
@@ -101,6 +191,9 @@ async function drainPendingDmHints(ws: WebSocket, userId: string): Promise<void>
   const ordered = [...rawEntries].reverse();
   logger.info({ userId, count: ordered.length }, "dm pending-queue drained");
 
+  const connId = wsConnId.get(ws);
+  const conn = connId ? connections.get(connId) : undefined;
+
   for (const raw of ordered) {
     if (ws.readyState !== WebSocket.OPEN) return;
     let hint: { type?: string; conversationId?: string; messageId?: string; authorId?: string; timeuuid?: string };
@@ -110,7 +203,12 @@ async function drainPendingDmHints(ws: WebSocket, userId: string): Promise<void>
       continue;
     }
     if (hint.type !== "dm:new_message" || !hint.messageId || !hint.authorId) continue;
-    safeSend(
+    if (conn) {
+      if (conn.recentMessageIds.has(hint.messageId)) continue;
+      conn.recentMessageIds.add(hint.messageId);
+      if (conn.recentMessageIds.size > WS_DEDUP_MAX) conn.recentMessageIds.clear();
+    }
+    enqueueSend(
       ws,
       JSON.stringify({ ...hint, source: "pending" }),
       "dm_pending",
@@ -145,74 +243,22 @@ async function withRetry<T>(
   }
 }
 
-async function catchUpOneConversation(ws: WebSocket, userId: string, conversationId: string): Promise<void> {
-  if (ws.readyState !== WebSocket.OPEN) return;
-
-  let lastRead: string | null = null;
-  let latest: string | null = null;
-  try {
-    [lastRead, latest] = await Promise.all([
-      withRetry("getLastReadTimeuuidForDm", { userId, conversationId }, () =>
-        getLastReadTimeuuidForDm(userId, conversationId)
-      ),
-      withRetry("getLatestDmTimeuuid", { userId, conversationId }, () =>
-        getLatestDmTimeuuid(conversationId)
-      ),
-    ]);
-  } catch (err) {
-    logger.warn({ err, userId, conversationId }, "dm catch-up failed to read cursor");
-    return;
-  }
-
-  if (!latest) return;
-  if (lastRead) {
-    try {
-      const latestTuuid = cassandraTypes.TimeUuid.fromString(latest);
-      const lastReadTuuid = cassandraTypes.TimeUuid.fromString(lastRead);
-      if (latestTuuid.getBuffer().compare(lastReadTuuid.getBuffer()) <= 0) {
-        return;
-      }
-    } catch (err) {
-      logger.warn({ err, userId, conversationId }, "dm catch-up timeuuid compare failed");
-    }
-  }
-
-  let rows;
-  try {
-    rows = await withRetry("listDmMessagesNewerThan", { userId, conversationId }, () =>
-      listDmMessagesNewerThan({
-        conversationId,
-        afterTimeuuid: lastRead,
-        limit: 25,
-      })
-    );
-  } catch (err) {
-    logger.warn({ err, userId, conversationId }, "dm catch-up failed to list messages");
-    return;
-  }
-
-  // Cassandra rows come back newest-first; replay hints oldest-first.
-  for (const row of [...rows].reverse()) {
-    if (ws.readyState !== WebSocket.OPEN) return;
-    safeSend(
-      ws,
-      JSON.stringify({
-        type: "dm:new_message",
-        conversationId,
-        messageId: row.messageId,
-        authorId: row.authorId,
-        timeuuid: row.timeuuid,
-        source: "catchup",
-      }),
-      "dm_catchup",
-      { userId, conversationId, messageId: row.messageId }
-    );
-  }
-}
-
-async function replayMissedDmHints(ws: WebSocket, userId: string): Promise<void> {
+async function replayMissedDmHintsFromDisconnect(
+  ws: WebSocket,
+  userId: string,
+  disconnectedAt: number,
+  closeCode: number
+): Promise<void> {
   const MAX_CONVERSATIONS = 50;
   const CONCURRENCY = 5;
+  // Abnormal closes (1006) are detected by heartbeat up to 25s late; use a
+  // larger grace window so messages sent during the dead-socket window are
+  // always included in the replay.
+  const gracePeriodMs = closeCode === 1006 ? 30_000 : 5_000;
+  const sinceMs = disconnectedAt - gracePeriodMs;
+
+  const connId = wsConnId.get(ws);
+  const conn = connId ? connections.get(connId) : undefined;
 
   let conversationIds: string[];
   try {
@@ -223,34 +269,78 @@ async function replayMissedDmHints(ws: WebSocket, userId: string): Promise<void>
   }
 
   const queue = conversationIds.slice(0, MAX_CONVERSATIONS);
+  logger.info({ userId, conversationCount: queue.length, sinceMs, gracePeriodMs, closeCode }, "dm catch-up started");
+
   let idx = 0;
   const worker = async (): Promise<void> => {
     while (idx < queue.length) {
       const i = idx++;
       if (ws.readyState !== WebSocket.OPEN) return;
-      await catchUpOneConversation(ws, userId, queue[i]);
+      const conversationId = queue[i];
+      let rows;
+      try {
+        rows = await withRetry("listDmMessagesNewerThanTimestamp", { userId, conversationId }, () =>
+          listDmMessagesNewerThanTimestamp({ conversationId, sinceMs, limit: 50 })
+        );
+      } catch (err) {
+        logger.warn({ err, userId, conversationId }, "dm catch-up failed to list messages");
+        continue;
+      }
+      // Cassandra returns newest-first; replay oldest-first for causal order.
+      for (const row of [...rows].reverse()) {
+        if (ws.readyState !== WebSocket.OPEN) return;
+        if (conn) {
+          if (conn.recentMessageIds.has(row.messageId)) continue;
+          conn.recentMessageIds.add(row.messageId);
+          if (conn.recentMessageIds.size > WS_DEDUP_MAX) conn.recentMessageIds.clear();
+        }
+        enqueueSend(
+          ws,
+          JSON.stringify({
+            type: "dm:new_message",
+            conversationId,
+            messageId: row.messageId,
+            authorId: row.authorId,
+            timeuuid: row.timeuuid,
+            source: "catchup",
+          }),
+          "dm_catchup",
+          { userId, conversationId, messageId: row.messageId }
+        );
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
 }
 
-function safeSend(
+function enqueueSend(
   ws: WebSocket,
   payload: string,
   label: string,
   ctx?: { userId?: string; connId?: string; conversationId?: string; messageId?: string }
 ): void {
-  if (ws.readyState !== WebSocket.OPEN) {
+  const cid = wsConnId.get(ws);
+  if (!cid) {
+    // Socket not registered (already evicted or pre-setup send)
+    if (ws.readyState === WebSocket.OPEN) {
+      try { ws.send(payload); } catch { /* best effort */ }
+    }
+    return;
+  }
+  const conn = connections.get(cid);
+  if (!conn || ws.readyState !== WebSocket.OPEN) {
     if (label === "dm_event") {
       logger.warn({ label, readyState: ws.readyState, ...ctx }, "ws not open, dropping send");
     }
     return;
   }
-  try {
-    ws.send(payload);
-  } catch (err) {
-    logger.warn({ err, label, ...ctx }, "ws fanout send failed");
+  if (conn.outboundQueue.length >= WS_OUTBOUND_QUEUE_MAX) {
+    logger.warn({ connId: cid, userId: conn.userId, queueLen: conn.outboundQueue.length }, "ws outbound queue full; killing connection");
+    evictAndTerminate(cid, ws);
+    return;
   }
+  conn.outboundQueue.push(payload);
+  scheduleFlush(cid);
 }
 
 // Last known presence stored in Redis so multiple instances agree on state
@@ -269,7 +359,7 @@ async function fanOutToGuild(communityId: string, payload: string): Promise<void
     if (!conns) continue;
     for (const connId of conns) {
       const conn = connections.get(connId);
-      if (conn) safeSend(conn.ws, payload, "guild");
+      if (conn) enqueueSend(conn.ws, payload, "guild");
     }
   }
 }
@@ -280,7 +370,7 @@ async function fanOutToChannel(channelId: string, payload: string): Promise<void
     if (!conns) continue;
     for (const connId of conns) {
       const conn = connections.get(connId);
-      if (conn) safeSend(conn.ws, payload, "channel");
+      if (conn) enqueueSend(conn.ws, payload, "channel");
     }
   }
 }
@@ -308,7 +398,7 @@ async function updateAndBroadcast(userId: string, prevStatus: PresenceStatus): P
 // Shared DM fanout: invoked by both pubsub handler and the /internal/deliver-dm
 // endpoint. Local-conn fanout only — does not republish. Callers that want
 // cluster-wide reach publish via redis AND/OR POST to every instance.
-type DmFanoutSource = "pubsub" | "direct";
+type DmFanoutSource = "pubsub" | "direct" | "shard";
 function fanOutDmEventLocal(
   event: { type: string; participantIds?: string[]; conversationId?: unknown; message?: unknown; publishedAt?: unknown; [k: string]: unknown },
   source: DmFanoutSource
@@ -373,7 +463,12 @@ function fanOutDmEventLocal(
     for (const connId of conns) {
       const conn = connections.get(connId);
       if (conn) {
-        safeSend(conn.ws, outgoing, "dm_event", {
+        if (event.type === "dm:message:create" && dmMsg?.messageId) {
+          if (conn.recentMessageIds.has(dmMsg.messageId)) continue;
+          conn.recentMessageIds.add(dmMsg.messageId);
+          if (conn.recentMessageIds.size > WS_DEDUP_MAX) conn.recentMessageIds.clear();
+        }
+        enqueueSend(conn.ws, outgoing, "dm_event", {
           userId: targetUid,
           connId,
           conversationId: event.conversationId as string | undefined,
@@ -399,6 +494,41 @@ function fanOutDmEventLocal(
   }
 
   return { delivered: dmSentCount, localMiss: dmNotConnectedCount, totalTargets: targetUserIds.size };
+}
+
+// Must match USER_FEED_SHARD_COUNT in dms service
+const USER_FEED_SHARD_COUNT = 20;
+const dmShardChannels = Array.from({ length: USER_FEED_SHARD_COUNT }, (_, i) => `dm:userfeed:${i}`);
+
+// Targeted per-user fanout used by the shard pubsub path. Delivers to exactly
+// one user's connections; dedup prevents double-send with direct HTTP path.
+function deliverDmEventToUser(
+  targetUserId: string,
+  event: { type: string; conversationId?: unknown; message?: unknown; publishedAt?: unknown; [k: string]: unknown },
+  source: DmFanoutSource
+): void {
+  const normId = normUserId(targetUserId);
+  const conns = userConnections.get(normId);
+  if (!conns || conns.size === 0) return;
+
+  const dmMsg = event.type === "dm:message:create" && event.message && typeof event.message === "object"
+    ? event.message as { messageId?: string; authorId?: string; timeuuid?: string }
+    : null;
+
+  const outgoing = event.type === "dm:message:create"
+    ? JSON.stringify({ type: "dm:new_message", conversationId: event.conversationId, messageId: dmMsg?.messageId, authorId: dmMsg?.authorId, timeuuid: dmMsg?.timeuuid, source })
+    : JSON.stringify(event);
+
+  for (const connId of conns) {
+    const conn = connections.get(connId);
+    if (!conn) continue;
+    if (dmMsg?.messageId) {
+      if (conn.recentMessageIds.has(dmMsg.messageId)) continue;
+      conn.recentMessageIds.add(dmMsg.messageId);
+      if (conn.recentMessageIds.size > WS_DEDUP_MAX) conn.recentMessageIds.clear();
+    }
+    enqueueSend(conn.ws, outgoing, "dm_shard", { userId: normId, connId, messageId: dmMsg?.messageId });
+  }
 }
 
 // Instance registry — dms service reads this hash to discover realtime instances
@@ -449,14 +579,22 @@ async function reapStaleConnFields(): Promise<void> {
   do {
     const [next, keys] = await redis.scan(cursor, "MATCH", "presence:conns:*", "COUNT", 200);
     cursor = next;
-    for (const key of keys) {
-      const fields = await redis.hkeys(key);
+    if (keys.length === 0) continue;
+    const pipeline = redis.pipeline();
+    for (const key of keys) pipeline.hkeys(key);
+    const results = await pipeline.exec();
+    const delPipeline = redis.pipeline();
+    let hasDeletes = false;
+    results?.forEach((result, i) => {
+      const fields = (result?.[1] as string[]) ?? [];
       const stale = fields.filter((f) => !liveInstanceIds.has(f.split(":")[0]));
       if (stale.length > 0) {
-        await redis.hdel(key, ...stale);
+        delPipeline.hdel(keys[i], ...stale);
         reaped += stale.length;
+        hasDeletes = true;
       }
-    }
+    });
+    if (hasDeletes) await delPipeline.exec();
   } while (cursor !== "0");
   if (reaped > 0) logger.info({ reaped, liveInstances: [...liveInstanceIds] }, "reaped stale presence:conns fields");
 }
@@ -555,36 +693,47 @@ wss.on("connection", async (ws, req) => {
   // Get the user's current presence before registering the new connection
   const prevStatus = await computePresence(redis, userId, liveInstanceIds);
 
-  connections.set(connId, { ws, userId });
+  connections.set(connId, { ws, userId, recentMessageIds: new Set(), outboundQueue: [], draining: false });
+  wsConnId.set(ws, connId);
   const normId = normUserId(userId);
   if (!userConnections.has(normId)) userConnections.set(normId, new Set());
   userConnections.get(normId)!.add(connId);
 
   // Register close/error handlers immediately after adding to the map so that if the socket
   // closes during any subsequent await the cleanup always runs and the connection is not leaked.
-  ws.on("close", async () => {
+  ws.on("close", async (closeCode: number) => {
     // Remove from local maps synchronously before any await so fanout never
     // finds this closed socket during the async gap.
     connections.delete(connId);
+    wsConnId.delete(ws);
     const closeNormId = normUserId(userId);
     const userConns = userConnections.get(closeNormId);
     if (userConns) {
       userConns.delete(connId);
       if (userConns.size === 0) userConnections.delete(closeNormId);
     }
-    logger.info({ userId, connId, total: connections.size }, "client disconnected");
+    logger.info({ userId, connId, closeCode, total: connections.size }, "client disconnected");
     const prev = await computePresence(redis, userId, liveInstanceIds);
     await removeConnection(redis, userId, connId, instanceId);
     const stillConnectedElsewhere = await hasRegisteredConnections(redis, userId, liveInstanceIds);
     // Broadcast BEFORE unsubscribing — targets are looked up from context sets,
     // which must still be in Redis when broadcastPresenceChange runs.
-    await updateAndBroadcast(userId, prev);
+    // Try-catch so a Redis hiccup here does not skip the offline marker write.
+    try {
+      await updateAndBroadcast(userId, prev);
+    } catch (err) {
+      logger.warn({ err, userId }, "presence broadcast failed on disconnect");
+    }
     if (!stillConnectedElsewhere) {
       await unsubscribeUser(redis, userId);
-      // Mark fully-offline so a real reconnect (not a sibling tab) triggers
-      // Cassandra catchup. Skipping this on routine reconnects eliminates
-      // ~150 reads per WS open (50 convs × 3 queries in replayMissedDmHints).
-      await redis.set(`presence:offline:${userId}`, "1", "EX", 3600);
+      // Store disconnect timestamp + close code so reconnect can replay from
+      // the right window. 2-hour TTL matches pending-queue TTL.
+      await redis.set(
+        `presence:offline:${userId}`,
+        JSON.stringify({ disconnectedAt: Date.now(), closeCode }),
+        "EX",
+        7200
+      );
     }
   });
 
@@ -611,11 +760,18 @@ wss.on("connection", async (ws, req) => {
       if (ws.readyState !== WebSocket.OPEN) return;
       // Atomic test-and-clear: only the first reconnecting tab after a true
       // offline period runs catchup. Concurrent reconnects find marker gone
-      // and skip the 150-query Cassandra scan. drainPendingDmHints above
-      // (Redis-backed, 5min TTL) remains the durable backstop in all cases.
-      const wasOffline = await redis.getdel(`presence:offline:${userId}`);
-      if (wasOffline) {
-        await replayMissedDmHints(ws, userId);
+      // and skip the Cassandra scan. drainPendingDmHints above
+      // (Redis-backed, 2h TTL) remains the durable backstop in all cases.
+      const offlineRaw = await redis.getdel(`presence:offline:${userId}`);
+      if (offlineRaw) {
+        let disconnectedAt = Date.now();
+        let closeCode = 1006;
+        try {
+          const parsed = JSON.parse(offlineRaw) as { disconnectedAt?: number; closeCode?: number };
+          if (typeof parsed.disconnectedAt === "number") disconnectedAt = parsed.disconnectedAt;
+          if (typeof parsed.closeCode === "number") closeCode = parsed.closeCode;
+        } catch { /* legacy "1" value — use defaults */ }
+        await replayMissedDmHintsFromDisconnect(ws, userId, disconnectedAt, closeCode);
       }
     })();
   });
@@ -625,24 +781,23 @@ wss.on("connection", async (ws, req) => {
     if (ws.readyState !== WebSocket.OPEN) return;
 
     // Send own presence immediately
-    ws.send(JSON.stringify({ type: "presence_update", userId, status: currentStatus, awayMessage: currentAwayMessage }));
+    enqueueSend(ws, JSON.stringify({ type: "presence_update", userId, status: currentStatus, awayMessage: currentAwayMessage }), "presence_init");
 
-    // Get all related connected users from Redis and send their presence
+    // Get all related users and send their presence. buildPresencePayload uses
+    // Redis (cross-instance aware) — do not pre-filter by local userConnections
+    // or users on other instances are silently excluded from the snapshot.
     const relatedUserIds = await getPresenceTargets(redis, userId);
-    const connectedRelated = relatedUserIds.filter((id) => {
-      if (normUserId(id) === normUserId(userId)) return false;
-      return (userConnections.get(normUserId(id))?.size ?? 0) > 0;
-    });
+    const relatedExcludingSelf = relatedUserIds.filter((id) => normUserId(id) !== normUserId(userId));
 
     const presencePayloads = await Promise.all(
-      connectedRelated.map(async (relatedUserId) => {
+      relatedExcludingSelf.map(async (relatedUserId) => {
         const { status, awayMessage } = await buildPresencePayload(relatedUserId);
         return { userId: relatedUserId, status, awayMessage };
       })
     );
     if (ws.readyState !== WebSocket.OPEN) return;
     for (const payload of presencePayloads) {
-      ws.send(JSON.stringify({ type: "presence_update", ...payload }));
+      enqueueSend(ws, JSON.stringify({ type: "presence_update", ...payload }), "presence_snapshot");
     }
   });
 
@@ -704,10 +859,11 @@ setInterval(async () => {
   }
 }, 30_000);
 
-// Subscribe to DM events from the DMS service and forward to relevant WebSocket clients
-redisSub.subscribe("dm:events", "community:events", "channel:events", PRESENCE_BROADCAST_CHANNEL, (err) => {
+// Subscribe to per-user shard channels (replaces single dm:events channel),
+// plus community/channel/presence broadcast channels.
+redisSub.subscribe(...dmShardChannels, "community:events", "channel:events", PRESENCE_BROADCAST_CHANNEL, (err) => {
   if (err) logger.error({ err }, "pubsub subscribe failed");
-  else logger.info("subscribed to pubsub channels: dm:events, community:events, channel:events, presence:broadcast");
+  else logger.info({ shards: USER_FEED_SHARD_COUNT }, "subscribed to pubsub channels: dm:userfeed:*, community:events, channel:events, presence:broadcast");
 });
 
 redisSub.on("message", (channel, message) => {
@@ -720,7 +876,7 @@ redisSub.on("message", (channel, message) => {
       if (!conns) continue;
       for (const connId of conns) {
         const conn = connections.get(connId);
-        if (conn) safeSend(conn.ws, payload, "presence_broadcast");
+        if (conn) enqueueSend(conn.ws, payload, "presence_broadcast");
       }
     }
     return;
@@ -748,18 +904,15 @@ redisSub.on("message", (channel, message) => {
           if (!conn) continue;
           const { ws } = conn;
           const relatedIds = await getPresenceTargets(redis, userId);
-          const connectedRelated = relatedIds.filter((id) => {
-            if (normUserId(id) === normUserId(userId)) return false;
-            return (userConnections.get(normUserId(id))?.size ?? 0) > 0;
-          });
+          const relatedExcludingSelf = relatedIds.filter((id) => normUserId(id) !== normUserId(userId));
           const payloads = await Promise.all(
-            connectedRelated.map(async (rid) => {
+            relatedExcludingSelf.map(async (rid) => {
               const { status, awayMessage } = await buildPresencePayload(rid);
               return { userId: rid, status, awayMessage };
             })
           );
           for (const p of payloads) {
-            safeSend(ws, JSON.stringify({ type: "presence_update", ...p }), "join_snapshot");
+            enqueueSend(ws, JSON.stringify({ type: "presence_update", ...p }), "join_snapshot");
           }
         }
       })();
@@ -798,7 +951,7 @@ redisSub.on("message", (channel, message) => {
         const conns = userConnections.get(normUserId(userId));
         if (conns) for (const connId of conns) {
           const conn = connections.get(connId);
-          if (conn) safeSend(conn.ws, payload, "ch_member_add");
+          if (conn) enqueueSend(conn.ws, payload, "ch_member_add");
         }
       })();
     }
@@ -812,7 +965,7 @@ redisSub.on("message", (channel, message) => {
         const conns = userConnections.get(normUserId(userId));
         if (conns) for (const connId of conns) {
           const conn = connections.get(connId);
-          if (conn) safeSend(conn.ws, payload, "ch_member_remove");
+          if (conn) enqueueSend(conn.ws, payload, "ch_member_remove");
         }
       })();
     }
@@ -858,7 +1011,7 @@ redisSub.on("message", (channel, message) => {
           for (const connId of conns) {
             const conn = connections.get(connId);
             if (conn) {
-              safeSend(conn.ws, payload, "channel");
+              enqueueSend(conn.ws, payload, "channel");
               sentCount++;
               logger.info({
                 targetUid: uid,
@@ -892,81 +1045,42 @@ redisSub.on("message", (channel, message) => {
     return;
   }
 
-  if (channel !== "dm:events") return;
+  // Shard channel: each message targets exactly one user.
+  if (channel.startsWith("dm:userfeed:")) {
+    let envelope: { targetUserId?: string; event?: { type: string; participantIds?: string[]; [key: string]: unknown } };
+    try { envelope = JSON.parse(message); } catch { return; }
+    const { targetUserId, event } = envelope;
+    if (!targetUserId || !event?.type) return;
 
-  let event: { type: string; participantIds?: string[]; [key: string]: unknown };
-  try {
-    event = JSON.parse(message);
-  } catch {
-    return;
-  }
+    deliverDmEventToUser(targetUserId, event, "shard");
 
-  const targetUserIds = new Set((event.participantIds ?? []).map(normUserId));
-
-  const dmMsg = event.type === "dm:message:create" && event.message && typeof event.message === "object"
-    ? event.message as { messageId?: string; authorId?: string; timeuuid?: string; createdAt?: string }
-    : null;
-
-  if (event.type === "dm:message:create") {
-    const rawPublishedAt = (event as unknown as { publishedAt?: unknown }).publishedAt;
-    const publishedAt = typeof rawPublishedAt === "number" ? rawPublishedAt : undefined;
-    logger.info({
-      conversationId: event.conversationId,
-      messageId: dmMsg?.messageId,
-      authorId: dmMsg?.authorId,
-      timeuuid: dmMsg?.timeuuid,
-      createdAt: dmMsg?.createdAt,
-      participantIds: event.participantIds ?? [],
-      participantCount: (event.participantIds ?? []).length,
-      receivedAt: new Date().toISOString(),
-      publishedAt,
-      transitMs: publishedAt !== undefined ? Date.now() - publishedAt : undefined,
-      path: "pubsub",
-    }, "dm:message:create received from redis");
-  }
-
-  const { delivered, localMiss, totalTargets } = fanOutDmEventLocal(event, "pubsub");
-
-  if (event.type === "dm:message:create") {
-    logger.info({
-      conversationId: event.conversationId,
-      messageId: dmMsg?.messageId,
-      authorId: dmMsg?.authorId,
-      sentCount: delivered,
-      notConnectedCount: localMiss,
-      totalTargets,
-    }, "dm:message:create fanout complete");
-  }
-
-  if (event.type === "dm:conversation:create") {
-    const conversationId = event.conversationId as string;
-    const participants = event.participantIds ?? [];
-    void (async () => {
-      // Register the new DM in Redis subscription sets
-      await subscribeDm(redis, conversationId, participants);
-      // Exchange presence between all participants
-      await Promise.all(
-        participants.map(async (uid) => {
-          const { status, awayMessage } = await buildPresencePayload(uid);
-          const presencePayload = JSON.stringify({ type: "presence_update", userId: uid, status, awayMessage });
-          for (const targetUid of targetUserIds) {
-            if (normUserId(targetUid) === normUserId(uid)) continue;
-            const conns = userConnections.get(targetUid);
-            if (!conns) continue;
-            for (const connId of conns) {
-              const conn = connections.get(connId);
-              if (conn) safeSend(conn.ws, presencePayload, "dm_conv_create_presence");
-            }
+    // Side effects — run once per target user so each user handles their own state.
+    if (event.type === "dm:conversation:create") {
+      const conversationId = event.conversationId as string;
+      void (async () => {
+        await subscribeDm(redis, conversationId, [targetUserId]);
+        // Send each other participant's current presence to this user's connections.
+        const conns = userConnections.get(normUserId(targetUserId));
+        if (!conns) return;
+        const others = (event.participantIds ?? []).filter(p => normUserId(p) !== normUserId(targetUserId));
+        for (const otherId of others) {
+          const { status, awayMessage } = await buildPresencePayload(otherId);
+          const presencePayload = JSON.stringify({ type: "presence_update", userId: otherId, status, awayMessage });
+          for (const connId of conns) {
+            const conn = connections.get(connId);
+            if (conn) enqueueSend(conn.ws, presencePayload, "dm_conv_create_presence");
           }
-        })
-      );
-    })();
-  }
+        }
+      })();
+    }
 
-  if (event.type === "dm:participant:leave") {
-    const conversationId = event.conversationId as string;
-    const userId = event.userId as string;
-    void unsubscribeDm(redis, conversationId, userId);
+    if (event.type === "dm:participant:leave") {
+      const leavingUserId = (event as { userId?: string }).userId;
+      if (leavingUserId && normUserId(leavingUserId) === normUserId(targetUserId)) {
+        void unsubscribeDm(redis, event.conversationId as string, leavingUserId);
+      }
+    }
+    return;
   }
 });
 
