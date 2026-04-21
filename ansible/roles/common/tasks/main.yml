@@ -49,3 +49,23 @@
     owner: "{{ deploy_user }}"
     group: "{{ deploy_user }}"
     mode: "0755"
+
+# Force nginx workers to run as www-data (Debian default) instead of `nobody`.
+# Mismatched user vs. /var/lib/nginx ownership causes "open() ... Permission
+# denied while reading upstream" → ERR_INCOMPLETE_CHUNKED_ENCODING on responses
+# large enough that nginx buffers them to disk (e.g. /communities/.../members).
+- name: Set nginx worker user to www-data
+  ansible.builtin.lineinfile:
+    path: /etc/nginx/nginx.conf
+    regexp: '^\s*user\s+\S+;'
+    line: 'user www-data;'
+    state: present
+  notify: Restart nginx
+
+- name: Ensure /var/lib/nginx is owned by www-data
+  ansible.builtin.file:
+    path: /var/lib/nginx
+    state: directory
+    owner: www-data
+    group: www-data
+    recurse: true
