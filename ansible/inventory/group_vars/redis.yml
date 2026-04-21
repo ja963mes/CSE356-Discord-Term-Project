@@ -1,0 +1,5 @@
+## Redis VM. Hosts must be in [redis] inventory group.
+redis_bind_address: "{{ ansible_default_ipv4.address }}"
+redis_port: 6379
+redis_maxmemory: "3gb"
+redis_maxmemory_policy: "noeviction"

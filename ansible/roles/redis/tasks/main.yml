@@ -1,0 +1,45 @@
+- name: Install redis-server
+  ansible.builtin.apt:
+    name: redis-server
+    state: present
+    update_cache: true
+
+- name: Configure Redis bind address and port
+  ansible.builtin.lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: "^bind "
+    line: "bind 127.0.0.1 {{ redis_bind_address }}"
+  notify: restart redis
+
+- name: Configure Redis port
+  ansible.builtin.lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: "^port "
+    line: "port {{ redis_port }}"
+  notify: restart redis
+
+- name: Configure Redis maxmemory
+  ansible.builtin.lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: "^# maxmemory "
+    line: "maxmemory {{ redis_maxmemory }}"
+  notify: restart redis
+
+- name: Configure Redis maxmemory-policy
+  ansible.builtin.lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: "^# maxmemory-policy "
+    line: "maxmemory-policy {{ redis_maxmemory_policy }}"
+  notify: restart redis
+
+- name: Enable and start redis-server
+  ansible.builtin.systemd:
+    name: redis-server
+    enabled: true
+    state: started
+
+- name: Verify redis is reachable
+  ansible.builtin.command: redis-cli -h {{ redis_bind_address }} -p {{ redis_port }} ping
+  changed_when: false
+  register: redis_ping
+  failed_when: redis_ping.stdout != "PONG"
