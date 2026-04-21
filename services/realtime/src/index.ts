@@ -581,6 +581,10 @@ wss.on("connection", async (ws, req) => {
     await updateAndBroadcast(userId, prev);
     if (!stillConnectedElsewhere) {
       await unsubscribeUser(redis, userId);
+      // Mark fully-offline so a real reconnect (not a sibling tab) triggers
+      // Cassandra catchup. Skipping this on routine reconnects eliminates
+      // ~150 reads per WS open (50 convs × 3 queries in replayMissedDmHints).
+      await redis.set(`presence:offline:${userId}`, "1", "EX", 3600);
     }
   });
 
@@ -605,7 +609,14 @@ wss.on("connection", async (ws, req) => {
     void (async () => {
       await drainPendingDmHints(ws, userId);
       if (ws.readyState !== WebSocket.OPEN) return;
-      await replayMissedDmHints(ws, userId);
+      // Atomic test-and-clear: only the first reconnecting tab after a true
+      // offline period runs catchup. Concurrent reconnects find marker gone
+      // and skip the 150-query Cassandra scan. drainPendingDmHints above
+      // (Redis-backed, 5min TTL) remains the durable backstop in all cases.
+      const wasOffline = await redis.getdel(`presence:offline:${userId}`);
+      if (wasOffline) {
+        await replayMissedDmHints(ws, userId);
+      }
     })();
   });
 
