@@ -86,8 +86,10 @@ const redisSub = new Redis(env.REDIS_URL);
 redisSub.on("error", (err) => logger.error({ err }, "redis sub error"));
 
 // Per-socket outbound queue limits
-const WS_OUTBOUND_QUEUE_MAX = 512;       // kill connection if message queue exceeds this
+const WS_QUEUE_CAP_IMPORTANT = 512;     // kill connection if important-message queue exceeds this
+const WS_QUEUE_CAP_BEST_EFFORT = 128;   // drop frame (no kill) if best-effort queue exceeds this
 const WS_BACKPRESSURE_KILL_BYTES = 1 * 1024 * 1024; // 1 MB buffered → kill
+const WS_DRAIN_BATCH = 64;              // max ws.send() calls per setImmediate tick
 const WS_DEDUP_MAX = 512;               // max recent messageIds to track per socket
 
 type ConnEntry = {
@@ -147,24 +149,26 @@ function flushQueue(connId: string): void {
     return;
   }
 
-  if (ws.bufferedAmount >= WS_BACKPRESSURE_KILL_BYTES) {
-    logger.warn({ connId, userId: conn.userId, bufferedAmount: ws.bufferedAmount }, "ws backpressure kill");
-    evictAndTerminate(connId, ws);
-    return;
-  }
+  // Drain up to WS_DRAIN_BATCH messages per tick then yield via setImmediate.
+  // Keeps event loop responsive under burst (e.g. 200-user presence snapshot on
+  // connect) without the old one-at-a-time stall that caused queue overflow.
+  let sent = 0;
+  while (outboundQueue.length > 0 && sent < WS_DRAIN_BATCH) {
+    if (ws.bufferedAmount >= WS_BACKPRESSURE_KILL_BYTES) {
+      logger.warn({ connId, userId: conn.userId, bufferedAmount: ws.bufferedAmount }, "ws backpressure kill");
+      evictAndTerminate(connId, ws);
+      return;
+    }
 
-  const payload = outboundQueue.shift();
-  if (payload === undefined) {
-    conn.draining = false;
-    return;
-  }
-
-  try {
-    ws.send(payload);
-  } catch (err) {
-    logger.warn({ err, connId, userId: conn.userId }, "ws send failed; terminating");
-    evictAndTerminate(connId, ws);
-    return;
+    const payload = outboundQueue.shift()!;
+    try {
+      ws.send(payload);
+    } catch (err) {
+      logger.warn({ err, connId, userId: conn.userId }, "ws send failed; terminating");
+      evictAndTerminate(connId, ws);
+      return;
+    }
+    sent++;
   }
 
   if (outboundQueue.length > 0) {
@@ -224,7 +228,8 @@ async function drainPendingDmHints(ws: WebSocket, userId: string): Promise<void>
       ws,
       JSON.stringify({ ...hint, source: "pending" }),
       "dm_pending",
-      { userId, conversationId: hint.conversationId, messageId: hint.messageId }
+      { userId, conversationId: hint.conversationId, messageId: hint.messageId },
+      true
     );
   }
 }
@@ -317,7 +322,8 @@ async function replayMissedDmHintsFromDisconnect(
             source: "catchup",
           }),
           "dm_catchup",
-          { userId, conversationId, messageId: row.messageId }
+          { userId, conversationId, messageId: row.messageId },
+          true
         );
       }
     }
@@ -329,11 +335,11 @@ function enqueueSend(
   ws: WebSocket,
   payload: string,
   label: string,
-  ctx?: { userId?: string; connId?: string; conversationId?: string; messageId?: string }
+  ctx?: { userId?: string; connId?: string; conversationId?: string; messageId?: string },
+  important = false
 ): void {
   const cid = wsConnId.get(ws);
   if (!cid) {
-    // Socket not registered (already evicted or pre-setup send)
     if (ws.readyState === WebSocket.OPEN) {
       try { ws.send(payload); } catch { /* best effort */ }
     }
@@ -346,9 +352,13 @@ function enqueueSend(
     }
     return;
   }
-  if (conn.outboundQueue.length >= WS_OUTBOUND_QUEUE_MAX) {
-    logger.warn({ connId: cid, userId: conn.userId, queueLen: conn.outboundQueue.length }, "ws outbound queue full; killing connection");
-    evictAndTerminate(cid, ws);
+  const cap = important ? WS_QUEUE_CAP_IMPORTANT : WS_QUEUE_CAP_BEST_EFFORT;
+  if (conn.outboundQueue.length >= cap) {
+    if (important) {
+      logger.warn({ connId: cid, userId: conn.userId, queueLen: conn.outboundQueue.length }, "ws important queue full; killing connection");
+      evictAndTerminate(cid, ws);
+    }
+    // best-effort: silently drop — presence/guild state reconciles eventually
     return;
   }
   conn.outboundQueue.push(payload);
@@ -460,7 +470,7 @@ function fanOutDmEventLocal(
           connId,
           conversationId: event.conversationId as string | undefined,
           messageId: dmMsg?.messageId,
-        });
+        }, true);
         if (event.type === "dm:message:create") {
           dmSentCount++;
           const sentAtMs = Date.now();
@@ -514,7 +524,7 @@ function deliverDmEventToUser(
       conn.recentMessageIds.add(dmMsg.messageId);
       if (conn.recentMessageIds.size > WS_DEDUP_MAX) conn.recentMessageIds.clear();
     }
-    enqueueSend(conn.ws, outgoing, "dm_shard", { userId: normId, connId, messageId: dmMsg?.messageId });
+    enqueueSend(conn.ws, outgoing, "dm_shard", { userId: normId, connId, messageId: dmMsg?.messageId }, true);
   }
 }
 
@@ -1000,7 +1010,7 @@ redisSub.on("message", (channel, message) => {
           for (const connId of conns) {
             const conn = connections.get(connId);
             if (conn) {
-              enqueueSend(conn.ws, payload, "channel");
+              enqueueSend(conn.ws, payload, "channel", undefined, true);
               sentCount++;
               logger.info({
                 targetUid: uid,
