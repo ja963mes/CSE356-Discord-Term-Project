@@ -1,28 +1,7 @@
-- name: Install required packages for Redis repo
-  ansible.builtin.apt:
-    name:
-      - curl
-      - gnupg
-      - lsb-release
-    state: present
-    update_cache: true
-
-- name: Add Redis GPG key
-  ansible.builtin.shell: |
-    curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
-  args:
-    creates: /usr/share/keyrings/redis-archive-keyring.gpg
-
-- name: Add Redis apt repository
-  ansible.builtin.apt_repository:
-    repo: "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb {{ ansible_distribution_release }} main"
-    state: present
-    filename: redis
-
-- name: Install redis-server 7.x
+- name: Install redis-server
   ansible.builtin.apt:
     name: redis-server
-    state: latest
+    state: present
     update_cache: true
 
 - name: Configure Redis bind address and port
