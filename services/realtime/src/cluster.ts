@@ -2,9 +2,12 @@ import cluster from "cluster";
 import os from "os";
 import { logger } from "./logger";
 
-const WORKERS = os.cpus().length;
+// WORKERS env var lets systemd-managed deployments set this to 1 (default)
+// since multiple instances are already managed as separate systemd units.
+// Only set REALTIME_WORKERS > 1 if running a single systemd unit on the host.
+const WORKERS = parseInt(process.env.REALTIME_WORKERS ?? "1", 10);
 
-if (cluster.isPrimary) {
+if (cluster.isPrimary && WORKERS > 1) {
   logger.info({ workers: WORKERS }, "realtime cluster primary starting");
   for (let i = 0; i < WORKERS; i++) {
     cluster.fork();
@@ -14,6 +17,7 @@ if (cluster.isPrimary) {
     cluster.fork();
   });
 } else {
+  // Single-process mode (default) or worker process
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   require("./index");
 }
