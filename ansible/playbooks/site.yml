@@ -1,3 +1,9 @@
+- name: Configure Redis pubsub VM
+  hosts: redis
+  become: true
+  roles:
+    - redis
+
 - name: Configure common deploy prerequisites
   hosts: all
   become: true

@@ -12,7 +12,7 @@ dms_port: "3007"
 
 ## REQUIRED: set these to reachable endpoints (likely private IPs)
 dms_database_url: "postgresql://postgres:123456789@10.0.2.247:6432/auth_db"
-dms_redis_url: "redis://10.0.2.247:6379"
+dms_redis_url: "redis://10.0.3.49:6379"
 dms_redis_command_timeout_ms: "5000"
 
 ## Cassandra cluster (DM history)

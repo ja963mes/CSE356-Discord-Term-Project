@@ -1,0 +1,59 @@
+---
+- name: Install prerequisites
+  ansible.builtin.apt:
+    name:
+      - curl
+      - gnupg
+      - lsb-release
+    state: present
+    update_cache: true
+
+- name: Add Redis GPG key
+  ansible.builtin.shell: |
+    curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
+  args:
+    creates: /usr/share/keyrings/redis-archive-keyring.gpg
+
+- name: Add Redis apt repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb {{ ansible_distribution_release }} main"
+    filename: redis
+    state: present
+
+- name: Pin Redis version
+  ansible.builtin.copy:
+    dest: /etc/apt/preferences.d/redis
+    content: |
+      Package: redis-server redis-tools
+      Pin: version {{ redis_version }}
+      Pin-Priority: 1001
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install Redis {{ redis_version }}
+  ansible.builtin.apt:
+    name: "redis-server={{ redis_version }}"
+    state: present
+    update_cache: true
+
+- name: Deploy redis.conf
+  ansible.builtin.template:
+    src: redis.conf.j2
+    dest: /etc/redis/redis.conf
+    owner: redis
+    group: redis
+    mode: "0640"
+  notify: Restart Redis
+
+- name: Enable and start redis-server
+  ansible.builtin.systemd:
+    name: redis-server
+    enabled: true
+    state: started
+
+handlers:
+  - name: Restart Redis
+    ansible.builtin.systemd:
+      name: redis-server
+      state: restarted

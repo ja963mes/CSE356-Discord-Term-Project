@@ -11,7 +11,7 @@ auth_log_pretty: "true"
 auth_port: "3001"
 
 auth_database_url: "postgresql://postgres:123456789@10.0.2.247:6432/auth_db"
-auth_redis_url: "redis://10.0.2.247:6379"
+auth_redis_url: "redis://10.0.3.49:6379"
 auth_frontend_url: "https://group-6.cse356.compas.cs.stonybrook.edu"
 
 auth_oidc_issuer_url: "https://infra-auth.cse356.compas.cs.stonybrook.edu/realms/oauth"

@@ -1,0 +1,7 @@
+# Redis pubsub VM. Hosts must be in [redis] inventory group.
+redis_version: "6:7.4.8-1rl1~jammy1"
+redis_bind: "0.0.0.0"
+redis_protected_mode: "no"
+redis_maxmemory: "3gb"
+redis_maxmemory_policy: "noeviction"
+redis_port: "6379"

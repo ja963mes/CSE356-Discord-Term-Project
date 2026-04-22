@@ -71,6 +71,15 @@
       ansible.builtin.command: nginx -t
       changed_when: false
 
+- name: Stop and disable deprecated multi-instance realtime services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop:
+    - discord-realtime-2
+  failed_when: false
+
 - name: Install discord.env
   ansible.builtin.template:
     src: discord.env.j2
