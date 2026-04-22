@@ -39,8 +39,8 @@ upstream backend_api {
     keepalive 64;
 }
 upstream auth_api {
-    # Dedicated auth-service target for /auth.
-    server 10.0.3.158:3001;
+    # Dedicated auth VM nginx (see docs/nginx/production-auth.conf.example).
+    server 10.0.3.158:80;
     keepalive 32;
 }
 upstream search_api {

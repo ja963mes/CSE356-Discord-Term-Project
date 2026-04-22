@@ -19,6 +19,12 @@ manage_systemd_services: true
 
 frontend_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-frontend.conf.example"
 backend_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-backend.conf.example"
+# Isolated service VM nginx configs (used by their respective roles when manage_nginx_config=true)
+messages_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-messages.conf.example"
+dms_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-dms.conf.example"
+read_state_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-read-state.conf.example"
+auth_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-auth.conf.example"
+realtime_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-realtime.conf.example"
 
 # Backend vs realtime: group_vars/backend.yml + roles/backend; realtime group_vars/realtime.yml + roles/realtime.
 

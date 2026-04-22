@@ -1,0 +1,51 @@
+# Nginx — production messages VM (messages-service only)
+#
+# Use this on the dedicated messages VM that runs the messages Node service locally.
+# Frontend VM proxies /messages and /attachments traffic to the backend VM nginx,
+# which in turn proxies here via private IP (10.0.3.199:80).
+#
+# Service on localhost (this VM):
+#   3003 messages
+
+upstream messages_backend {
+    server 127.0.0.1:3003;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    server_name 10.0.3.199;
+
+    client_max_body_size 25m;
+
+    location ^~ /messages {
+        proxy_pass http://messages_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    location ^~ /attachments {
+        proxy_pass http://messages_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    # API-only host in split production
+    location / {
+        return 404;
+    }
+}

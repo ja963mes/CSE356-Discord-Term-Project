@@ -2,9 +2,12 @@
 # Used by the realtime Ansible role (see roles/realtime).
 realtime_systemd_services:
   - discord-realtime
+  - discord-realtime-2
 
 realtime_workspace_build_commands:
   - npm run build --workspace realtime-service
+
+realtime_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-realtime.conf.example"
 
 realtime_log_level: warn
 
@@ -14,3 +17,6 @@ realtime_redis_url: "redis://10.0.3.49:6379"
 # kv instance — sessions, presence:*, dm:pending:*, realtime:instances.
 realtime_kv_redis_url: "redis://10.0.3.49:6380"
 realtime_cassandra_contact_points: "10.0.2.111,10.0.0.225,10.0.1.200"
+realtime_cassandra_port: "9042"
+realtime_cassandra_local_datacenter: "datacenter1"
+realtime_cassandra_keyspace: "messaging"
