@@ -34,8 +34,6 @@ upstream backend_messages {
 upstream backend_realtime {
     server 10.0.3.180:3005;
     server 10.0.3.180:3009;
-    server 10.0.1.49:3005;
-    server 10.0.1.49:3009;
     keepalive 16;
 }
 
