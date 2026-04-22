@@ -11,5 +11,5 @@ realtime_log_level: warn
 
 realtime_database_url: "postgresql://postgres:123456789@10.0.2.247:6432/auth_db"
 realtime_database_url_direct: "postgresql://postgres:123456789@10.0.2.247:5433/auth_db"
-realtime_redis_url: "redis://10.0.0.93:6379"
+realtime_redis_url: "redis://10.0.2.247:6379"
 realtime_cassandra_contact_points: "10.0.2.111,10.0.0.225,10.0.1.200"
