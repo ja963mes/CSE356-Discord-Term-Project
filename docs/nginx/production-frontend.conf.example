@@ -5,7 +5,7 @@
 # are proxied to search_api. Not directly to backend Node service ports.
 #
 # Example hosts:
-#   Frontend VM (this host): 130.245.136.115 (Public IP)
+#   Frontend VM (this host): 130.245.136.103 (Public IP)
 #   Backend VM nginx:         10.0.2.247:80 (Private IP)
 #   Auth service:             10.0.3.158:3001 (Auth VM private IP)
 #   Search ingress nginx:     10.0.2.26:3004 (Private IP, optional dedicated search host)
@@ -174,7 +174,7 @@ server {
 server {
     listen 80;
     listen 443 ssl;
-    server_name 130.245.136.115 group-6.cse356.compas.cs.stonybrook.edu;
+    server_name 130.245.136.103 group-6.cse356.compas.cs.stonybrook.edu;
 
     ssl_certificate /etc/letsencrypt/live/group-6.cse356.compas.cs.stonybrook.edu/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/group-6.cse356.compas.cs.stonybrook.edu/privkey.pem;
@@ -280,9 +280,7 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;        proxy_cookie_path / /;
-        proxy_cookie_domain ~^(.*)$ "$host";        proxy_cookie_path / /;
-        proxy_cookie_domain ~^(.*)$ "$host";
+        proxy_set_header X-Forwarded-Proto $scheme;
         proxy_connect_timeout 3s;
         proxy_read_timeout 30s;
         proxy_send_timeout 30s;

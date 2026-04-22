@@ -1,0 +1,29 @@
+# Auth VM (auth-service only). Hosts must be in [auth] inventory group.
+auth_systemd_services:
+  - discord-auth
+
+auth_workspace_build_commands:
+  - npm run build --workspace auth-service
+
+## /etc/discord.env values for auth-service
+auth_log_level: info
+auth_log_pretty: "true"
+auth_port: "3001"
+
+auth_database_url: "postgresql://postgres:123456789@10.0.2.247:6432/auth_db"
+auth_redis_url: "redis://10.0.2.247:6379"
+auth_frontend_url: "https://group-6.cse356.compas.cs.stonybrook.edu"
+
+auth_oidc_issuer_url: "https://infra-auth.cse356.compas.cs.stonybrook.edu/realms/oauth"
+auth_oidc_client_id: "web-service"
+auth_oidc_client_secret: "web-service-secret"
+auth_oidc_callback_url: "https://group-6.cse356.compas.cs.stonybrook.edu/auth/oidc/callback"
+
+auth_google_callback_url: "https://group-6.cse356.compas.cs.stonybrook.edu/auth/google/callback"
+auth_github_callback_url: "https://group-6.cse356.compas.cs.stonybrook.edu/auth/github/callback"
+
+# OAuth secrets — set in secrets.yml (gitignored). If missing, OAuth login is disabled.
+auth_google_client_id: ""
+auth_google_client_secret: ""
+auth_github_client_id: ""
+auth_github_client_secret: ""
