@@ -19,6 +19,8 @@ map $http_upgrade $connection_upgrade {
 upstream realtime_backend {
     server 127.0.0.1:3005;
     server 127.0.0.1:3009;
+    server 127.0.0.1:3013;
+    server 127.0.0.1:3017;
     keepalive 64;
 }
 

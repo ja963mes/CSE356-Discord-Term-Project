@@ -31,12 +31,9 @@ upstream backend_messages {
     server 10.0.3.199:80;
     keepalive 32;
 }
-# WebSocket: realtime VM runs nginx on :80 which load-balances across its two
-# local instances (:3005 and :3009). Point here — not directly to Node ports.
-# If you have two physical realtime VMs, add the second VM's :80 here.
+# WebSocket: realtime VM nginx on :80 load-balances across 4 local instances.
 upstream backend_realtime {
     server 10.0.3.180:80;
-    # server 10.0.1.49:80;  # uncomment when realtime-vm-2 is live
     keepalive 16;
 }
 
