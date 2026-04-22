@@ -60,7 +60,7 @@
 - name: Render per-instance redis.conf files
   ansible.builtin.template:
     src: redis-instance.conf.j2
-    dest: "/etc/redis/{{ item.name }}.conf"
+    dest: "/etc/redis/{{ instance.name }}.conf"
     owner: redis
     group: redis
     mode: "0640"
@@ -72,7 +72,7 @@
 - name: Render per-instance systemd unit files
   ansible.builtin.template:
     src: redis-instance.service.j2
-    dest: "/etc/systemd/system/redis-{{ item.name }}.service"
+    dest: "/etc/systemd/system/redis-{{ instance.name }}.service"
     owner: root
     group: root
     mode: "0644"
