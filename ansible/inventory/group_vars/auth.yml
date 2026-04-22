@@ -4,18 +4,3 @@ auth_systemd_services:
 
 auth_workspace_build_commands:
   - npm run build --workspace auth-service
-
-## /etc/discord.env values for auth-service
-auth_log_level: info
-auth_log_pretty: "true"
-auth_port: "3001"
-
-auth_database_url: "postgresql://postgres:123456789@10.0.2.247:6432/auth_db"
-auth_redis_url: "redis://10.0.3.49:6379"
-auth_session_secret: "changeme-set-a-real-secret-in-production"
-auth_frontend_url: "http://130.245.136.103"
-
-auth_oidc_issuer_url: "https://infraauth.cse356.compas.cs.stonybrook.edu/realms/oauth/.well-known/openid-configuration"
-auth_oidc_client_id: "web-service"
-auth_oidc_client_secret: "web-service-secret"
-auth_oidc_callback_url: "http://130.245.136.45/auth/oidc/callback"
