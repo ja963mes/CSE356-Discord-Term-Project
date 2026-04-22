@@ -1,7 +1,27 @@
-# Redis pubsub VM. Hosts must be in [redis] inventory group.
+# Redis VM (10.0.3.49). Runs two single-threaded redis-server instances on
+# the same VM so both CPU cores are utilized:
+#   - redis-pubsub on :6379  → pubsub channels (channel:events, dm:events,
+#     community:events, dm:userfeed:*, presence:broadcast)
+#   - redis-kv     on :6380  → sessions (session:*), OAuth state
+#     (oauth_state:*, oauth_temp:*), cache (comm:e:*, comm:c:*),
+#     presence state (presence:*), DM pending hints (dm:pending:*),
+#     realtime instance registry (realtime:instances)
+#
+# Per-instance config: bind, protected_mode shared; maxmemory + eviction
+# policy tuned to the workload.
 redis_version: "6:7.4.8-1rl1~jammy1"
 redis_bind: "0.0.0.0"
 redis_protected_mode: "no"
-redis_maxmemory: "3gb"
-redis_maxmemory_policy: "noeviction"
-redis_port: "6379"
+
+redis_instances:
+  - name: pubsub
+    port: 6379
+    maxmemory: "1gb"
+    # Pubsub holds no durable data — losing keys under memory pressure is fine.
+    maxmemory_policy: "allkeys-lru"
+  - name: kv
+    port: 6380
+    maxmemory: "2gb"
+    # Sessions + cache + presence are recoverable but eviction logs users out.
+    # noeviction = OOMs writes instead of dropping session keys silently.
+    maxmemory_policy: "noeviction"

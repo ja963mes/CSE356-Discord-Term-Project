@@ -2,6 +2,8 @@
 
 Node **microservices** (Express + TypeScript), a **React (Vite)** client, and shared data stores (**PostgreSQL**, **Redis**, **Cassandra**, **Elasticsearch**, **MinIO**). Auth, guilds, channels, DMs, message search, WebSockets, and read-state are implemented in this repo—see **[docs/IMPLEMENTATION.md](./docs/IMPLEMENTATION.md)** for a factual checklist.
 
+> **Redis is split across two instances** — `REDIS_URL` for pub/sub fanout and `KV_REDIS_URL` for sessions, presence, cache, and pending-queues. In production both instances run on the same Redis VM but as separate `redis-server` processes (ports 6379 + 6380) so KV reads don't queue behind pub/sub fanout on Redis's single-threaded event loop. See [Redis topology](#redis-topology) below.
+
 | Doc | Purpose |
 |-----|---------|
 | **[docs/README.md](./docs/README.md)** | Documentation index |
@@ -32,7 +34,8 @@ flowchart TB
 
   subgraph data [Data stores]
     PG[(PostgreSQL)]
-    RD[(Redis pub/sub + sessions)]
+    RDP[(Redis pub/sub :6379)]
+    RDK[(Redis KV :6380<br/>sessions · presence · cache)]
     CAS[(Cassandra)]
     ES[(Elasticsearch)]
     S3[(MinIO)]
@@ -48,25 +51,33 @@ flowchart TB
   Vite -->|/read-state| RS
 
   A --> PG
-  A --> RD
+  A --> RDK
+  A -. publish .-> RDP
   C --> PG
-  C --> RD
+  C --> RDK
+  C -. publish .-> RDP
   CC --> PG
-  CC --> RD
+  CC --> RDK
+  CC -. publish .-> RDP
   M --> PG
   M --> CAS
-  M --> RD
+  M --> RDK
+  M -. publish .-> RDP
   M --> S3
   D --> PG
   D --> CAS
-  D --> RD
+  D --> RDK
+  D -. publish .-> RDP
   S --> PG
-  S --> RD
+  S --> RDK
+  S -. subscribe .- RDP
   S --> ES
-  R --> RD
+  R --> RDK
+  R -. pub/sub .- RDP
   RS --> PG
   RS --> CAS
-  RS --> RD
+  RS --> RDK
+  RS -. publish .-> RDP
 
   %% pub/sub fanout: publishers (dotted) -> realtime + search indexer
   M -. channel:events .-> R

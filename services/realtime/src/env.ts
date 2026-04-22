@@ -8,11 +8,14 @@ if (process.env.ENV_FILE) {
 }
 
 if (!process.env.REDIS_URL) throw new Error("REDIS_URL is required");
+if (!process.env.KV_REDIS_URL) throw new Error("KV_REDIS_URL is required");
 if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
 
 export const env = {
   PORT: process.env.REALTIME_PORT ?? "3005",
   REDIS_URL: process.env.REDIS_URL,
+  // KV redis (sessions, presence:*, INSTANCE_REGISTRY, dm:pending:* drain) — port 6380.
+  KV_REDIS_URL: process.env.KV_REDIS_URL,
   DATABASE_URL: process.env.DATABASE_URL,
   LOG_LEVEL: process.env.LOG_LEVEL ?? "info",
   LOG_PRETTY: process.env.LOG_PRETTY === "true",

@@ -11,6 +11,8 @@ const envSchema = z.object({
   SEARCH_PORT: z.string().default("3004"),
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string(),
+  /** KV redis (sessions, comm:e:dir) — port 6380 instance. */
+  KV_REDIS_URL: z.string(),
   /** Base URL for backend nginx (used for search fallback scans). Example: http://10.0.2.247 */
   BACKEND_API_URL: z.string().url().default("http://10.0.2.247"),
   /** Pino: trace | debug | info | warn | error | fatal */

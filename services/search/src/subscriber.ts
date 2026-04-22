@@ -1,6 +1,6 @@
 import Redis from "ioredis";
 import { env } from "./env";
-import { redis as redisCommand } from "./redis";
+import { kvRedis } from "./redis";
 import { indexMessage, updateContent, markDeleted, deleteByScope } from "./elasticsearch";
 import { deleteCommunityDirectory, indexCommunityDirectory } from "./communitiesIndex";
 import { logger } from "./logger";
@@ -10,7 +10,7 @@ const COMMUNITIES_DIRECTORY_EPOCH_KEY = "comm:e:dir";
 
 async function bumpCommunitiesDirectorySearchEpoch(): Promise<void> {
   try {
-    await redisCommand.incr(COMMUNITIES_DIRECTORY_EPOCH_KEY);
+    await kvRedis.incr(COMMUNITIES_DIRECTORY_EPOCH_KEY);
   } catch (e) {
     logger.warn({ err: e }, "bump directory search epoch failed");
   }

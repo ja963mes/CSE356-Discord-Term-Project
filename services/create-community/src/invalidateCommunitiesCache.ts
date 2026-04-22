@@ -1,4 +1,4 @@
-import { redis } from "./redis";
+import { kvRedis } from "./redis";
 
 /**
  * Key names must match services/communities/src/readCache.ts epoch keys.
@@ -16,7 +16,7 @@ function keyEpochCh(communityId: string): string {
 
 export async function bumpCommunitiesReadCacheAfterCreate(userId: string, communityId: string): Promise<void> {
   try {
-    const p = redis.pipeline();
+    const p = kvRedis.pipeline();
     p.incr(keyEpochUcl(userId));
     p.incr(keyEpochMem(communityId));
     p.incr(keyEpochCh(communityId));

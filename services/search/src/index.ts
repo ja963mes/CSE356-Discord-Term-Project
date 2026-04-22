@@ -7,7 +7,7 @@ import { startSubscriber } from "./subscriber";
 import searchRouter from "./routes/search";
 import directoryRouter from "./routes/directory";
 import { ensureCommunitiesIndex, reindexAllCommunitiesFromPostgres } from "./communitiesIndex";
-import { redis } from "./redis";
+import { kvRedis } from "./redis";
 import { logger } from "./logger";
 
 const app = express();
@@ -74,7 +74,7 @@ void (async () => {
   try {
     const n = await reindexAllCommunitiesFromPostgres();
     logger.info({ count: n }, "reindexed communities into Elasticsearch");
-    await redis.incr("comm:e:dir").catch(() => {});
+    await kvRedis.incr("comm:e:dir").catch(() => {});
   } catch (e) {
     logger.error({ err: e }, "community directory reindex failed (ES may be stale/empty)");
   }
