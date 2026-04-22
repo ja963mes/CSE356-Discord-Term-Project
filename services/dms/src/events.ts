@@ -245,6 +245,18 @@ export async function publishDmEvent(event: DmEvent): Promise<void> {
       "dm:message:create publishing to redis"
     );
   }
+  // Enqueue pending hint BEFORE publishing so the fallback is always in place,
+  // even if the Redis publish fails. Realtime drains this on reconnect.
+  if (event.type === "dm:message:create") {
+    await enqueuePendingDmHint(event.participantIds, {
+      type: "dm:new_message",
+      conversationId: event.conversationId,
+      messageId: event.message.messageId,
+      authorId: event.message.authorId,
+      timeuuid: event.message.timeuuid,
+    });
+  }
+
   // Per-participant shard publish. Each realtime instance subscribes to all
   // shard channels but routes each message to only the targeted user — O(1)
   // lookup vs O(participants) scan on every instance for every event.
@@ -279,13 +291,6 @@ export async function publishDmEvent(event: DmEvent): Promise<void> {
       },
       "dm:message:create published to redis"
     );
-    await enqueuePendingDmHint(event.participantIds, {
-      type: "dm:new_message",
-      conversationId: event.conversationId,
-      messageId: event.message.messageId,
-      authorId: event.message.authorId,
-      timeuuid: event.message.timeuuid,
-    });
   }
   void directHttpFanout(wireEvent);
 }
