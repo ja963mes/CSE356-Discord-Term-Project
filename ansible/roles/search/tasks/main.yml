@@ -44,6 +44,14 @@
         enabled: true
       loop: "{{ search_systemd_services }}"
 
+- name: Install discord.env
+  ansible.builtin.template:
+    src: discord.env.j2
+    dest: /etc/discord.env
+    owner: root
+    group: root
+    mode: "0640"
+
 - name: Restart search services
   ansible.builtin.systemd:
     name: "{{ item }}"

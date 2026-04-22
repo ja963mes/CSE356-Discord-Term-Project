@@ -1,3 +1,5 @@
+session_secret: "changeme-set-a-real-secret-in-production"
+
 repo_url: "https://github.com/ja963mes/CSE356-Discord-Term-Project.git"
 deploy_branch: "main-dev"
 deploy_user: "deploy"

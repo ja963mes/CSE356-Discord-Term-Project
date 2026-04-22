@@ -1,6 +1,0 @@
-# Auth VM (auth-service only). Hosts must be in [auth] inventory group.
-auth_systemd_services:
-  - discord-auth
-
-auth_workspace_build_commands:
-  - npm run build --workspace auth-service

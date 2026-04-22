@@ -1,0 +1,96 @@
+# Sync /etc/discord.env on all service VMs from current group_vars, then restart.
+# Run this after any rollback or manual IP change to re-converge all envs.
+#
+# Usage:
+#   ansible-playbook -i inventory/hosts.ini playbooks/env-sync.yml
+#   ansible-playbook -i inventory/hosts.ini playbooks/env-sync.yml --limit realtime
+#
+- name: Sync env - realtime
+  hosts: realtime
+  become: true
+  tasks:
+    - ansible.builtin.template:
+        src: "{{ deploy_path }}/ansible/roles/realtime/templates/discord.env.j2"
+        dest: /etc/discord.env
+        owner: root
+        group: root
+        mode: "0640"
+    - ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: restarted
+      loop: "{{ realtime_systemd_services }}"
+
+- name: Sync env - messages
+  hosts: messages
+  become: true
+  tasks:
+    - ansible.builtin.template:
+        src: "{{ deploy_path }}/ansible/roles/messages/templates/discord.env.j2"
+        dest: /etc/discord.env
+        owner: root
+        group: root
+        mode: "0640"
+    - ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: restarted
+      loop: "{{ messages_systemd_services }}"
+
+- name: Sync env - dms
+  hosts: dms
+  become: true
+  tasks:
+    - ansible.builtin.template:
+        src: "{{ deploy_path }}/ansible/roles/dms/templates/discord.env.j2"
+        dest: /etc/discord.env
+        owner: root
+        group: root
+        mode: "0640"
+    - ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: restarted
+      loop: "{{ dms_systemd_services }}"
+
+- name: Sync env - read-state
+  hosts: read_state
+  become: true
+  tasks:
+    - ansible.builtin.template:
+        src: "{{ deploy_path }}/ansible/roles/read-state/templates/discord.env.j2"
+        dest: /etc/discord.env
+        owner: root
+        group: root
+        mode: "0640"
+    - ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: restarted
+      loop: "{{ read_state_systemd_services }}"
+
+- name: Sync env - auth
+  hosts: auth
+  become: true
+  tasks:
+    - ansible.builtin.template:
+        src: "{{ deploy_path }}/ansible/roles/auth/templates/discord.env.j2"
+        dest: /etc/discord.env
+        owner: root
+        group: root
+        mode: "0640"
+    - ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: restarted
+      loop: "{{ auth_systemd_services }}"
+
+- name: Sync env - search
+  hosts: search
+  become: true
+  tasks:
+    - ansible.builtin.template:
+        src: "{{ deploy_path }}/ansible/roles/search/templates/discord.env.j2"
+        dest: /etc/discord.env
+        owner: root
+        group: root
+        mode: "0640"
+    - ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: restarted
+      loop: "{{ search_systemd_services }}"
