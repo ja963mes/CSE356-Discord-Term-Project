@@ -9,7 +9,7 @@ WorkingDirectory={{ deploy_path }}
 EnvironmentFile=/etc/discord.env
 Environment="REALTIME_PORT={{ realtime_port_1 | default(3005) }}"
 Environment="REALTIME_INTERNAL_URL=http://{{ realtime_internal_host | default(ansible_default_ipv4.address) }}:{{ realtime_port_1 | default(3005) }}"
-ExecStart=/usr/bin/node {{ deploy_path }}/services/realtime/dist/index.js
+ExecStart=/usr/bin/node {{ deploy_path }}/services/realtime/dist/cluster.js
 Restart=always
 RestartSec=3
 StandardOutput=journal

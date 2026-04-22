@@ -1,4 +1,5 @@
 import http from "http";
+import cluster from "cluster";
 import express from "express";
 import { WebSocketServer, WebSocket } from "ws";
 import { parse as parseCookie } from "cookie";
@@ -36,7 +37,10 @@ import { initCassandra, listDmMessagesNewerThanTimestamp } from "./cassandra";
 // Unique ID for this instance — used to namespace presence:conns fields
 // so multiple instances don't stomp on each other's connection data at startup
 const instanceId = randomUUID();
-logger.info({ instanceId }, "startup");
+// With cluster, only worker 1 registers in the instance registry so dms sees
+// one entry per VM rather than N. All workers still subscribe to pubsub.
+const shouldRegisterInstance = !cluster.isWorker || cluster.worker?.id === 1;
+logger.info({ instanceId, workerId: cluster.worker?.id ?? "primary" }, "startup");
 
 const redis = new Redis(env.REDIS_URL);
 redis.on("connect", async () => {
@@ -432,31 +436,6 @@ function fanOutDmEventLocal(
         const isSelfEcho = authorIdNorm !== null && targetUid === authorIdNorm;
         if (isSelfEcho) continue;
         dmNotConnectedCount++;
-        // Only warn from pubsub path; the direct path is per-instance targeted
-        // so a miss here is expected for instances that don't hold that user.
-        if (source === "pubsub") {
-          void (async () => {
-            try {
-              const elsewhere = await hasRegisteredConnections(redis, targetUid, liveInstanceIds);
-              if (elsewhere) return;
-              logger.warn({
-                targetUid,
-                conversationId: event.conversationId,
-                messageId: dmMsg?.messageId,
-                authorId: dmMsg?.authorId,
-                offline: true,
-              }, "dm fanout: target offline cluster-wide");
-            } catch (err) {
-              logger.warn({
-                err,
-                targetUid,
-                conversationId: event.conversationId,
-                messageId: dmMsg?.messageId,
-                authorId: dmMsg?.authorId,
-              }, "dm fanout: presence check failed");
-            }
-          })();
-        }
       }
       continue;
     }
@@ -811,12 +790,14 @@ wss.on("connection", async (ws, req) => {
       return;
     }
 
+    if (msg.type === "ping") {
+      await updateActivity(redis, userId, connId, instanceId);
+      return;
+    }
+
     const prev = await computePresence(redis, userId, liveInstanceIds);
 
-    if (msg.type === "ping") {
-      // Keep activity updated on pings
-      await updateActivity(redis, userId, connId, instanceId);
-    } else if (msg.type === "subscribe_channel") {
+    if (msg.type === "subscribe_channel") {
       const channelId = (msg as { channelId?: string }).channelId;
       if (typeof channelId === "string" && channelId.length > 0) {
         await subscribeChannel(redis, channelId, userId);
@@ -1096,14 +1077,16 @@ initDb()
     // Prevents ERR_INCOMPLETE_CHUNKED_ENCODING on /internal/* HTTP routes when nginx reuses a socket Node just closed.
     server.keepAliveTimeout = 65_000;
     server.headersTimeout = 66_000;
-    void registerInstance().catch((err) =>
-      logger.warn({ err }, "instance registry: initial registration failed")
-    );
-    setInterval(() => {
+    if (shouldRegisterInstance) {
       void registerInstance().catch((err) =>
-        logger.warn({ err }, "instance registry: refresh failed")
+        logger.warn({ err }, "instance registry: initial registration failed")
       );
-    }, INSTANCE_REGISTRY_REFRESH_MS);
+      setInterval(() => {
+        void registerInstance().catch((err) =>
+          logger.warn({ err }, "instance registry: refresh failed")
+        );
+      }, INSTANCE_REGISTRY_REFRESH_MS);
+    }
     void reapStaleConnFields().catch((err) => logger.warn({ err }, "initial stale reap failed"));
     setInterval(() => {
       void reapStaleConnFields().catch((err) => logger.warn({ err }, "stale reap failed"));
