@@ -4,17 +4,16 @@
 # This host should not serve frontend static files in split production.
 #
 # Services on localhost (this VM):
-#   3002 communities   3003 messages
+#   3002 communities
 #   3006 create-community
 #
-# DMs run on a dedicated DMs VM (10.0.3.52) — frontend nginx proxies /dms there,
-# not via this host. See docs/nginx/production-dms.conf.example.
-#
-# Read-state runs on a dedicated read-state VM (10.0.1.189) — frontend nginx proxies
-# /read-state there. See docs/nginx/production-read-state.conf.example.
-#
-# Realtime (WebSocket /ws): two instances on dedicated realtime VM (private network).
-# Upstream below uses 10.0.3.180 — keep in sync with inventory / firewall (backend must reach :3005 and :3009).
+# All other services run on dedicated VMs — proxied via private IP:
+#   messages   -> 10.0.3.199:80 (messages VM nginx)
+#   realtime   -> 10.0.3.180:80 (realtime VM nginx, load-balances :3005/:3009)
+#   dms        -> 10.0.3.52:80  (frontend nginx proxies directly)
+#   read-state -> 10.0.1.189:80 (frontend nginx proxies directly)
+#   auth       -> 10.0.3.158:80 (frontend nginx proxies directly)
+#   search     -> 10.0.2.26:80  (frontend nginx proxies directly)
 
 map $http_upgrade $connection_upgrade {
     default upgrade;
@@ -26,16 +25,18 @@ upstream backend_communities {
     keepalive 32;
 }
 upstream backend_messages {
-    server 10.0.3.199:3003;
+    # messages-service runs on its own VM (10.0.3.199). The backend VM nginx
+    # proxies /messages and /attachments to the messages VM nginx on :80,
+    # which in turn proxies to 127.0.0.1:3003 locally.
+    server 10.0.3.199:80;
     keepalive 32;
 }
-# WebSocket: list a second server only if discord-realtime-2 actually listens there. Otherwise nginx
-# round-robins to a dead port and ~half of clients never get realtime (grading "Delivery timeout").
+# WebSocket: realtime VM runs nginx on :80 which load-balances across its two
+# local instances (:3005 and :3009). Point here — not directly to Node ports.
+# If you have two physical realtime VMs, add the second VM's :80 here.
 upstream backend_realtime {
-    server 10.0.3.180:3005;
-    server 10.0.3.180:3009;
-    server 10.0.1.49:3005;
-    server 10.0.1.49:3009;
+    server 10.0.3.180:80;
+    # server 10.0.1.49:80;  # uncomment when realtime-vm-2 is live
     keepalive 16;
 }
 

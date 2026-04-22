@@ -5,6 +5,8 @@ auth_systemd_services:
 auth_workspace_build_commands:
   - npm run build --workspace auth-service
 
+auth_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-auth.conf.example"
+
 ## /etc/discord.env values for auth-service
 auth_log_level: info
 auth_log_pretty: "true"

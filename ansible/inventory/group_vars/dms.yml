@@ -5,6 +5,8 @@ dms_systemd_services:
 dms_workspace_build_commands:
   - npm run build --workspace dms-service
 
+dms_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-dms.conf.example"
+
 ## /etc/discord.env values for dms-service
 dms_log_level: info
 dms_log_pretty: "true"

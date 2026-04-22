@@ -52,6 +52,39 @@
     group: root
     mode: "0640"
 
+- name: Manage messages nginx config files (optional)
+  when: manage_nginx_config | default(false)
+  block:
+    - name: Install messages nginx config
+      ansible.builtin.copy:
+        src: "{{ messages_nginx_conf_src }}"
+        dest: /etc/nginx/sites-available/discord-messages
+        owner: root
+        group: root
+        mode: "0644"
+        remote_src: true
+
+    - name: Enable messages nginx site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/discord-messages
+        dest: /etc/nginx/sites-enabled/discord-messages
+        state: link
+        force: true
+
+    - name: Disable default nginx site if present
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Validate nginx configuration
+      ansible.builtin.command: nginx -t
+      changed_when: false
+
+    - name: Reload nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: reloaded
+
 - name: Restart messages services
   ansible.builtin.systemd:
     name: "{{ item }}"

@@ -5,6 +5,8 @@ messages_systemd_services:
 messages_workspace_build_commands:
   - npm run build --workspace messages-service
 
+messages_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-messages.conf.example"
+
 ## /etc/discord.env values for messages-service
 messages_log_level: info
 messages_log_pretty: "true"

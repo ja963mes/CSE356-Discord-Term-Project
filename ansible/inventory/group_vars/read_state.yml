@@ -5,6 +5,8 @@ read_state_systemd_services:
 read_state_workspace_build_commands:
   - npm run build --workspace read-state-service
 
+read_state_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-read-state.conf.example"
+
 ## /etc/discord.env values for read-state-service
 read_state_log_level: info
 read_state_log_pretty: "true"

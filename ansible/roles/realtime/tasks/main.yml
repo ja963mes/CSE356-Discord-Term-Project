@@ -47,38 +47,35 @@
 - name: Manage nginx config (optional)
   when: manage_nginx_config
   block:
-    - name: Install backend nginx config
+    - name: Install realtime nginx config
       ansible.builtin.copy:
-        src: "{{ backend_nginx_conf_src }}"
-        dest: /etc/nginx/sites-available/discord-backend
+        src: "{{ realtime_nginx_conf_src }}"
+        dest: /etc/nginx/sites-available/discord-realtime
         owner: root
         group: root
         mode: "0644"
+        remote_src: true
 
-    - name: Enable backend nginx site
+    - name: Enable realtime nginx site
       ansible.builtin.file:
-        src: /etc/nginx/sites-available/discord-backend
-        dest: /etc/nginx/sites-enabled/discord-backend
+        src: /etc/nginx/sites-available/discord-realtime
+        dest: /etc/nginx/sites-enabled/discord-realtime
         state: link
         force: true
 
-    - name: Remove legacy combined nginx site symlink if present
+    - name: Disable default nginx site if present
       ansible.builtin.file:
-        path: /etc/nginx/sites-enabled/discord-production
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Remove legacy backend nginx site symlink if present
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/discord-backend
         state: absent
 
     - name: Validate nginx configuration
       ansible.builtin.command: nginx -t
       changed_when: false
-
-- name: Stop and disable deprecated multi-instance realtime services
-  ansible.builtin.systemd:
-    name: "{{ item }}"
-    state: stopped
-    enabled: false
-  loop:
-    - discord-realtime-2
-  failed_when: false
 
 - name: Install discord.env
   ansible.builtin.template:
