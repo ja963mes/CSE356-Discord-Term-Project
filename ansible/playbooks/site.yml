@@ -4,6 +4,12 @@
   roles:
     - common
 
+- name: Configure and deploy Redis VM
+  hosts: redis
+  become: true
+  roles:
+    - redis
+
 - name: Configure and deploy realtime VM
   hosts: realtime
   become: true
