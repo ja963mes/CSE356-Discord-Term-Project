@@ -86,6 +86,14 @@
       ansible.builtin.command: nginx -t
       changed_when: false
 
+- name: Install discord.env
+  ansible.builtin.template:
+    src: discord.env.j2
+    dest: /etc/discord.env
+    owner: root
+    group: root
+    mode: "0640"
+
 - name: Restart backend services
   ansible.builtin.systemd:
     name: "{{ item }}"

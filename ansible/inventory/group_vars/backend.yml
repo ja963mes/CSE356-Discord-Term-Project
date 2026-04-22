@@ -14,3 +14,14 @@ backend_systemd_services:
 backend_workspace_build_commands:
   - npm run build --workspace communities-service
   - npm run build --workspace create-community-service
+
+## /etc/discord.env values — shared by communities-service + create-community-service
+backend_log_level: info
+backend_log_pretty: "true"
+backend_database_url: "postgresql://postgres:123456789@10.0.2.247:6432/auth_db"
+backend_redis_url: "redis://10.0.2.247:6379"
+
+communities_port: "3002"
+communities_search_service_url: "http://10.0.2.26:3004"
+
+create_community_port: "3006"
