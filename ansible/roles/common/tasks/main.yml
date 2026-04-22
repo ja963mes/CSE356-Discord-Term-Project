@@ -54,6 +54,14 @@
 # Mismatched user vs. /var/lib/nginx ownership causes "open() ... Permission
 # denied while reading upstream" → ERR_INCOMPLETE_CHUNKED_ENCODING on responses
 # large enough that nginx buffers them to disk (e.g. /communities/.../members).
+- name: Increase sshd MaxStartups to prevent connection drops under parallel ansible
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?MaxStartups'
+    line: 'MaxStartups 50:30:200'
+    state: present
+  notify: Reload sshd
+
 - name: Set nginx worker user to www-data
   ansible.builtin.lineinfile:
     path: /etc/nginx/nginx.conf
