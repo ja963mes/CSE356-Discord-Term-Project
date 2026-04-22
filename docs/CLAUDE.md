@@ -104,9 +104,10 @@ Channel lifecycle and ACLs live on the **communities service (3002)** — no sep
 - **Spec gaps:** per-device vs global semantics, full read-receipt UX for all surfaces — align with course spec as needed.
 
 ## Key Architecture Decisions
-- **Sessions**: Opaque UUID tokens in Redis (`session:<token>` → `internal_id`), cookie `session_token`
+- **Redis split**: Two Redis instances (same VM, separate `redis-server` processes). `REDIS_URL` (port 6379) — pub/sub fanout + publishes. `KV_REDIS_URL` (port 6380) — sessions, OAuth state/temp, presence, directory cache, `dm:pending:*`, `INSTANCE_REGISTRY`. Rationale: KV reads shouldn't queue behind pubsub fanout on Redis's single-threaded event loop. Locally both URLs can point at one server.
+- **Sessions**: Opaque UUID tokens on the **KV Redis** (`session:<token>` → `internal_id`), cookie `session_token`
 - **Auth middleware**: `requireAuth` in `services/auth/src/middleware/session.ts`
-- **OAuth state**: Redis `oauth_state:<state>` (10 min TTL), temp profile `oauth_temp:<token>`
+- **OAuth state**: KV Redis `oauth_state:<state>` (10 min TTL), temp profile `oauth_temp:<token>`
 - **DB tables**: `users` (internal_id UUID PK, username, email, password_hash, profile JSONB), `identities` (provider + provider_uid unique)
 - **Channels vs communities**: Shared Postgres; **channel CRUD + ACLs on communities (3002)** (see §4). **Messages service (3003)** enforces `channel_members` + `community_members` and stores message rows in **Cassandra** (partition `channel_id`).
 - **WebSocket**: Single connection per client to `realtime` on `/ws` (proxied from Vite); see service for protocol/events

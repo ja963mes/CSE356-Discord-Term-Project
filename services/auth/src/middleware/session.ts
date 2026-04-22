@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import { redis } from "../db/redis";
+import { kvRedis } from "../db/redis";
 
 export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
   const token = req.cookies?.session_token;
@@ -9,7 +9,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     return;
   }
 
-  const internalId = await redis.get(`session:${token}`);
+  const internalId = await kvRedis.get(`session:${token}`);
 
   if (!internalId) {
     res.status(401).json({ error: "Session expired or invalid" });

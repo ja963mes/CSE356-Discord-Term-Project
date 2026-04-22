@@ -37,23 +37,65 @@
     state: present
     update_cache: true
 
-- name: Deploy redis.conf
+# Default redis-server unit binds :6379 too — we run our own per-instance
+# units instead. Stop + disable + mask so a future apt upgrade can't
+# silently re-enable it and collide with redis-pubsub on :6379.
+- name: Stop and mask default redis-server unit
+  ansible.builtin.systemd:
+    name: redis-server
+    state: stopped
+    enabled: false
+    masked: true
+  failed_when: false
+
+- name: Ensure per-instance data directories exist
+  ansible.builtin.file:
+    path: "/var/lib/redis/{{ item.name }}"
+    state: directory
+    owner: redis
+    group: redis
+    mode: "0750"
+  loop: "{{ redis_instances }}"
+
+- name: Render per-instance redis.conf files
   ansible.builtin.template:
-    src: redis.conf.j2
-    dest: /etc/redis/redis.conf
+    src: redis-instance.conf.j2
+    dest: "/etc/redis/{{ item.name }}.conf"
     owner: redis
     group: redis
     mode: "0640"
-  notify: Restart Redis
+  loop: "{{ redis_instances }}"
+  loop_control:
+    loop_var: instance
+  notify: Restart Redis instances
 
-- name: Enable and start redis-server
+- name: Render per-instance systemd unit files
+  ansible.builtin.template:
+    src: redis-instance.service.j2
+    dest: "/etc/systemd/system/redis-{{ item.name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ redis_instances }}"
+  loop_control:
+    loop_var: instance
+  register: redis_unit_files
+
+- name: Reload systemd if unit files changed
   ansible.builtin.systemd:
-    name: redis-server
+    daemon_reload: true
+  when: redis_unit_files.changed
+
+- name: Enable and start per-instance Redis services
+  ansible.builtin.systemd:
+    name: "redis-{{ item.name }}"
     enabled: true
     state: started
+  loop: "{{ redis_instances }}"
 
-handlers:
-  - name: Restart Redis
-    ansible.builtin.systemd:
-      name: redis-server
-      state: restarted
+- name: Verify each Redis instance is reachable
+  ansible.builtin.command: "redis-cli -h 127.0.0.1 -p {{ item.port }} ping"
+  changed_when: false
+  register: redis_pings
+  failed_when: redis_pings.stdout != "PONG"
+  loop: "{{ redis_instances }}"

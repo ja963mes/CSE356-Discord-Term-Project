@@ -42,7 +42,8 @@ At minimum, verify:
 
 - **Auth/communities/messages/realtime**
   - `DATABASE_URL`
-  - `REDIS_URL`
+  - `REDIS_URL` (pubsub instance, e.g. `:6379`)
+  - `KV_REDIS_URL` (KV instance, e.g. `:6380` on the same Redis VM — sessions / cache / presence)
   - `SESSION_SECRET`
   - `STAGING_HOST=130.245.136.45`
   - `FRONTEND_URL=http://130.245.136.45`
@@ -120,6 +121,7 @@ Create `/etc/discord-staging.env`:
 sudo tee /etc/discord-staging.env >/dev/null <<'EOF'
 DATABASE_URL=...
 REDIS_URL=...
+KV_REDIS_URL=...
 SESSION_SECRET=...
 STAGING_HOST=130.245.136.45
 FRONTEND_URL=http://130.245.136.45

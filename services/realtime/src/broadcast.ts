@@ -14,20 +14,22 @@ export type PresenceBroadcastMessage = {
 
 /**
  * Publishes a presence change to the shared Redis channel.
- * All realtime instances subscribe and deliver to their local connections.
+ * Targets are looked up on the KV instance (presence:contexts:* / presence:guild:* / etc.)
+ * and the resulting envelope is published on the pubsub instance.
  */
 export async function broadcastPresenceChange(
-  redis: Redis,
+  kvRedis: Redis,
+  pubRedis: Redis,
   userId: string,
   status: PresenceStatus,
   awayMessage?: string
 ): Promise<void> {
-  const targets = await getPresenceTargets(redis, userId);
+  const targets = await getPresenceTargets(kvRedis, userId);
   // Always include the user themselves
   const targetSet = [...new Set([...targets, userId])];
 
   const message: PresenceBroadcastMessage = { type: "presence_update", userId, status, awayMessage, targets: targetSet };
-  await redis.publish(PRESENCE_BROADCAST_CHANNEL, JSON.stringify(message));
+  await pubRedis.publish(PRESENCE_BROADCAST_CHANNEL, JSON.stringify(message));
 }
 
 export { PRESENCE_BROADCAST_CHANNEL };

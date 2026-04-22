@@ -7,7 +7,7 @@ import fs from "fs";
 import multer from "multer";
 import { db } from "../db";
 import { users, identities } from "../db/schema";
-import { redis } from "../db/redis";
+import { kvRedis } from "../db/redis";
 import { eq, and, ilike, ne, inArray } from "drizzle-orm";
 import { requireAuth } from "../middleware/session";
 import { env } from "../config/env";
@@ -54,7 +54,7 @@ const FRONTEND_ROOT = `${env.FRONTEND_URL.replace(/\/$/, "")}/`;
 // ─── Helper: create session ───
 async function createSession(res: Response, internalId: string) {
   const token = uuidv4();
-  await redis.set(`session:${token}`, internalId, "EX", SESSION_TTL);
+  await kvRedis.set(`session:${token}`, internalId, "EX", SESSION_TTL);
   res.cookie("session_token", token, {
     httpOnly: true,
     maxAge: SESSION_TTL * 1000,
@@ -84,7 +84,7 @@ async function handleOAuthResult(
 
   // New OAuth identity — store temporarily so the user can create or link
   const tempToken = crypto.randomBytes(32).toString("hex");
-  await redis.set(
+  await kvRedis.set(
     `oauth_temp:${tempToken}`,
     JSON.stringify({ provider, providerId, email, displayName }),
     "EX",
@@ -215,7 +215,7 @@ router.post("/logout", async (req: Request, res: Response): Promise<void> => {
   const token = req.cookies?.session_token;
 
   if (token) {
-    await redis.del(`session:${token}`);
+    await kvRedis.del(`session:${token}`);
   }
 
   res.clearCookie("session_token");
@@ -228,7 +228,7 @@ router.post("/logout", async (req: Request, res: Response): Promise<void> => {
 
 router.get("/google", (_req: Request, res: Response) => {
   const state = generateState();
-  redis.set(`oauth_state:${state}`, "google", "EX", 600);
+  kvRedis.set(`oauth_state:${state}`, "google", "EX", 600);
   res.redirect(buildOAuth2AuthUrl(googleConfig, state));
 });
 
@@ -240,7 +240,7 @@ router.get("/google/callback", async (req: Request, res: Response): Promise<void
     return;
   }
 
-  const stored = await redis.get(`oauth_state:${state as string}`);
+  const stored = await kvRedis.get(`oauth_state:${state as string}`);
   if (!stored) {
     res.status(403).json({ error: "Invalid state" });
     return;
@@ -261,7 +261,7 @@ router.get("/google/callback", async (req: Request, res: Response): Promise<void
     res.status(403).json({ error: "Invalid state" });
     return;
   }
-  await redis.del(`oauth_state:${state as string}`);
+  await kvRedis.del(`oauth_state:${state as string}`);
 
   try {
     const tokenRes = await fetch(googleConfig.tokenUrl, {
@@ -310,7 +310,7 @@ router.get("/google/callback", async (req: Request, res: Response): Promise<void
 
 router.get("/github", (_req: Request, res: Response) => {
   const state = generateState();
-  redis.set(`oauth_state:${state}`, "github", "EX", 600);
+  kvRedis.set(`oauth_state:${state}`, "github", "EX", 600);
   res.redirect(buildOAuth2AuthUrl(githubConfig, state));
 });
 
@@ -322,7 +322,7 @@ router.get("/github/callback", async (req: Request, res: Response): Promise<void
     return;
   }
 
-  const stored = await redis.get(`oauth_state:${state as string}`);
+  const stored = await kvRedis.get(`oauth_state:${state as string}`);
   if (!stored) {
     res.status(403).json({ error: "Invalid state" });
     return;
@@ -343,7 +343,7 @@ router.get("/github/callback", async (req: Request, res: Response): Promise<void
     res.status(403).json({ error: "Invalid state" });
     return;
   }
-  await redis.del(`oauth_state:${state as string}`);
+  await kvRedis.del(`oauth_state:${state as string}`);
 
   try {
     const tokenRes = await fetch(githubConfig.tokenUrl, {
@@ -400,7 +400,7 @@ router.get("/oidc", async (_req: Request, res: Response): Promise<void> => {
     const state = generateState();
     const nonce = crypto.randomBytes(16).toString("hex");
 
-    await redis.set(
+    await kvRedis.set(
       `oauth_state:${state}`,
       JSON.stringify({ provider: "oidc", nonce }),
       "EX",
@@ -423,7 +423,7 @@ router.get("/oidc/callback", async (req: Request, res: Response): Promise<void> 
     return;
   }
 
-  const storedRaw = await redis.get(`oauth_state:${state}`);
+  const storedRaw = await kvRedis.get(`oauth_state:${state}`);
   if (!storedRaw) {
     res.status(403).json({ error: "Invalid state" });
     return;
@@ -436,7 +436,7 @@ router.get("/oidc/callback", async (req: Request, res: Response): Promise<void> 
     res.status(403).json({ error: "Invalid state" });
     return;
   }
-  await redis.del(`oauth_state:${state}`);
+  await kvRedis.del(`oauth_state:${state}`);
 
   const isLinkFlow = action === "link" && !!userId;
 
@@ -491,7 +491,7 @@ router.post("/oauth/complete", async (req: Request, res: Response): Promise<void
     return;
   }
 
-  const tempRaw = await redis.get(`oauth_temp:${temp_token}`);
+  const tempRaw = await kvRedis.get(`oauth_temp:${temp_token}`);
   if (!tempRaw) {
     res.status(400).json({ error: "Invalid or expired OAuth token" });
     return;
@@ -532,7 +532,7 @@ router.post("/oauth/complete", async (req: Request, res: Response): Promise<void
         provider_uid: providerId,
       });
 
-      await redis.del(`oauth_temp:${temp_token}`);
+      await kvRedis.del(`oauth_temp:${temp_token}`);
       await createSession(res, newUser.internal_id);
       res.status(201).json({ message: "Account created", internal_id: newUser.internal_id });
 
@@ -566,7 +566,7 @@ router.post("/oauth/complete", async (req: Request, res: Response): Promise<void
         provider_uid: providerId,
       });
 
-      await redis.del(`oauth_temp:${temp_token}`);
+      await kvRedis.del(`oauth_temp:${temp_token}`);
       await createSession(res, user.internal_id);
       res.status(200).json({ message: "OAuth linked to account", internal_id: user.internal_id });
 
@@ -593,14 +593,14 @@ router.post("/oauth/complete", async (req: Request, res: Response): Promise<void
 router.get("/link/google", requireAuth, (req: Request, res: Response) => {
   const { internal_id } = req.user as { internal_id: string };
   const state = generateState();
-  redis.set(`oauth_state:${state}`, JSON.stringify({ action: "link", provider: "google", userId: internal_id }), "EX", 600);
+  kvRedis.set(`oauth_state:${state}`, JSON.stringify({ action: "link", provider: "google", userId: internal_id }), "EX", 600);
   res.redirect(buildOAuth2AuthUrl(googleConfig, state));
 });
 
 router.get("/link/github", requireAuth, (req: Request, res: Response) => {
   const { internal_id } = req.user as { internal_id: string };
   const state = generateState();
-  redis.set(`oauth_state:${state}`, JSON.stringify({ action: "link", provider: "github", userId: internal_id }), "EX", 600);
+  kvRedis.set(`oauth_state:${state}`, JSON.stringify({ action: "link", provider: "github", userId: internal_id }), "EX", 600);
   res.redirect(buildOAuth2AuthUrl(githubConfig, state));
 });
 
@@ -609,7 +609,7 @@ router.get("/link/oidc", requireAuth, async (req: Request, res: Response): Promi
   try {
     const state = generateState();
     const nonce = crypto.randomBytes(16).toString("hex");
-    await redis.set(
+    await kvRedis.set(
       `oauth_state:${state}`,
       JSON.stringify({ action: "link", provider: "oidc", userId: internal_id, nonce }),
       "EX",

@@ -1,0 +1,5 @@
+- name: Restart Redis instances
+  ansible.builtin.systemd:
+    name: "redis-{{ item.name }}"
+    state: restarted
+  loop: "{{ redis_instances }}"

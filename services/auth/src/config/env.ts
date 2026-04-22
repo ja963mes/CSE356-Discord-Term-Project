@@ -14,6 +14,8 @@ const envSchema = z.object({
   PORT: z.string().default("3001"),
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string(),
+  /** KV redis (sessions, oauth_state, oauth_temp) — port 6380 instance. */
+  KV_REDIS_URL: z.string(),
   SESSION_SECRET: z.string().min(16),
   FRONTEND_URL: z.string().url().default("http://localhost:5173"),
 

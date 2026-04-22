@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { db } from "../src/db";
-import { redis } from "../src/redis";
+import { kvRedis } from "../src/redis";
 import { users, communities, communityMembers, channels, channelMembers } from "../src/db/schema";
 import { eq } from "drizzle-orm";
 import { cassandra } from "../src/cassandra";
@@ -30,7 +30,7 @@ export async function createTestUser(): Promise<TestUser> {
   });
 
   const sessionToken = randomUUID();
-  await redis.set(`session:${sessionToken}`, id, "EX", 3600);
+  await kvRedis.set(`session:${sessionToken}`, id, "EX", 3600);
 
   return { id, username, sessionToken, cookie: `session_token=${sessionToken}` };
 }
@@ -53,7 +53,7 @@ export async function addUserToChannel(userId: string, communityId: string, chan
 }
 
 export async function cleanupUser(userId: string): Promise<void> {
-  await redis.del(`session:*`); // quick cleanup for tests — fine since test redis is isolated
+  await kvRedis.del(`session:*`); // quick cleanup for tests — fine since test redis is isolated
   await db.delete(users).where(eq(users.internal_id, userId));
 }
 

@@ -1,6 +1,6 @@
 import http from "http";
 import { URL } from "url";
-import { redis } from "./redis";
+import { redis, kvRedis } from "./redis";
 import { logger } from "./logger";
 
 // Must match USER_FEED_SHARD_COUNT in realtime service
@@ -49,7 +49,7 @@ type WireDmEvent = DmEvent & { publishedAt: number };
 async function directHttpFanout(event: WireDmEvent): Promise<void> {
   let instances: Record<string, string>;
   try {
-    instances = await redis.hgetall(INSTANCE_REGISTRY_KEY);
+    instances = await kvRedis.hgetall(INSTANCE_REGISTRY_KEY);
   } catch (err) {
     logger.warn({ err, eventType: event.type }, "direct fanout: instance registry read failed");
     return;
@@ -131,7 +131,7 @@ async function enqueuePendingDmHint(
 ): Promise<void> {
   if (participantIds.length === 0) return;
   const payload = JSON.stringify(hint);
-  const pipeline = redis.pipeline();
+  const pipeline = kvRedis.pipeline();
   for (const userId of participantIds) {
     const key = `${PENDING_KEY_PREFIX}${userId}`;
     pipeline.lpush(key, payload);

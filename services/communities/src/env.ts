@@ -14,6 +14,8 @@ const envSchema = z.object({
   /** Base URL for search-service (Elasticsearch-backed directory). */
   SEARCH_SERVICE_URL: z.string().url().default("http://127.0.0.1:3004"),
   REDIS_URL: z.string(),
+  /** KV redis (sessions, comm:e:*, comm:c:*) — port 6380 instance. */
+  KV_REDIS_URL: z.string(),
   /** Pino log level: trace | debug | info | warn | error | fatal */
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).default("info"),
   /** Pretty-print logs for easier tail/journalctl reading. */

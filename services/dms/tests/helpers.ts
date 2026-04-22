@@ -7,7 +7,7 @@ import path from "path";
 dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL! });
-const redis = new Redis(process.env.REDIS_URL!);
+const kvRedis = new Redis(process.env.KV_REDIS_URL ?? process.env.REDIS_URL!);
 
 export type TestUser = { userId: string; username: string; sessionToken: string; cookie: string };
 
@@ -20,7 +20,7 @@ export async function createTestUser(username?: string): Promise<TestUser> {
     [userId, name, `${name}@test.com`]
   );
   const token = randomUUID();
-  await redis.set(`session:${token}`, userId, "EX", 3600);
+  await kvRedis.set(`session:${token}`, userId, "EX", 3600);
   return { userId, username: name, sessionToken: token, cookie: `session_token=${token}` };
 }
 
@@ -35,5 +35,5 @@ export async function cleanupUsers(userIds: string[]): Promise<void> {
 
 export async function closeConnections(): Promise<void> {
   await pool.end();
-  await redis.quit();
+  await kvRedis.quit();
 }

@@ -20,6 +20,8 @@ backend_log_level: info
 backend_log_pretty: "true"
 backend_database_url: "postgresql://postgres:123456789@10.0.2.247:6432/auth_db"
 backend_redis_url: "redis://10.0.3.49:6379"
+# kv instance on Redis VM — sessions + community read-cache + epoch keys.
+backend_kv_redis_url: "redis://10.0.3.49:6380"
 
 communities_port: "3002"
 communities_search_service_url: "http://10.0.2.26:3004"
