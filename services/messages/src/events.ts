@@ -47,9 +47,21 @@ export type ChannelMessageEvent =
     };
 
 export const publishChannelEvent = async (event: ChannelMessageEvent): Promise<void> => {
-  try {
-    await redis.publish(CHANNEL, JSON.stringify(event));
-  } catch (err) {
-    logger.error({ err, eventType: event.type }, "failed to publish channel event");
+  const payload = JSON.stringify(event);
+  const maxAttempts = 4;
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await redis.publish(CHANNEL, payload);
+      if (attempt > 1) logger.info({ eventType: event.type, attempt }, "channel event published after retry");
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (attempt >= maxAttempts) break;
+      const backoff = Math.min(50 * 2 ** (attempt - 1), 500);
+      logger.warn({ err, eventType: event.type, attempt, backoff }, "channel event publish failed; retrying");
+      await new Promise((r) => setTimeout(r, backoff));
+    }
   }
+  logger.error({ err: lastErr, eventType: event.type, attempts: maxAttempts }, "channel event publish failed after retries");
 };
