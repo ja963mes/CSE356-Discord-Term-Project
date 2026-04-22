@@ -1,6 +1,5 @@
 realtime_systemd_services:
   - discord-realtime
-  - discord-realtime-2
 
 realtime_workspace_build_commands:
   - npm run build --workspace realtime-service
