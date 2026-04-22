@@ -207,9 +207,6 @@ async function drainPendingDmHints(ws: WebSocket, userId: string): Promise<void>
   const ordered = [...rawEntries].reverse();
   logger.info({ userId, count: ordered.length }, "dm pending-queue drained");
 
-  const connId = wsConnId.get(ws);
-  const conn = connId ? connections.get(connId) : undefined;
-
   for (const raw of ordered) {
     if (ws.readyState !== WebSocket.OPEN) return;
     let hint: { type?: string; conversationId?: string; messageId?: string; authorId?: string; timeuuid?: string };
@@ -219,11 +216,6 @@ async function drainPendingDmHints(ws: WebSocket, userId: string): Promise<void>
       continue;
     }
     if (hint.type !== "dm:new_message" || !hint.messageId || !hint.authorId) continue;
-    if (conn) {
-      if (conn.recentMessageIds.has(hint.messageId)) continue;
-      conn.recentMessageIds.add(hint.messageId);
-      if (conn.recentMessageIds.size > WS_DEDUP_MAX) conn.recentMessageIds.clear();
-    }
     enqueueSend(
       ws,
       JSON.stringify({ ...hint, source: "pending" }),
@@ -274,9 +266,6 @@ async function replayMissedDmHintsFromDisconnect(
   const gracePeriodMs = closeCode === 1006 ? 30_000 : 5_000;
   const sinceMs = disconnectedAt - gracePeriodMs;
 
-  const connId = wsConnId.get(ws);
-  const conn = connId ? connections.get(connId) : undefined;
-
   let conversationIds: string[];
   try {
     conversationIds = await listUserDmConversationIds(userId);
@@ -306,11 +295,6 @@ async function replayMissedDmHintsFromDisconnect(
       // Cassandra returns newest-first; replay oldest-first for causal order.
       for (const row of [...rows].reverse()) {
         if (ws.readyState !== WebSocket.OPEN) return;
-        if (conn) {
-          if (conn.recentMessageIds.has(row.messageId)) continue;
-          conn.recentMessageIds.add(row.messageId);
-          if (conn.recentMessageIds.size > WS_DEDUP_MAX) conn.recentMessageIds.clear();
-        }
         enqueueSend(
           ws,
           JSON.stringify({
@@ -347,10 +331,17 @@ function enqueueSend(
   }
   const conn = connections.get(cid);
   if (!conn || ws.readyState !== WebSocket.OPEN) {
-    if (label === "dm_event") {
+    if (label === "dm_event" || label === "dm_shard") {
       logger.warn({ label, readyState: ws.readyState, ...ctx }, "ws not open, dropping send");
     }
     return;
+  }
+  // Dedup here (after open check) so a closing socket doesn't poison the set
+  // and block subsequent delivery attempts via pubsub/catchup/pending paths.
+  if (ctx?.messageId) {
+    if (conn.recentMessageIds.has(ctx.messageId)) return;
+    conn.recentMessageIds.add(ctx.messageId);
+    if (conn.recentMessageIds.size > WS_DEDUP_MAX) conn.recentMessageIds.clear();
   }
   const cap = important ? WS_QUEUE_CAP_IMPORTANT : WS_QUEUE_CAP_BEST_EFFORT;
   if (conn.outboundQueue.length >= cap) {
@@ -460,11 +451,6 @@ function fanOutDmEventLocal(
     for (const connId of conns) {
       const conn = connections.get(connId);
       if (conn) {
-        if (event.type === "dm:message:create" && dmMsg?.messageId) {
-          if (conn.recentMessageIds.has(dmMsg.messageId)) continue;
-          conn.recentMessageIds.add(dmMsg.messageId);
-          if (conn.recentMessageIds.size > WS_DEDUP_MAX) conn.recentMessageIds.clear();
-        }
         enqueueSend(conn.ws, outgoing, "dm_event", {
           userId: targetUid,
           connId,
@@ -519,11 +505,6 @@ function deliverDmEventToUser(
   for (const connId of conns) {
     const conn = connections.get(connId);
     if (!conn) continue;
-    if (dmMsg?.messageId) {
-      if (conn.recentMessageIds.has(dmMsg.messageId)) continue;
-      conn.recentMessageIds.add(dmMsg.messageId);
-      if (conn.recentMessageIds.size > WS_DEDUP_MAX) conn.recentMessageIds.clear();
-    }
     enqueueSend(conn.ws, outgoing, "dm_shard", { userId: normId, connId, messageId: dmMsg?.messageId }, true);
   }
 }

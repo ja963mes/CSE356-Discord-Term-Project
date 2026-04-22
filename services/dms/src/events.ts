@@ -30,7 +30,7 @@ const realtimeHttpAgent = new http.Agent({
  * on the next reconnect, without waiting for Cassandra catch-up.
  */
 const PENDING_KEY_PREFIX = "dm:pending:";
-const PENDING_MAX_PER_USER = 100;
+const PENDING_MAX_PER_USER = 1000;
 const PENDING_TTL_SECONDS = 7200;
 
 /**
