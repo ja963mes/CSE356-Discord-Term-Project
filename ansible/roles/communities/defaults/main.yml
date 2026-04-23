@@ -1,0 +1,7 @@
+communities_systemd_services:
+  - discord-communities
+  - discord-create-community
+
+communities_workspace_build_commands:
+  - npm run build --workspace communities-service
+  - npm run build --workspace create-community-service
