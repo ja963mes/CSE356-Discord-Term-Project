@@ -127,7 +127,7 @@ function postDeliverDm(baseUrl: string, body: string): Promise<void> {
 
 async function enqueuePendingDmHint(
   participantIds: string[],
-  hint: { type: "dm:new_message"; conversationId: string; messageId: string; authorId: string; timeuuid: string }
+  hint: { type: "dm:message:create"; conversationId: string; participantIds: string[]; message: { messageId: string; authorId: string; content: string; attachments: string[]; createdAt: string; timeuuid: string } }
 ): Promise<void> {
   if (participantIds.length === 0) return;
   const payload = JSON.stringify(hint);
@@ -142,7 +142,7 @@ async function enqueuePendingDmHint(
     await pipeline.exec();
   } catch (err) {
     logger.warn(
-      { err, conversationId: hint.conversationId, messageId: hint.messageId, participantCount: participantIds.length },
+      { err, conversationId: hint.conversationId, messageId: hint.message.messageId, participantCount: participantIds.length },
       "dm pending-queue enqueue failed"
     );
   }
@@ -279,13 +279,7 @@ export async function publishDmEvent(event: DmEvent): Promise<void> {
       },
       "dm:message:create published to redis"
     );
-    await enqueuePendingDmHint(event.participantIds, {
-      type: "dm:new_message",
-      conversationId: event.conversationId,
-      messageId: event.message.messageId,
-      authorId: event.message.authorId,
-      timeuuid: event.message.timeuuid,
-    });
+    await enqueuePendingDmHint(event.participantIds, event);
   }
   void directHttpFanout(wireEvent);
 }
