@@ -209,20 +209,23 @@ async function drainPendingDmHints(ws: WebSocket, userId: string): Promise<void>
 
   for (const raw of ordered) {
     if (ws.readyState !== WebSocket.OPEN) return;
-    let hint: { type?: string; conversationId?: string; messageId?: string; authorId?: string; timeuuid?: string };
+    let hint: { type?: string; conversationId?: string; messageId?: string; authorId?: string; timeuuid?: string; message?: { messageId?: string } };
     try {
       hint = JSON.parse(raw);
     } catch {
       continue;
     }
-    if (hint.type !== "dm:new_message" || !hint.messageId || !hint.authorId) continue;
-    enqueueSend(
-      ws,
-      JSON.stringify({ ...hint, source: "pending" }),
-      "dm_pending",
-      { userId, conversationId: hint.conversationId, messageId: hint.messageId },
-      true
-    );
+    if (hint.type === "dm:message:create") {
+      const msgId = hint.message?.messageId;
+      if (!msgId) continue;
+      enqueueSend(ws, JSON.stringify({ ...hint, source: "pending" }), "dm_pending",
+        { userId, conversationId: hint.conversationId, messageId: msgId }, true);
+    } else if (hint.type === "dm:new_message") {
+      // backward compat: old hints stored before this fix
+      if (!hint.messageId || !hint.authorId) continue;
+      enqueueSend(ws, JSON.stringify({ ...hint, source: "pending" }), "dm_pending",
+        { userId, conversationId: hint.conversationId, messageId: hint.messageId }, true);
+    }
   }
 }
 
@@ -298,11 +301,17 @@ async function replayMissedDmHintsFromDisconnect(
         enqueueSend(
           ws,
           JSON.stringify({
-            type: "dm:new_message",
+            type: "dm:message:create",
             conversationId,
-            messageId: row.messageId,
-            authorId: row.authorId,
-            timeuuid: row.timeuuid,
+            participantIds: [],
+            message: {
+              messageId: row.messageId,
+              authorId: row.authorId,
+              content: row.content,
+              attachments: row.attachments,
+              timeuuid: row.timeuuid,
+              createdAt: "",
+            },
             source: "catchup",
           }),
           "dm_catchup",
