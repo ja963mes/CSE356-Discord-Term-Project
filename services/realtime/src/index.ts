@@ -422,17 +422,7 @@ function fanOutDmEventLocal(
     ? event.message as { messageId?: string; authorId?: string; timeuuid?: string; createdAt?: string }
     : null;
 
-  const outgoing =
-    event.type === "dm:message:create"
-      ? JSON.stringify({
-          type: "dm:new_message",
-          conversationId: event.conversationId,
-          messageId: dmMsg?.messageId,
-          authorId: dmMsg?.authorId,
-          timeuuid: dmMsg?.timeuuid,
-          source,
-        })
-      : JSON.stringify(event);
+  const outgoing = JSON.stringify({ ...event, source });
 
   let dmSentCount = 0;
   let dmNotConnectedCount = 0;
@@ -498,9 +488,7 @@ function deliverDmEventToUser(
     ? event.message as { messageId?: string; authorId?: string; timeuuid?: string }
     : null;
 
-  const outgoing = event.type === "dm:message:create"
-    ? JSON.stringify({ type: "dm:new_message", conversationId: event.conversationId, messageId: dmMsg?.messageId, authorId: dmMsg?.authorId, timeuuid: dmMsg?.timeuuid, source })
-    : JSON.stringify(event);
+  const outgoing = JSON.stringify({ ...event, source });
 
   for (const connId of conns) {
     const conn = connections.get(connId);
