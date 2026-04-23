@@ -98,6 +98,7 @@ type ConnEntry = {
   recentMessageIds: Set<string>;
   outboundQueue: string[];
   draining: boolean;
+  createdAtMs: number;
 };
 
 // Track active connections: connId -> ConnEntry
@@ -106,6 +107,7 @@ const connections = new Map<string, ConnEntry>();
 const userConnections = new Map<string, Set<string>>();
 // WebSocket → connId reverse lookup for enqueueSend called with only ws
 const wsConnId = new WeakMap<WebSocket, string>();
+const workerLabel = cluster.worker?.id ?? "primary";
 
 /** Normalize user ids for Set membership (Postgres JSON vs session can differ in UUID case). */
 function normUserId(id: string): string {
@@ -116,7 +118,12 @@ function normUserId(id: string): string {
  *  The close event fires asynchronously after terminate(), running the Redis
  *  cleanup and writing the offline marker. Sync eviction ensures no further
  *  fanout reaches this socket before that happens. */
-function evictAndTerminate(connId: string, ws: WebSocket): void {
+function removeLocalConnection(
+  connId: string,
+  ws: WebSocket,
+  reason: string,
+  extra?: Record<string, unknown>
+): { existed: boolean; userId?: string; ageMs?: number; queueLen?: number } {
   const conn = connections.get(connId);
   connections.delete(connId);
   wsConnId.delete(ws);
@@ -127,7 +134,28 @@ function evictAndTerminate(connId: string, ws: WebSocket): void {
       userConns.delete(connId);
       if (userConns.size === 0) userConnections.delete(normId);
     }
+    const ageMs = Date.now() - conn.createdAtMs;
+    logger.info(
+      {
+        reason,
+        connId,
+        userId: conn.userId,
+        queueLen: conn.outboundQueue.length,
+        ageMs,
+        readyState: ws.readyState,
+        instanceId,
+        workerId: workerLabel,
+        ...extra,
+      },
+      "realtime connection removed from local maps"
+    );
+    return { existed: true, userId: conn.userId, ageMs, queueLen: conn.outboundQueue.length };
   }
+  return { existed: false };
+}
+
+function evictAndTerminate(connId: string, ws: WebSocket, reason = "evict_and_terminate", extra?: Record<string, unknown>): void {
+  removeLocalConnection(connId, ws, reason, extra);
   ws.terminate();
 }
 
@@ -148,7 +176,7 @@ function flushQueue(connId: string): void {
     // A closing/closed socket can remain in local maps until the async close
     // handler runs. Evict immediately so subsequent DM fanout does not keep
     // selecting this stale connId and dropping important sends.
-    evictAndTerminate(connId, ws);
+    evictAndTerminate(connId, ws, "flush_queue_non_open", { queueLen: outboundQueue.length });
     return;
   }
 
@@ -159,7 +187,7 @@ function flushQueue(connId: string): void {
   while (outboundQueue.length > 0 && sent < WS_DRAIN_BATCH) {
     if (ws.bufferedAmount >= WS_BACKPRESSURE_KILL_BYTES) {
       logger.warn({ connId, userId: conn.userId, bufferedAmount: ws.bufferedAmount }, "ws backpressure kill");
-      evictAndTerminate(connId, ws);
+      evictAndTerminate(connId, ws, "backpressure_kill", { bufferedAmount: ws.bufferedAmount, queueLen: outboundQueue.length });
       return;
     }
 
@@ -168,7 +196,7 @@ function flushQueue(connId: string): void {
       ws.send(payload);
     } catch (err) {
       logger.warn({ err, connId, userId: conn.userId }, "ws send failed; terminating");
-      evictAndTerminate(connId, ws);
+      evictAndTerminate(connId, ws, "send_failed", { queueLen: outboundQueue.length });
       return;
     }
     sent++;
@@ -221,6 +249,22 @@ async function drainPendingDmHints(ws: WebSocket, userId: string): Promise<void>
     if (hint.type === "dm:message:create") {
       const msgId = hint.message?.messageId;
       if (!msgId) continue;
+      const publishedAt = typeof (hint as { publishedAt?: unknown }).publishedAt === "number"
+        ? (hint as { publishedAt: number }).publishedAt
+        : undefined;
+      logger.info(
+        {
+          userId,
+          conversationId: hint.conversationId,
+          messageId: msgId,
+          publishedAt,
+          recoveryLatencyMs: publishedAt !== undefined ? Date.now() - publishedAt : undefined,
+          source: "pending",
+          instanceId,
+          workerId: workerLabel,
+        },
+        "dm pending-queue replaying message"
+      );
       enqueueSend(ws, JSON.stringify({ ...hint, source: "pending" }), "dm_pending",
         { userId, conversationId: hint.conversationId, messageId: msgId }, true);
     } else if (hint.type === "dm:new_message") {
@@ -264,6 +308,7 @@ async function replayMissedDmHintsFromDisconnect(
   disconnectedAt: number,
   closeCode: number
 ): Promise<void> {
+  const replayStartedAt = Date.now();
   const MAX_CONVERSATIONS = 50;
   const CONCURRENCY = 5;
   // Abnormal closes (1006) are detected by heartbeat up to 25s late; use a
@@ -282,6 +327,7 @@ async function replayMissedDmHintsFromDisconnect(
 
   const queue = conversationIds.slice(0, MAX_CONVERSATIONS);
   logger.info({ userId, conversationCount: queue.length, sinceMs, gracePeriodMs, closeCode }, "dm catch-up started");
+  let replayedMessageCount = 0;
 
   let idx = 0;
   const worker = async (): Promise<void> => {
@@ -321,10 +367,24 @@ async function replayMissedDmHintsFromDisconnect(
           { userId, conversationId, messageId: row.messageId },
           true
         );
+        replayedMessageCount++;
       }
     }
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
+  logger.info(
+    {
+      userId,
+      conversationCount: queue.length,
+      replayedMessageCount,
+      durationMs: Date.now() - replayStartedAt,
+      sinceMs,
+      closeCode,
+      instanceId,
+      workerId: workerLabel,
+    },
+    "dm catch-up completed"
+  );
 }
 
 function enqueueSend(
@@ -343,11 +403,30 @@ function enqueueSend(
   }
   const conn = connections.get(cid);
   if (!conn || ws.readyState !== WebSocket.OPEN) {
-    if (label === "dm_event" || label === "dm_shard") {
-      logger.warn({ label, readyState: ws.readyState, ...ctx }, "ws not open, dropping send");
-    }
+    let evicted = false;
     if (conn && ws.readyState !== WebSocket.OPEN) {
-      evictAndTerminate(cid, ws);
+      evictAndTerminate(cid, ws, label === "dm_event" || label === "dm_shard" ? "enqueue_non_open_dm" : "enqueue_non_open", {
+        label,
+        ...ctx,
+        queueLen: conn.outboundQueue.length,
+      });
+      evicted = true;
+    }
+    if (label === "dm_event" || label === "dm_shard") {
+      logger.warn(
+        {
+          label,
+          readyState: ws.readyState,
+          queueLen: conn?.outboundQueue.length,
+          connAgeMs: conn ? Date.now() - conn.createdAtMs : undefined,
+          localConnectionPresent: Boolean(conn),
+          evicted,
+          instanceId,
+          workerId: workerLabel,
+          ...ctx,
+        },
+        "ws not open, dropping send"
+      );
     }
     return;
   }
@@ -453,6 +532,21 @@ function fanOutDmEventLocal(
       }
       continue;
     }
+    logger.info(
+      {
+        source,
+        eventType: event.type,
+        targetUid,
+        localConnectionCount: conns.size,
+        chosenConnIds: [...conns],
+        conversationId: event.conversationId,
+        messageId: dmMsg?.messageId,
+        publishedAt,
+        instanceId,
+        workerId: workerLabel,
+      },
+      "dm fanout: local recipient routing decision"
+    );
     for (const connId of conns) {
       const conn = connections.get(connId);
       if (conn) {
@@ -481,6 +575,22 @@ function fanOutDmEventLocal(
     }
   }
 
+  if (event.type === "dm:message:create") {
+    logger.info(
+      {
+        source,
+        conversationId: event.conversationId,
+        messageId: dmMsg?.messageId,
+        delivered: dmSentCount,
+        localMiss: dmNotConnectedCount,
+        totalTargets: targetUserIds.size,
+        instanceId,
+        workerId: workerLabel,
+      },
+      "dm fanout: local delivery summary"
+    );
+  }
+
   return { delivered: dmSentCount, localMiss: dmNotConnectedCount, totalTargets: targetUserIds.size };
 }
 
@@ -496,14 +606,42 @@ function deliverDmEventToUser(
   source: DmFanoutSource
 ): void {
   const normId = normUserId(targetUserId);
-  const conns = userConnections.get(normId);
-  if (!conns || conns.size === 0) return;
-
   const dmMsg = event.type === "dm:message:create" && event.message && typeof event.message === "object"
     ? event.message as { messageId?: string; authorId?: string; timeuuid?: string }
     : null;
+  const conns = userConnections.get(normId);
+  if (!conns || conns.size === 0) {
+    logger.info(
+      {
+        source,
+        targetUserId: normId,
+        localConnectionCount: 0,
+        conversationId: event.conversationId,
+        messageId: dmMsg?.messageId,
+        publishedAt: event.publishedAt,
+        instanceId,
+        workerId: workerLabel,
+      },
+      "dm shard: no local connections for target"
+    );
+    return;
+  }
 
   const outgoing = JSON.stringify({ ...event, source });
+  logger.info(
+    {
+      source,
+      targetUserId: normId,
+      localConnectionCount: conns.size,
+      chosenConnIds: [...conns],
+      conversationId: event.conversationId,
+      messageId: dmMsg?.messageId,
+      publishedAt: event.publishedAt,
+      instanceId,
+      workerId: workerLabel,
+    },
+    "dm shard: recipient routing decision"
+  );
 
   for (const connId of conns) {
     const conn = connections.get(connId);
@@ -674,25 +812,29 @@ wss.on("connection", async (ws, req) => {
   // Get the user's current presence before registering the new connection
   const prevStatus = await computePresence(kvRedis, userId, liveInstanceIds);
 
-  connections.set(connId, { ws, userId, recentMessageIds: new Set(), outboundQueue: [], draining: false });
+  connections.set(connId, { ws, userId, recentMessageIds: new Set(), outboundQueue: [], draining: false, createdAtMs: Date.now() });
   wsConnId.set(ws, connId);
   const normId = normUserId(userId);
   if (!userConnections.has(normId)) userConnections.set(normId, new Set());
   userConnections.get(normId)!.add(connId);
+  logger.info(
+    {
+      userId,
+      connId,
+      localConnectionCount: userConnections.get(normId)?.size ?? 0,
+      totalConnections: connections.size,
+      instanceId,
+      workerId: workerLabel,
+    },
+    "realtime connection added to local maps"
+  );
 
   // Register close/error handlers immediately after adding to the map so that if the socket
   // closes during any subsequent await the cleanup always runs and the connection is not leaked.
   ws.on("close", async (closeCode: number) => {
     // Remove from local maps synchronously before any await so fanout never
     // finds this closed socket during the async gap.
-    connections.delete(connId);
-    wsConnId.delete(ws);
-    const closeNormId = normUserId(userId);
-    const userConns = userConnections.get(closeNormId);
-    if (userConns) {
-      userConns.delete(connId);
-      if (userConns.size === 0) userConnections.delete(closeNormId);
-    }
+    const removal = removeLocalConnection(connId, ws, "close_event", { closeCode });
     logger.info({ userId, connId, closeCode, total: connections.size }, "client disconnected");
     const prev = await computePresence(kvRedis, userId, liveInstanceIds);
     await removeConnection(kvRedis, userId, connId, instanceId);
@@ -714,6 +856,17 @@ wss.on("connection", async (ws, req) => {
         JSON.stringify({ disconnectedAt: Date.now(), closeCode }),
         "EX",
         7200
+      );
+      logger.info(
+        {
+          userId,
+          connId,
+          closeCode,
+          removalAgeMs: removal.ageMs,
+          instanceId,
+          workerId: workerLabel,
+        },
+        "presence offline marker written"
       );
     }
   });

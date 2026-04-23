@@ -26,6 +26,7 @@ type JsonRecord = Record<string, unknown>;
 
 const pg = new Pool({ connectionString: DATABASE_URL });
 const kvRedis = new Redis(KV_REDIS_URL);
+const createdConversationIds = new Set<string>();
 
 async function createTestUser(prefix: string): Promise<TestUser> {
   const userId = randomUUID();
@@ -40,6 +41,11 @@ async function createTestUser(prefix: string): Promise<TestUser> {
 }
 
 async function cleanupUsers(userIds: string[]): Promise<void> {
+  if (createdConversationIds.size > 0) {
+    const conversationIds = [...createdConversationIds];
+    await pg.query(`DELETE FROM dm_participants WHERE conversation_id = ANY($1::uuid[])`, [conversationIds]);
+    await pg.query(`DELETE FROM direct_conversations WHERE id = ANY($1::uuid[])`, [conversationIds]);
+  }
   if (userIds.length === 0) return;
   await pg.query(`DELETE FROM users WHERE internal_id = ANY($1::uuid[])`, [userIds]);
 }
@@ -118,6 +124,7 @@ async function createConversation(sender: TestUser, recipient: TestUser): Promis
   });
   const conversation = body.conversation as { conversationId?: string } | undefined;
   if (!conversation?.conversationId) throw new Error(`Conversation creation returned no id: ${JSON.stringify(body)}`);
+  createdConversationIds.add(conversation.conversationId);
   return conversation.conversationId;
 }
 

@@ -56,6 +56,17 @@ async function directHttpFanout(event: WireDmEvent): Promise<void> {
   }
   const entries = Object.entries(instances);
   if (entries.length === 0) return;
+  if (event.type === "dm:message:create") {
+    logger.info(
+      {
+        conversationId: event.conversationId,
+        messageId: event.message.messageId,
+        registrySize: entries.length,
+        registryTargets: entries.map(([instanceId, url]) => ({ instanceId, url })),
+      },
+      "direct fanout: registry snapshot"
+    );
+  }
 
   const body = JSON.stringify({ event });
   await Promise.all(
@@ -127,7 +138,7 @@ function postDeliverDm(baseUrl: string, body: string): Promise<void> {
 
 async function enqueuePendingDmHint(
   participantIds: string[],
-  hint: { type: "dm:message:create"; conversationId: string; participantIds: string[]; message: { messageId: string; authorId: string; content: string; attachments: string[]; createdAt: string; timeuuid: string } }
+  hint: { type: "dm:message:create"; conversationId: string; participantIds: string[]; message: { messageId: string; authorId: string; content: string; attachments: string[]; createdAt: string; timeuuid: string }; publishedAt?: number }
 ): Promise<void> {
   if (participantIds.length === 0) return;
   const payload = JSON.stringify(hint);
@@ -140,6 +151,16 @@ async function enqueuePendingDmHint(
   }
   try {
     await pipeline.exec();
+    logger.info(
+      {
+        conversationId: hint.conversationId,
+        messageId: hint.message.messageId,
+        participantIds,
+        participantCount: participantIds.length,
+        publishedAt: hint.publishedAt,
+      },
+      "dm pending-queue enqueued"
+    );
   } catch (err) {
     logger.warn(
       { err, conversationId: hint.conversationId, messageId: hint.message.messageId, participantCount: participantIds.length },
@@ -248,7 +269,7 @@ export async function publishDmEvent(event: DmEvent): Promise<void> {
   // Enqueue pending hint BEFORE publishing so the fallback is always in place,
   // even if the Redis publish fails. Realtime drains this on reconnect.
   if (event.type === "dm:message:create") {
-    await enqueuePendingDmHint(event.participantIds, event);
+    await enqueuePendingDmHint(event.participantIds, wireEvent as Extract<WireDmEvent, { type: "dm:message:create" }>);
   }
 
   // Per-participant shard publish. Each realtime instance subscribes to all
@@ -260,7 +281,20 @@ export async function publishDmEvent(event: DmEvent): Promise<void> {
     try {
       const pipeline = redis.pipeline();
       for (const participantId of participants) {
-        pipeline.publish(userFeedChannel(participantId), JSON.stringify({ targetUserId: participantId, event: wireEvent }));
+        const channel = userFeedChannel(participantId);
+        if (event.type === "dm:message:create") {
+          logger.info(
+            {
+              conversationId: event.conversationId,
+              messageId: event.message.messageId,
+              participantId,
+              shardChannel: channel,
+              publishedAt,
+            },
+            "dm shard publish target"
+          );
+        }
+        pipeline.publish(channel, JSON.stringify({ targetUserId: participantId, event: wireEvent }));
       }
       await pipeline.exec();
       publishErr = undefined;
