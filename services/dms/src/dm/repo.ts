@@ -145,7 +145,7 @@ export async function listDmMessages(params: {
     consistency: readConsistency,
   });
 
-  const mapped = result.rows.map(rowToMessage).filter((r): r is DmMessageRow => r !== null);
+  const mapped = result.rows.map(rowToMessage).filter((r): r is DmMessageRow => r !== null && !r.isDeleted);
   const lastRawRow = result.rows[result.rows.length - 1];
   const lastRowTimeuuid =
     result.rows.length === params.limit && lastRawRow

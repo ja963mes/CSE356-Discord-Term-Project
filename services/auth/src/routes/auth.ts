@@ -201,7 +201,7 @@ router.post("/login", async (req: Request, res: Response): Promise<void> => {
     }
 
     await createSession(res, user.internal_id);
-    res.status(200).json({ message: "Logged in successfully", internal_id: user.internal_id });
+    res.status(200).json({ message: "Logged in successfully", internal_id: user.internal_id, username: user.username });
   } catch (err) {
     logRouteError("POST /auth/login failed", err, {
       username: typeof username === "string" ? username : undefined,
