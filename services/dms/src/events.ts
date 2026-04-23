@@ -248,13 +248,7 @@ export async function publishDmEvent(event: DmEvent): Promise<void> {
   // Enqueue pending hint BEFORE publishing so the fallback is always in place,
   // even if the Redis publish fails. Realtime drains this on reconnect.
   if (event.type === "dm:message:create") {
-    await enqueuePendingDmHint(event.participantIds, {
-      type: "dm:new_message",
-      conversationId: event.conversationId,
-      messageId: event.message.messageId,
-      authorId: event.message.authorId,
-      timeuuid: event.message.timeuuid,
-    });
+    await enqueuePendingDmHint(event.participantIds, event);
   }
 
   // Per-participant shard publish. Each realtime instance subscribes to all
@@ -291,7 +285,6 @@ export async function publishDmEvent(event: DmEvent): Promise<void> {
       },
       "dm:message:create published to redis"
     );
-    await enqueuePendingDmHint(event.participantIds, event);
   }
   void directHttpFanout(wireEvent);
 }
