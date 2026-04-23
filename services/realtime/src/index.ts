@@ -145,7 +145,10 @@ function flushQueue(connId: string): void {
   const { ws, outboundQueue } = conn;
 
   if (ws.readyState !== WebSocket.OPEN) {
-    conn.draining = false;
+    // A closing/closed socket can remain in local maps until the async close
+    // handler runs. Evict immediately so subsequent DM fanout does not keep
+    // selecting this stale connId and dropping important sends.
+    evictAndTerminate(connId, ws);
     return;
   }
 
@@ -342,6 +345,9 @@ function enqueueSend(
   if (!conn || ws.readyState !== WebSocket.OPEN) {
     if (label === "dm_event" || label === "dm_shard") {
       logger.warn({ label, readyState: ws.readyState, ...ctx }, "ws not open, dropping send");
+    }
+    if (conn && ws.readyState !== WebSocket.OPEN) {
+      evictAndTerminate(cid, ws);
     }
     return;
   }
