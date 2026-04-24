@@ -9,7 +9,8 @@
 #
 # All other services run on dedicated VMs — proxied via private IP:
 #   messages   -> 10.0.3.199:80 (messages VM nginx)
-#   realtime   -> 10.0.3.180:80 (realtime VM nginx, load-balances :3005/:3009)
+#   realtime   -> 10.0.3.180:80 (realtime VM nginx 1, load-balances :3005/:3009/:3013/:3017)
+#              -> 10.0.1.49:80  (realtime VM nginx 2, load-balances :3005/:3009/:3013/:3017)
 #   dms        -> 10.0.3.52:80  (frontend nginx proxies directly)
 #   read-state -> 10.0.1.189:80 (frontend nginx proxies directly)
 #   auth       -> 10.0.3.158:80 (frontend nginx proxies directly)
@@ -31,9 +32,10 @@ upstream backend_messages {
     server 10.0.3.199:80;
     keepalive 32;
 }
-# WebSocket: realtime VM nginx on :80 load-balances across 4 local instances.
+# WebSocket: two realtime VMs, each running 4 local instances behind their own nginx.
 upstream backend_realtime {
     server 10.0.3.180:80;
+    server 10.0.1.49:80;
     keepalive 16;
 }
 

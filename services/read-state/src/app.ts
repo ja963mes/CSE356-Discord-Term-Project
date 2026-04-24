@@ -202,14 +202,21 @@ app.post("/read-state/dms/:conversationId/read", requireAuth, async (req, res) =
   }
 
   const participantIds = await listDmParticipantIdsForEvent(parsed.data);
-  await redis.publish("dm:events", JSON.stringify({
+  const USER_FEED_SHARD_COUNT = 20;
+  const event = {
     type: "dm:read-state:update",
     conversationId: parsed.data,
     participantIds,
     userId: req.user!.internal_id,
     messageId,
     timeuuid: body.data.timeuuid,
-  }));
+  };
+  const pipeline = redis.pipeline();
+  for (const participantId of participantIds) {
+    const shard = parseInt(participantId.replace(/-/g, "").substring(0, 8), 16) % USER_FEED_SHARD_COUNT;
+    pipeline.publish(`dm:userfeed:${shard}`, JSON.stringify({ targetUserId: participantId, event }));
+  }
+  await pipeline.exec();
 
   res.status(204).send();
 });
