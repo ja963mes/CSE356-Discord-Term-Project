@@ -12,6 +12,7 @@
 
 import Redis from "ioredis";
 import { pg } from "./db";
+import { env } from "./env";
 import { logger } from "./logger";
 
 // Defensive cap on SUNION result size. A single user in many large communities
@@ -252,6 +253,22 @@ async function fetchChannelIds(userId: string): Promise<string[]> {
 
 async function fetchConversationIds(userId: string): Promise<string[]> {
   try {
+    // When DM pruning is on, skip DMs with no activity in the last
+    // DORMANT_DM_WINDOW_DAYS. `direct_conversations.updated_at` is touched on
+    // every message insert (dms/dm/service.ts:createMessage → touchConversation),
+    // so it stands in for "last_message_at". Dormant DMs re-enter presence
+    // scope via the dm:message:create shard handler in index.ts.
+    if (env.ENABLE_DORMANT_DM_PRUNING) {
+      const result = await pg.query<{ conversation_id: string }>(
+        `SELECT dp.conversation_id
+         FROM dm_participants dp
+         INNER JOIN direct_conversations dc ON dc.id = dp.conversation_id
+         WHERE dp.user_id = $1
+           AND dc.updated_at > now() - ($2 || ' days')::interval`,
+        [userId, String(env.DORMANT_DM_WINDOW_DAYS)]
+      );
+      return result.rows.map((r) => r.conversation_id);
+    }
     const result = await pg.query<{ conversation_id: string }>(
       `SELECT conversation_id FROM dm_participants WHERE user_id = $1`,
       [userId]

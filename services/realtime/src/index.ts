@@ -1182,6 +1182,20 @@ redisSub.on("message", (channel, message) => {
         void unsubscribeDm(kvRedis, event.conversationId as string, leavingUserId);
       }
     }
+
+    // Dormant-DM resurrection: when a message lands in a conversation we
+    // pruned from this user's presence scope on connect, re-add it. Gated on
+    // "user is locally connected" so we don't spam SADDs from every instance
+    // for the same message. Idempotent — SADD against the already-populated
+    // context/dm sets is a no-op for active DMs.
+    if (event.type === "dm:message:create" && env.ENABLE_DORMANT_DM_PRUNING) {
+      const conversationId = event.conversationId as string | undefined;
+      if (conversationId && userConnections.has(normUserId(targetUserId))) {
+        void subscribeDm(kvRedis, conversationId, [targetUserId]).catch((err) =>
+          logger.warn({ err, conversationId, targetUserId }, "dormant-dm resubscribe failed")
+        );
+      }
+    }
     return;
   }
 });
