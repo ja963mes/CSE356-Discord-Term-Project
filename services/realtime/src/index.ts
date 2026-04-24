@@ -15,6 +15,7 @@ import {
   setAway,
   clearAway,
   computePresence,
+  IDLE_THRESHOLD_MS,
   PresenceStatus,
 } from "./presence";
 import { broadcastPresenceChange, PRESENCE_BROADCAST_CHANNEL, PresenceBroadcastMessage } from "./broadcast";
@@ -106,6 +107,15 @@ const connections = new Map<string, ConnEntry>();
 const userConnections = new Map<string, Set<string>>();
 // WebSocket → connId reverse lookup for enqueueSend called with only ws
 const wsConnId = new WeakMap<WebSocket, string>();
+
+// Per-user idle timer (replaces the old 30s global sweep). Scheduled on each
+// activity event; when it fires, recompute presence once and broadcast if it
+// flipped online→idle. Cluster-wide correctness still lives in computePresence
+// (HGETALL of the shared presence:conns hash) — per-instance timers just decide
+// WHEN to call it, so HGETALL now fires only near real transitions instead of
+// every 30s for every connected user on every instance.
+const IDLE_CHECK_GRACE_MS = 2_000;
+const userIdleTimers = new Map<string, NodeJS.Timeout>();
 
 /** Normalize user ids for Set membership (Postgres JSON vs session can differ in UUID case). */
 function normUserId(id: string): string {
@@ -507,6 +517,38 @@ async function updateAndBroadcast(userId: string, prevStatus: PresenceStatus): P
   }
 }
 
+function scheduleUserIdleCheck(userId: string): void {
+  const norm = normUserId(userId);
+  const existing = userIdleTimers.get(norm);
+  if (existing) clearTimeout(existing);
+  const t = setTimeout(() => {
+    userIdleTimers.delete(norm);
+    void runUserIdleCheck(userId);
+  }, IDLE_THRESHOLD_MS + IDLE_CHECK_GRACE_MS);
+  userIdleTimers.set(norm, t);
+}
+
+function clearUserIdleTimer(userId: string): void {
+  const norm = normUserId(userId);
+  const existing = userIdleTimers.get(norm);
+  if (existing) {
+    clearTimeout(existing);
+    userIdleTimers.delete(norm);
+  }
+}
+
+async function runUserIdleCheck(userId: string): Promise<void> {
+  // Only recompute if the user still has local connections — if they don't,
+  // the disconnect path already handled the offline transition.
+  if (!userConnections.has(normUserId(userId))) return;
+  try {
+    const prev = await getLastKnownPresence(userId);
+    await updateAndBroadcast(userId, prev);
+  } catch (err) {
+    logger.warn({ err, userId }, "idle check failed");
+  }
+}
+
 // Shared DM fanout: invoked by both pubsub handler and the /internal/deliver-dm
 // endpoint. Local-conn fanout only — does not republish. Callers that want
 // cluster-wide reach publish via redis AND/OR POST to every instance.
@@ -779,7 +821,12 @@ wss.on("connection", async (ws, req) => {
     const userConns = userConnections.get(closeNormId);
     if (userConns) {
       userConns.delete(connId);
-      if (userConns.size === 0) userConnections.delete(closeNormId);
+      if (userConns.size === 0) {
+        userConnections.delete(closeNormId);
+        // No more local conns for this user — the idle timer (if any) has
+        // nothing to check against. Drop it so we don't fire a no-op HGETALL.
+        clearUserIdleTimer(userId);
+      }
     }
     logger.info({ userId, connId, closeCode, total: connections.size }, "client disconnected");
     const prev = await computePresence(kvRedis, userId, liveInstanceIds);
@@ -895,6 +942,7 @@ wss.on("connection", async (ws, req) => {
 
     if (msg.type === "ping") {
       await updateActivity(kvRedis, userId, connId, instanceId);
+      scheduleUserIdleCheck(userId);
       return;
     }
 
@@ -929,23 +977,10 @@ wss.on("connection", async (ws, req) => {
 
 });
 
-// Every 30s check all connected users for idle transitions
-// Worst case the ui will update 90s after the user goes idle
-// The truth lives on the server and the ui only learns about it when this fires 30s after that 60s idle timeout
-setInterval(async () => {
-  const checkedUsers = new Set<string>();
-  for (const { userId } of connections.values()) {
-    if (checkedUsers.has(userId)) continue;
-    checkedUsers.add(userId);
-    const prev = await getLastKnownPresence(userId);
-    const { status: newStatus, awayMessage } = await buildPresencePayload(userId);
-    await setLastKnownPresence(userId, newStatus);
-    if (newStatus !== prev) {
-      logger.info({ userId, from: prev, to: newStatus }, "presence changed");
-      await broadcastPresenceChange(kvRedis, redis, userId, newStatus, awayMessage);
-    }
-  }
-}, 30_000);
+// (Removed) 30s global sweep replaced by event-driven per-user idle timers
+// scheduled on every updateActivity. See scheduleUserIdleCheck /
+// runUserIdleCheck above. computePresence still provides cluster-wide truth;
+// only the WHEN of polling is now event-driven, not the WHAT.
 
 // Subscribe to per-user shard channels (replaces single dm:events channel),
 // plus community/channel/presence broadcast channels.
