@@ -26,4 +26,11 @@ export const env = {
   // URL other services use to reach this instance for direct (non-pubsub) fanout.
   // Empty = don't register; this instance receives dm events only via redis pubsub.
   REALTIME_INTERNAL_URL: process.env.REALTIME_INTERNAL_URL ?? "",
+  // Presence scope pruning: skip DMs with no activity within this window on
+  // connect. `direct_conversations.updated_at` is touched on every message
+  // insert in dms service, so it acts as last-activity. Dormant DMs re-enter
+  // scope when a message arrives (shard handler calls subscribeDm).
+  // ENABLE_DORMANT_DM_PRUNING=false disables without a redeploy.
+  DORMANT_DM_WINDOW_DAYS: Number(process.env.DORMANT_DM_WINDOW_DAYS ?? "7"),
+  ENABLE_DORMANT_DM_PRUNING: process.env.ENABLE_DORMANT_DM_PRUNING !== "false",
 };
