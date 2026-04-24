@@ -371,12 +371,92 @@ function enqueueSend(
   scheduleFlush(cid);
 }
 
-// Last known presence stored in Redis so multiple instances agree on state
+// Last known presence stored in Redis so multiple instances agree on state.
+// Materialized read key — snapshot/fan-out paths read this (cheap GET/MGET)
+// instead of recomputing status via HGETALL presence:conns:<uid>. Only self
+// transitions update it (updateAndBroadcast, disconnect finalize, away set,
+// idle sweep). TTL is 7d so idle/offline users don't silently drop to
+// "offline" after a day of no transitions.
+const PRESENCE_LAST_TTL_SEC = 7 * 24 * 60 * 60;
 async function getLastKnownPresence(userId: string): Promise<PresenceStatus> {
   return ((await kvRedis.get(`presence:last:${userId}`)) as PresenceStatus | null) ?? "offline";
 }
 async function setLastKnownPresence(userId: string, status: PresenceStatus): Promise<void> {
-  await kvRedis.set(`presence:last:${userId}`, status, "EX", 86400);
+  await kvRedis.set(`presence:last:${userId}`, status, "EX", PRESENCE_LAST_TTL_SEC);
+}
+
+// Small local cache for target-side snapshot reads. Absorbs duplicate GETs
+// for the same userId across multiple fan-out events within a single tick
+// (e.g. connect snapshot + immediate broadcast). Self transitions bypass
+// this — only the cheap materialized read path is cached.
+const PRESENCE_SNAPSHOT_CACHE_TTL_MS = 1000;
+type PresenceSnapshot = { status: PresenceStatus; awayMessage?: string };
+type PresenceSnapshotCacheEntry = { value: PresenceSnapshot; expiresAt: number };
+const presenceSnapshotCache = new Map<string, PresenceSnapshotCacheEntry>();
+
+function snapshotCacheGet(userId: string, now: number): PresenceSnapshot | null {
+  const entry = presenceSnapshotCache.get(userId);
+  if (!entry) return null;
+  if (entry.expiresAt <= now) {
+    presenceSnapshotCache.delete(userId);
+    return null;
+  }
+  return entry.value;
+}
+
+function snapshotCacheSet(userId: string, value: PresenceSnapshot, now: number): void {
+  presenceSnapshotCache.set(userId, { value, expiresAt: now + PRESENCE_SNAPSHOT_CACHE_TTL_MS });
+}
+
+function snapshotCacheInvalidate(userId: string): void {
+  presenceSnapshotCache.delete(userId);
+}
+
+/**
+ * Batched O(1) read of presence snapshots for many users. Replaces the old
+ * fan-out pattern of `Promise.all(userIds.map(buildPresencePayload))` which
+ * ran an HGETALL presence:conns:<uid> per target — the primary CPU hotspot.
+ *
+ * Reads the materialized `presence:last:<uid>` + `presence:away:<uid>` with
+ * pipelined MGETs. Missing status → "offline". Missing away → undefined.
+ * Results are cached for ~1s to collapse duplicate target reads inside a
+ * single event burst.
+ */
+async function getPresenceSnapshotForTargets(userIds: string[]): Promise<Map<string, PresenceSnapshot>> {
+  const out = new Map<string, PresenceSnapshot>();
+  if (userIds.length === 0) return out;
+
+  const now = Date.now();
+  const toFetch: string[] = [];
+  for (const uid of userIds) {
+    const cached = snapshotCacheGet(uid, now);
+    if (cached) out.set(uid, cached);
+    else if (!out.has(uid)) toFetch.push(uid);
+  }
+  if (toFetch.length === 0) return out;
+
+  const lastKeys = toFetch.map((uid) => `presence:last:${uid}`);
+  const awayKeys = toFetch.map((uid) => `presence:away:${uid}`);
+
+  const pipeline = kvRedis.pipeline();
+  pipeline.mget(...lastKeys);
+  pipeline.mget(...awayKeys);
+  const results = await pipeline.exec();
+
+  const lastValues = (results?.[0]?.[1] as (string | null)[] | undefined) ?? [];
+  const awayValues = (results?.[1]?.[1] as (string | null)[] | undefined) ?? [];
+
+  for (let i = 0; i < toFetch.length; i++) {
+    const uid = toFetch[i];
+    const rawStatus = lastValues[i] as PresenceStatus | null;
+    const status: PresenceStatus = rawStatus ?? "offline";
+    const rawAway = awayValues[i];
+    const awayMessage = status === "away" && typeof rawAway === "string" ? rawAway : undefined;
+    const snap: PresenceSnapshot = awayMessage === undefined ? { status } : { status, awayMessage };
+    out.set(uid, snap);
+    snapshotCacheSet(uid, snap, now);
+  }
+  return out;
 }
 
 // Fan-out helpers: 1 Redis call instead of N (one per connection)
@@ -413,13 +493,17 @@ async function buildPresencePayload(userId: string): Promise<{ status: PresenceS
   return { status, awayMessage };
 }
 
-// Helper to update presence and broadcast if it changed, used after connection events and activity updates
+// Helper to update presence and broadcast if it changed, used after connection events and activity updates.
+// Writes the materialized key BEFORE broadcasting so any concurrent target-side
+// snapshot read via getPresenceSnapshotForTargets sees the new value rather
+// than the stale one.
 async function updateAndBroadcast(userId: string, prevStatus: PresenceStatus): Promise<void> {
   const { status: newStatus, awayMessage } = await buildPresencePayload(userId);
   if (newStatus !== prevStatus) {
     logger.info({ userId, from: prevStatus, to: newStatus }, "presence changed");
-    await broadcastPresenceChange(kvRedis, redis, userId, newStatus, awayMessage);
     await setLastKnownPresence(userId, newStatus);
+    snapshotCacheInvalidate(userId);
+    await broadcastPresenceChange(kvRedis, redis, userId, newStatus, awayMessage);
   }
 }
 
@@ -587,11 +671,15 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "realtime-service", connections: connections.size });
 });
 
-// Internal endpoint — only called by other services, not exposed publicly
+// Internal endpoint — only called by other services, not exposed publicly.
+// Reads from the materialized presence:last/presence:away keys (cheap GET)
+// rather than recomputing from presence:conns:*. Acceptable eventual
+// consistency: transitions write the materialized key before broadcasting.
 app.get("/internal/presence/:userId", async (req, res) => {
   const { userId } = req.params;
-  const { status, awayMessage } = await buildPresencePayload(userId);
-  res.json({ userId, status, awayMessage });
+  const snapshots = await getPresenceSnapshotForTargets([userId]);
+  const snap = snapshots.get(userId) ?? { status: "offline" as PresenceStatus };
+  res.json({ userId, status: snap.status, awayMessage: snap.awayMessage });
 });
 
 // Direct DM delivery path — dms service POSTs here in parallel to redis pubsub.
@@ -706,6 +794,16 @@ wss.on("connection", async (ws, req) => {
       logger.warn({ err, userId }, "presence broadcast failed on disconnect");
     }
     if (!stillConnectedElsewhere) {
+      // Belt-and-suspenders: if updateAndBroadcast failed mid-flight for any
+      // reason, force the materialized status to "offline" so target-side
+      // snapshot reads via getPresenceSnapshotForTargets don't keep serving
+      // a stale online/idle value. Cheap and idempotent.
+      try {
+        await setLastKnownPresence(userId, "offline");
+        snapshotCacheInvalidate(userId);
+      } catch (err) {
+        logger.warn({ err, userId }, "offline materialized write failed on disconnect");
+      }
       await unsubscribeUser(kvRedis, userId);
       // Store disconnect timestamp + close code so reconnect can replay from
       // the right window. 2-hour TTL matches pending-queue TTL.
@@ -764,21 +862,24 @@ wss.on("connection", async (ws, req) => {
     // Send own presence immediately
     enqueueSend(ws, JSON.stringify({ type: "presence_update", userId, status: currentStatus, awayMessage: currentAwayMessage }), "presence_init");
 
-    // Get all related users and send their presence. buildPresencePayload uses
-    // Redis (cross-instance aware) — do not pre-filter by local userConnections
-    // or users on other instances are silently excluded from the snapshot.
+    // Get all related users and send their presence. Targets are read from
+    // the materialized `presence:last:*` + `presence:away:*` keys via a
+    // pipelined MGET — no HGETALL presence:conns:* per target. Users on
+    // other instances are still included because the materialized keys
+    // are written by whichever instance owns the last transition.
     const relatedUserIds = await getPresenceTargets(kvRedis, userId);
     const relatedExcludingSelf = relatedUserIds.filter((id) => normUserId(id) !== normUserId(userId));
 
-    const presencePayloads = await Promise.all(
-      relatedExcludingSelf.map(async (relatedUserId) => {
-        const { status, awayMessage } = await buildPresencePayload(relatedUserId);
-        return { userId: relatedUserId, status, awayMessage };
-      })
-    );
+    const snapshots = await getPresenceSnapshotForTargets(relatedExcludingSelf);
     if (ws.readyState !== WebSocket.OPEN) return;
-    for (const payload of presencePayloads) {
-      enqueueSend(ws, JSON.stringify({ type: "presence_update", ...payload }), "presence_snapshot");
+    for (const relatedUserId of relatedExcludingSelf) {
+      const snap = snapshots.get(relatedUserId);
+      if (!snap) continue;
+      enqueueSend(
+        ws,
+        JSON.stringify({ type: "presence_update", userId: relatedUserId, status: snap.status, awayMessage: snap.awayMessage }),
+        "presence_snapshot"
+      );
     }
   });
 
@@ -806,15 +907,19 @@ wss.on("connection", async (ws, req) => {
         logger.info({ userId, connId, channelId }, "client subscribed to channel");
       }
     } else if (msg.type === "away") {
-      // Manually set away status with an optional message that other users can see
+      // Manually set away status with an optional message that other users can see.
+      // Materialized key is written before the broadcast so concurrent snapshots
+      // never observe a stale online/idle status for an already-away user.
       await setAway(kvRedis, userId, (msg.message as string) ?? "");
       const { status: awayStatus, awayMessage: awayMsg } = await buildPresencePayload(userId);
       await setLastKnownPresence(userId, awayStatus);
+      snapshotCacheInvalidate(userId);
       await broadcastPresenceChange(kvRedis, redis, userId, awayStatus, awayMsg);
       return;
     } else if (msg.type === "back") {
       // Manually remove the away status from the redis. Goes back to the previous status before away
       await clearAway(kvRedis, userId);
+      snapshotCacheInvalidate(userId);
     }
 
     // Ultimately, do a broadcast if the presence changed from prev to a new status due to the message
@@ -880,22 +985,27 @@ redisSub.on("message", (channel, message) => {
         // Broadcast the new member's presence to all related users (shard-safe via Redis pub/sub)
         const { status: newMemberStatus, awayMessage: newMemberAway } = await buildPresencePayload(userId);
         await broadcastPresenceChange(kvRedis, redis, userId, newMemberStatus, newMemberAway);
-        // Send the new member their presence snapshot of existing connected members
+        // Send the new member their presence snapshot of existing connected members.
+        // Target reads go through getPresenceSnapshotForTargets (MGET materialized
+        // keys) — no HGETALL per related user.
         const newMemberConns = userConnections.get(normUserId(userId));
-        for (const connId of newMemberConns ?? []) {
-          const conn = connections.get(connId);
-          if (!conn) continue;
-          const { ws } = conn;
+        if (newMemberConns && newMemberConns.size > 0) {
           const relatedIds = await getPresenceTargets(kvRedis, userId);
           const relatedExcludingSelf = relatedIds.filter((id) => normUserId(id) !== normUserId(userId));
-          const payloads = await Promise.all(
-            relatedExcludingSelf.map(async (rid) => {
-              const { status, awayMessage } = await buildPresencePayload(rid);
-              return { userId: rid, status, awayMessage };
-            })
-          );
-          for (const p of payloads) {
-            enqueueSend(ws, JSON.stringify({ type: "presence_update", ...p }), "join_snapshot");
+          const snapshots = await getPresenceSnapshotForTargets(relatedExcludingSelf);
+          for (const connId of newMemberConns) {
+            const conn = connections.get(connId);
+            if (!conn) continue;
+            const { ws } = conn;
+            for (const rid of relatedExcludingSelf) {
+              const snap = snapshots.get(rid);
+              if (!snap) continue;
+              enqueueSend(
+                ws,
+                JSON.stringify({ type: "presence_update", userId: rid, status: snap.status, awayMessage: snap.awayMessage }),
+                "join_snapshot"
+              );
+            }
           }
         }
       })();
@@ -1043,12 +1153,21 @@ redisSub.on("message", (channel, message) => {
       void (async () => {
         await subscribeDm(kvRedis, conversationId, [targetUserId]);
         // Send each other participant's current presence to this user's connections.
+        // Materialized MGET — no HGETALL per participant.
         const conns = userConnections.get(normUserId(targetUserId));
         if (!conns) return;
         const others = (event.participantIds ?? []).filter(p => normUserId(p) !== normUserId(targetUserId));
+        if (others.length === 0) return;
+        const snapshots = await getPresenceSnapshotForTargets(others);
         for (const otherId of others) {
-          const { status, awayMessage } = await buildPresencePayload(otherId);
-          const presencePayload = JSON.stringify({ type: "presence_update", userId: otherId, status, awayMessage });
+          const snap = snapshots.get(otherId);
+          if (!snap) continue;
+          const presencePayload = JSON.stringify({
+            type: "presence_update",
+            userId: otherId,
+            status: snap.status,
+            awayMessage: snap.awayMessage,
+          });
           for (const connId of conns) {
             const conn = connections.get(connId);
             if (conn) enqueueSend(conn.ws, presencePayload, "dm_conv_create_presence");
