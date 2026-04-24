@@ -12,6 +12,12 @@
 
 import Redis from "ioredis";
 import { pg } from "./db";
+import { logger } from "./logger";
+
+// Defensive cap on SUNION result size. A single user in many large communities
+// could otherwise produce a huge target array per presence transition. Log and
+// truncate instead of spending CPU on a pathological fan-out.
+const PRESENCE_TARGETS_MAX = 2000;
 
 const GUILD_KEY = (id: string) => `presence:guild:${id}`;
 const DM_KEY = (id: string) => `presence:dm:${id}`;
@@ -127,21 +133,31 @@ export async function unsubscribeCommunity(redis: Redis, communityId: string, us
 /**
  * Returns all userIds that should receive presence updates for a given user.
  * Looks up their context sets, unions all member sets — pure Redis, no DB.
+ *
+ * Scoping: only guild + dm contexts count as presence targets. Channel contexts
+ * are omitted — a user in a channel is always in the parent community, which is
+ * already covered by the guild set. Channel member sets stay maintained via
+ * subscribeChannel/unsubscribeChannel for message fan-out; this read is the
+ * only consumer that drops them.
  */
 export async function getPresenceTargets(redis: Redis, userId: string): Promise<string[]> {
   const contexts = await redis.smembers(CONTEXTS_KEY(userId));
   if (contexts.length === 0) return [userId];
 
-  const keys = contexts.map((ctx) => {
+  const keys: string[] = [];
+  for (const ctx of contexts) {
     const [type, id] = ctx.split(":");
-    if (type === "guild") return GUILD_KEY(id);
-    if (type === "dm") return DM_KEY(id);
-    return CHANNEL_KEY(id);
-  });
+    if (type === "guild") keys.push(GUILD_KEY(id));
+    else if (type === "dm") keys.push(DM_KEY(id));
+    // channel:* intentionally skipped — parent guild already covers these users
+  }
+  if (keys.length === 0) return [userId];
 
-  // SUNIONSTORE into a temp key, then read + delete
-  // Or just SUNION directly (no temp key needed)
   const members = await redis.sunion(...keys);
+  if (members.length > PRESENCE_TARGETS_MAX) {
+    logger.warn({ userId, size: members.length, cap: PRESENCE_TARGETS_MAX }, "presence targets exceeded cap; truncating");
+    return members.slice(0, PRESENCE_TARGETS_MAX);
+  }
   return members;
 }
 
