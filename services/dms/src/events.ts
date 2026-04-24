@@ -96,9 +96,11 @@ async function directHttpFanout(event: WireDmEvent): Promise<void> {
             "direct fanout: non-2xx response"
           );
         } else {
-          // Instance down or slow. Pubsub is still the fallback path.
+          // Instance down or slow. Evict stale registry entry so future fanout
+          // does not keep hitting a dead instance. Pubsub is still the fallback.
           recordDirectFanoutFailure("post_failed");
           logger.warn({ err, instanceId, url, eventType: event.type }, "direct fanout: POST failed");
+          void kvRedis.hdel(INSTANCE_REGISTRY_KEY, instanceId).catch(() => {});
         }
       }
     })
