@@ -5,7 +5,6 @@ Lightweight Ansible scaffold aligned with **[PROD-SPLIT-NGINX.md](./PROD-SPLIT-N
 It supports:
 
 - common host prep (`deploy` user, base packages)
-- optional Zabbix agent 2 install/config on all managed VMs
 - auth deploy (git pull, `npm ci`, auth workspace build, auth systemd restart)
 - backend deploy (git pull, `npm ci`, workspace builds, nginx config, systemd restarts)
 - frontend deploy (git pull, `npm ci`, frontend build, static publish to `/var/www/discord-frontend`, nginx config)
@@ -54,9 +53,6 @@ Host-group vars:
 Optional:
 
 - `deploy_public_key` if you want Ansible to enforce/update `authorized_keys`.
-- `manage_zabbix_agent`
-- `zabbix_agent_server`
-- `zabbix_agent_server_active`
 
 ---
 
@@ -89,5 +85,4 @@ ansible-playbook -i inventory/hosts.ini --check playbooks/site.yml
 - Backend service restart/build lists are controlled by `backend_systemd_services` and `backend_workspace_build_commands` in `inventory/group_vars/backend.yml`.
 - Realtime service restart/build lists are controlled by `realtime_systemd_services` and `realtime_workspace_build_commands` in `inventory/group_vars/realtime.yml`.
 - Search service restart/build lists are controlled by `search_systemd_services` and `search_workspace_build_commands` in `inventory/group_vars/search.yml`.
-- Zabbix agent deployment is controlled by `manage_zabbix_agent` plus `zabbix_agent_server` in `inventory/group_vars/all.yml`.
 - If host-specific values differ further, add host vars or additional group vars files.
