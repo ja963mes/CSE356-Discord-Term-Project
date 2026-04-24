@@ -2,6 +2,17 @@ import http from "http";
 import { URL } from "url";
 import { redis, kvRedis } from "./redis";
 import { logger } from "./logger";
+import {
+  recordDirectFanoutFailure,
+  recordDirectFanoutRequest,
+  recordDirectFanoutTargetCount,
+  recordDmPublishDuration,
+  recordDmPublishFailure,
+  recordDmPublishStart,
+  recordPendingEnqueue,
+  recordPendingEnqueueFailure,
+  recordShardPublishTargets,
+} from "./metrics";
 
 // Must match USER_FEED_SHARD_COUNT in realtime service
 const USER_FEED_SHARD_COUNT = 20;
@@ -51,10 +62,12 @@ async function directHttpFanout(event: WireDmEvent): Promise<void> {
   try {
     instances = await kvRedis.hgetall(INSTANCE_REGISTRY_KEY);
   } catch (err) {
+    recordDirectFanoutFailure("registry_read");
     logger.warn({ err, eventType: event.type }, "direct fanout: instance registry read failed");
     return;
   }
   const entries = Object.entries(instances);
+  recordDirectFanoutTargetCount(entries.length);
   if (entries.length === 0) return;
   if (event.type === "dm:message:create") {
     logger.info(
@@ -77,12 +90,14 @@ async function directHttpFanout(event: WireDmEvent): Promise<void> {
       } catch (err) {
         const status = (err as { statusCode?: number }).statusCode;
         if (typeof status === "number") {
+          recordDirectFanoutFailure("non_2xx");
           logger.warn(
             { instanceId, url, status, eventType: event.type },
             "direct fanout: non-2xx response"
           );
         } else {
           // Instance down or slow. Pubsub is still the fallback path.
+          recordDirectFanoutFailure("post_failed");
           logger.warn({ err, instanceId, url, eventType: event.type }, "direct fanout: POST failed");
         }
       }
@@ -92,6 +107,7 @@ async function directHttpFanout(event: WireDmEvent): Promise<void> {
 
 function postDeliverDm(baseUrl: string, body: string): Promise<void> {
   return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
     let parsed: URL;
     try {
       parsed = new URL("/internal/deliver-dm", baseUrl);
@@ -119,8 +135,10 @@ function postDeliverDm(baseUrl: string, body: string): Promise<void> {
         res.on("end", () => {
           const status = res.statusCode ?? 0;
           if (status >= 200 && status < 300) {
+            recordDirectFanoutRequest("success", Date.now() - startedAt);
             resolve();
           } else {
+            recordDirectFanoutRequest("non_2xx", Date.now() - startedAt);
             reject(Object.assign(new Error(`status ${status}`), { statusCode: status }));
           }
         });
@@ -130,7 +148,10 @@ function postDeliverDm(baseUrl: string, body: string): Promise<void> {
     req.on("timeout", () => {
       req.destroy(new Error("direct fanout timeout"));
     });
-    req.on("error", reject);
+    req.on("error", (err) => {
+      recordDirectFanoutRequest("error", Date.now() - startedAt);
+      reject(err);
+    });
     req.write(body);
     req.end();
   });
@@ -151,6 +172,7 @@ async function enqueuePendingDmHint(
   }
   try {
     await pipeline.exec();
+    recordPendingEnqueue(participantIds.length);
     logger.info(
       {
         conversationId: hint.conversationId,
@@ -162,6 +184,7 @@ async function enqueuePendingDmHint(
       "dm pending-queue enqueued"
     );
   } catch (err) {
+    recordPendingEnqueueFailure();
     logger.warn(
       { err, conversationId: hint.conversationId, messageId: hint.message.messageId, participantCount: participantIds.length },
       "dm pending-queue enqueue failed"
@@ -249,6 +272,7 @@ export type DmEvent =
 export async function publishDmEvent(event: DmEvent): Promise<void> {
   // publishedAt rides on the wire payload so realtime can log per-hop
   // latency (pubsub receive, direct-HTTP receive, ws.send) as deltas.
+  recordDmPublishStart(event.type);
   const publishedAt = Date.now();
   const wireEvent: WireDmEvent = { ...event, publishedAt } as WireDmEvent;
   if (event.type === "dm:message:create") {
@@ -276,6 +300,7 @@ export async function publishDmEvent(event: DmEvent): Promise<void> {
   // shard channels but routes each message to only the targeted user — O(1)
   // lookup vs O(participants) scan on every instance for every event.
   const participants = event.participantIds ?? [];
+  recordShardPublishTargets(participants.length);
   let publishErr: unknown;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
@@ -305,6 +330,7 @@ export async function publishDmEvent(event: DmEvent): Promise<void> {
     }
   }
   if (publishErr) {
+    recordDmPublishFailure(event.type, "redis_shard_publish");
     logger.error({ err: publishErr, eventType: event.type, conversationId: event.conversationId }, "redis shard publish failed after retries");
     throw publishErr;
   }
@@ -320,5 +346,6 @@ export async function publishDmEvent(event: DmEvent): Promise<void> {
       "dm:message:create published to redis"
     );
   }
+  recordDmPublishDuration(event.type, Date.now() - publishedAt);
   void directHttpFanout(wireEvent);
 }

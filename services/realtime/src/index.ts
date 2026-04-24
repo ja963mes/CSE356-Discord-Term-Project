@@ -33,6 +33,18 @@ import {
 } from "./subscriptions";
 import { logger } from "./logger";
 import { initCassandra, listDmMessagesNewerThanTimestamp } from "./cassandra";
+import {
+  metricsHandler,
+  recordDmCatchup,
+  recordDmDeliveryAttempt,
+  recordDmDeliveryEnqueued,
+  recordDmDeliveryLocalMiss,
+  recordDmLiveDeliveryLatency,
+  recordDmRecovery,
+  recordWsEviction,
+  recordWsNotOpenDrop,
+  setRealtimeStateGetter,
+} from "./metrics";
 
 // Unique ID for this instance — used to namespace presence:conns fields
 // so multiple instances don't stomp on each other's connection data at startup
@@ -109,6 +121,22 @@ const userConnections = new Map<string, Set<string>>();
 const wsConnId = new WeakMap<WebSocket, string>();
 const workerLabel = cluster.worker?.id ?? "primary";
 
+setRealtimeStateGetter(() => {
+  let totalQueuedMessages = 0;
+  let maxQueueDepth = 0;
+  for (const conn of connections.values()) {
+    const queueLen = conn.outboundQueue.length;
+    totalQueuedMessages += queueLen;
+    if (queueLen > maxQueueDepth) maxQueueDepth = queueLen;
+  }
+  return {
+    connections: connections.size,
+    users: userConnections.size,
+    totalQueuedMessages,
+    maxQueueDepth,
+  };
+});
+
 /** Normalize user ids for Set membership (Postgres JSON vs session can differ in UUID case). */
 function normUserId(id: string): string {
   return id.trim().toLowerCase();
@@ -128,6 +156,7 @@ function removeLocalConnection(
   connections.delete(connId);
   wsConnId.delete(ws);
   if (conn) {
+    recordWsEviction(reason);
     const normId = normUserId(conn.userId);
     const userConns = userConnections.get(normId);
     if (userConns) {
@@ -265,6 +294,7 @@ async function drainPendingDmHints(ws: WebSocket, userId: string): Promise<void>
         },
         "dm pending-queue replaying message"
       );
+      recordDmRecovery("pending", publishedAt !== undefined ? Date.now() - publishedAt : undefined);
       enqueueSend(ws, JSON.stringify({ ...hint, source: "pending" }), "dm_pending",
         { userId, conversationId: hint.conversationId, messageId: msgId }, true);
     } else if (hint.type === "dm:new_message") {
@@ -367,11 +397,13 @@ async function replayMissedDmHintsFromDisconnect(
           { userId, conversationId, messageId: row.messageId },
           true
         );
+        recordDmRecovery("catchup");
         replayedMessageCount++;
       }
     }
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
+  recordDmCatchup(Date.now() - replayStartedAt, replayedMessageCount);
   logger.info(
     {
       userId,
@@ -413,6 +445,7 @@ function enqueueSend(
       evicted = true;
     }
     if (label === "dm_event" || label === "dm_shard") {
+      recordWsNotOpenDrop(label);
       logger.warn(
         {
           label,
@@ -441,7 +474,7 @@ function enqueueSend(
   if (conn.outboundQueue.length >= cap) {
     if (important) {
       logger.warn({ connId: cid, userId: conn.userId, queueLen: conn.outboundQueue.length }, "ws important queue full; killing connection");
-      evictAndTerminate(cid, ws);
+      evictAndTerminate(cid, ws, "important_queue_full", { label, queueLen: conn.outboundQueue.length });
     }
     // best-effort: silently drop — presence/guild state reconciles eventually
     return;
@@ -520,6 +553,7 @@ function fanOutDmEventLocal(
 
   let dmSentCount = 0;
   let dmNotConnectedCount = 0;
+  if (event.type === "dm:message:create") recordDmDeliveryAttempt(source, targetUserIds.size);
   const authorIdNorm = dmMsg?.authorId ? normUserId(dmMsg.authorId) : null;
 
   for (const targetUid of targetUserIds) {
@@ -559,6 +593,8 @@ function fanOutDmEventLocal(
         if (event.type === "dm:message:create") {
           dmSentCount++;
           const sentAtMs = Date.now();
+          recordDmDeliveryEnqueued(source, 1);
+          recordDmLiveDeliveryLatency(source, publishedAt !== undefined ? sentAtMs - publishedAt : undefined);
           logger.info({
             targetUid,
             connId,
@@ -576,6 +612,7 @@ function fanOutDmEventLocal(
   }
 
   if (event.type === "dm:message:create") {
+    if (dmNotConnectedCount > 0) recordDmDeliveryLocalMiss(source, dmNotConnectedCount);
     logger.info(
       {
         source,
@@ -609,8 +646,10 @@ function deliverDmEventToUser(
   const dmMsg = event.type === "dm:message:create" && event.message && typeof event.message === "object"
     ? event.message as { messageId?: string; authorId?: string; timeuuid?: string }
     : null;
+  if (event.type === "dm:message:create") recordDmDeliveryAttempt(source, 1);
   const conns = userConnections.get(normId);
   if (!conns || conns.size === 0) {
+    if (event.type === "dm:message:create") recordDmDeliveryLocalMiss(source, 1);
     logger.info(
       {
         source,
@@ -646,6 +685,10 @@ function deliverDmEventToUser(
   for (const connId of conns) {
     const conn = connections.get(connId);
     if (!conn) continue;
+    if (event.type === "dm:message:create") {
+      recordDmDeliveryEnqueued(source, 1);
+      recordDmLiveDeliveryLatency(source, typeof event.publishedAt === "number" ? Date.now() - event.publishedAt : undefined);
+    }
     enqueueSend(conn.ws, outgoing, "dm_shard", { userId: normId, connId, messageId: dmMsg?.messageId }, true);
   }
 }
@@ -723,6 +766,10 @@ app.use(express.json({ limit: "256kb" }));
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "realtime-service", connections: connections.size });
+});
+
+app.get("/metrics", (req, res) => {
+  void metricsHandler(req, res);
 });
 
 // Internal endpoint — only called by other services, not exposed publicly

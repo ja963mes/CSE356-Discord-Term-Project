@@ -9,6 +9,7 @@ import { requireAuth } from "./middleware/session";
 import { presignUpload } from "./minio";
 import { cassandra } from "./cassandra";
 import { httpLogger, logRouteError, logger } from "./logger";
+import { metricsHandler } from "./metrics";
 import {
   createConversation,
   createMessage,
@@ -82,6 +83,10 @@ app.get("/health", async (_req, res) => {
     logRouteError("health check cassandra ping failed", err);
     res.status(503).json({ status: "degraded", service: "dms-service", storage: "cassandra_unreachable" });
   }
+});
+
+app.get("/metrics", (req, res, next) => {
+  void metricsHandler(req, res).catch(next);
 });
 
 app.post("/attachments/presign", requireAuth, async (req: Request, res: Response, next: NextFunction) => {
