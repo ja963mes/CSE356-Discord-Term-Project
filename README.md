@@ -167,6 +167,14 @@ From the repo root:
 docker compose up -d
 ```
 
+Optional local monitoring stack:
+
+```bash
+docker compose --profile monitoring up -d
+```
+
+That starts a local Zabbix server + web UI on `http://localhost:8081`. See **[docs/ZABBIX.md](./docs/ZABBIX.md)**.
+
 Match **`.env`** to your ports (see **[`.env.example`](./.env.example)**). Postgres is usually exposed on **5433**; apps often use **PgBouncer** on **6432** for `DATABASE_URL`.
 
 ### 2) Install and migrate

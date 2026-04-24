@@ -21,3 +21,9 @@ search_systemd_services:
   - discord-search
 search_workspace_build_commands:
   - npm run build --workspace search-service
+
+# Optional: deploy Zabbix agent 2 to all managed VMs.
+# Flip on after you have a reachable Zabbix server.
+# manage_zabbix_agent: true
+# zabbix_agent_server: "10.0.3.180"
+# zabbix_agent_server_active: "{{ zabbix_agent_server }}"
