@@ -16,6 +16,13 @@ map $http_upgrade $connection_upgrade {
     ''      close;
 }
 
+# Temporary diagnostic format for worker-level request distribution checks.
+# After enabling this config on a VM, count requests by nginx worker pid:
+#   rg -o "pid=[0-9]+" /var/log/nginx/realtime_worker_diag.log | sort | uniq -c
+log_format realtime_worker_diag
+    '$time_iso8601 pid=$pid status=$status method=$request_method uri=$uri '
+    'upstream=$upstream_addr rt=$request_time urt=$upstream_response_time';
+
 upstream realtime_backend {
     server 127.0.0.1:3005;
     server 127.0.0.1:3009;
@@ -27,6 +34,7 @@ upstream realtime_backend {
 server {
     listen 80;
     server_name _;
+    access_log /var/log/nginx/realtime_worker_diag.log realtime_worker_diag;
 
     location ^~ /ws {
         proxy_pass http://realtime_backend;
