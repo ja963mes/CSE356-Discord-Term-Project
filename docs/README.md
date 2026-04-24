@@ -25,6 +25,7 @@ Everything below lives in **`docs/`** except the root **[README.md](../README.md
 | **[nginx/production-backend.conf.example](./nginx/production-backend.conf.example)** | **Supported** backend VM site config |
 | **[nginx/production-search.conf.example](./nginx/production-search.conf.example)** | **Supported** dedicated search ingress config (`/search`, `/directory`) |
 | **[ANSIBLE-SETUP.md](./ANSIBLE-SETUP.md)** | Ansible scaffold for split-VM deploy (`ansible/`) |
+| **[ZABBIX.md](./ZABBIX.md)** | Optional local Zabbix monitoring profile for Docker Compose |
 
 **Deprecated (reference only — do not use for new installs):**  
 [nginx/deprecated/linode-staging.conf.example](./nginx/deprecated/linode-staging.conf.example), [nginx/deprecated/linode-production-combined.conf.example](./nginx/deprecated/linode-production-combined.conf.example), [nginx/deprecated/linode-services-only.conf.example](./nginx/deprecated/linode-services-only.conf.example) — superseded by the frontend + backend pair above ([§7 in PROD-SPLIT-NGINX](./PROD-SPLIT-NGINX.md)).

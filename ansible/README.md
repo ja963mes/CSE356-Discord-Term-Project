@@ -2,6 +2,8 @@
 
 Deploy automation for the **split frontend / backend / auth / realtime / search VM** layout described in **[docs/PROD-SPLIT-NGINX.md](../docs/PROD-SPLIT-NGINX.md)**.
 
+It can also optionally deploy **Zabbix agent 2** to all managed VMs when `manage_zabbix_agent: true` and `zabbix_agent_server` are set in inventory vars.
+
 ## Quick start
 
 ```bash
