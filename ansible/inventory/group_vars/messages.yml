@@ -12,6 +12,13 @@ messages_log_level: info
 messages_log_pretty: "true"
 messages_port: "3003"
 
+# 4 vCPU / 8GB messages VM (override in inventory if you resize the instance)
+messages_pg_pool_max: "16"
+messages_cassandra_local_core_connections: "4"
+messages_cassandra_max_requests_per_connection: "8192"
+messages_node_options: "--max-old-space-size=4096"
+messages_service_limit_nofile: "65536"
+
 ## REQUIRED: set these to reachable endpoints (likely private IPs)
 messages_database_url: "postgresql://postgres:123456789@10.0.2.247:6432/auth_db"
 messages_database_url_direct: "postgresql://postgres:123456789@10.0.2.247:5433/auth_db"

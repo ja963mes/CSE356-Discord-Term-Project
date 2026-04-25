@@ -1,6 +1,6 @@
 import Redis from "ioredis";
 
-const IDLE_THRESHOLD_MS = 60 * 1000; // 1 minute
+export const IDLE_THRESHOLD_MS = 60 * 1000; // 1 minute
 
 export type PresenceStatus = "online" | "idle" | "away" | "offline";
 

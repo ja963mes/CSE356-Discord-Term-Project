@@ -1,0 +1,52 @@
+- name: Configure zabbix agent
+  when: manage_zabbix_agent | bool
+  block:
+    - name: Require Zabbix server host when agent role is enabled
+      ansible.builtin.assert:
+        that:
+          - zabbix_agent_server | length > 0
+        fail_msg: "Set zabbix_agent_server in inventory/group_vars/all.yml before enabling manage_zabbix_agent."
+
+    - name: Install Zabbix release repository package
+      ansible.builtin.apt:
+        deb: "{{ zabbix_agent_release_deb | replace(' ', '') }}"
+        state: present
+
+    - name: Install Zabbix agent packages
+      ansible.builtin.apt:
+        name:
+          - "{{ zabbix_agent_package }}"
+        state: present
+        update_cache: true
+
+    - name: Ensure zabbix log directory exists
+      ansible.builtin.file:
+        path: /var/log/zabbix
+        state: directory
+        owner: zabbix
+        group: zabbix
+        mode: "0755"
+
+    - name: Install zabbix agent configuration
+      ansible.builtin.template:
+        src: zabbix_agent2.conf.j2
+        dest: /etc/zabbix/zabbix_agent2.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart zabbix agent
+
+    - name: Install Discord-specific zabbix user parameters
+      ansible.builtin.template:
+        src: discord-monitoring.conf.j2
+        dest: /etc/zabbix/zabbix_agent2.d/discord-monitoring.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart zabbix agent
+
+    - name: Ensure zabbix agent service is enabled and running
+      ansible.builtin.systemd:
+        name: "{{ zabbix_agent_service_name }}"
+        state: started
+        enabled: true

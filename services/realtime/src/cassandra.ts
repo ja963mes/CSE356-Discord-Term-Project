@@ -42,6 +42,8 @@ export type DmCatchupRow = {
   messageId: string;
   authorId: string;
   timeuuid: string;
+  content: string;
+  attachments: string[];
 };
 
 export async function listDmMessagesNewerThanTimestamp(params: {
@@ -52,7 +54,7 @@ export async function listDmMessagesNewerThanTimestamp(params: {
   const { conversationId, sinceMs, limit } = params;
   const minTimeuuid = types.TimeUuid.fromDate(new Date(sinceMs));
   const result = await cassandra.execute(
-    "SELECT created_at, message_id, author_id FROM dms.messages_by_conversation WHERE conversation_id = ? AND created_at > ? LIMIT ?",
+    "SELECT created_at, message_id, author_id, content, attachment_keys FROM dms.messages_by_conversation WHERE conversation_id = ? AND created_at > ? LIMIT ?",
     [toUuid(conversationId), minTimeuuid, limit],
     { prepare: true }
   );
@@ -62,11 +64,14 @@ export async function listDmMessagesNewerThanTimestamp(params: {
     const messageId = row.get("message_id");
     const authorId = row.get("author_id");
     if (!createdAt || messageId == null || authorId == null) continue;
+    const rawAttachments = row.get("attachment_keys");
     out.push({
       conversationId,
       timeuuid: createdAt.toString(),
       messageId: messageId.toString(),
       authorId: authorId.toString(),
+      content: String(row.get("content") ?? ""),
+      attachments: Array.isArray(rawAttachments) ? rawAttachments.map(String) : [],
     });
   }
   return out;
@@ -80,12 +85,12 @@ export async function listDmMessagesNewerThan(params: {
   const { conversationId, afterTimeuuid, limit } = params;
   const result = afterTimeuuid
     ? await cassandra.execute(
-        "SELECT created_at, message_id, author_id FROM dms.messages_by_conversation WHERE conversation_id = ? AND created_at > ? LIMIT ?",
+        "SELECT created_at, message_id, author_id, content, attachment_keys FROM dms.messages_by_conversation WHERE conversation_id = ? AND created_at > ? LIMIT ?",
         [toUuid(conversationId), toTimeUuid(afterTimeuuid), limit],
         { prepare: true }
       )
     : await cassandra.execute(
-        "SELECT created_at, message_id, author_id FROM dms.messages_by_conversation WHERE conversation_id = ? LIMIT ?",
+        "SELECT created_at, message_id, author_id, content, attachment_keys FROM dms.messages_by_conversation WHERE conversation_id = ? LIMIT ?",
         [toUuid(conversationId), limit],
         { prepare: true }
       );
@@ -96,15 +101,15 @@ export async function listDmMessagesNewerThan(params: {
     const messageId = row.get("message_id");
     const authorId = row.get("author_id");
     // Skip phantom / soft-delete rows that have no author or no message id.
-    // These appear because UPDATE upserts leave a row with only the touched
-    // columns + PK populated; sending them would push a useless hint with
-    // authorId/messageId = undefined to the client.
     if (!createdAt || messageId == null || authorId == null) continue;
+    const rawAttachments = row.get("attachment_keys");
     out.push({
       conversationId,
       timeuuid: createdAt.toString(),
       messageId: messageId.toString(),
       authorId: authorId.toString(),
+      content: String(row.get("content") ?? ""),
+      attachments: Array.isArray(rawAttachments) ? rawAttachments.map(String) : [],
     });
   }
   return out;

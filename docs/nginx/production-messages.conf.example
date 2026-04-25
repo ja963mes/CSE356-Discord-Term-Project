@@ -6,10 +6,22 @@
 #
 # Service on localhost (this VM):
 #   3003 messages
+#
+# REQUIRED — in /etc/nginx/nginx.conf (main context + events) before this site
+# is safe under real load. Default worker_connections 768 is too low: nginx will
+# log "worker_connections are not enough" and clients see 502 / empty responses.
+# Match production-frontend / PROD-SPLIT-NGINX guidance:
+#   worker_rlimit_nofile 65536;
+#   events {
+#       worker_connections 16384;   # 4 vCPU messages VM: match ansible/roles/messages; raise LimitNOFILE if needed
+#       multi_accept on;
+#   }
+# The `ansible/roles/messages` playbook also applies worker_connections 16384 on deploy.
 
 upstream messages_backend {
     server 127.0.0.1:3003;
-    keepalive 32;
+    # Match higher proxy concurrency to Node cluster (4 workers on 4 vCPU).
+    keepalive 128;
 }
 
 server {

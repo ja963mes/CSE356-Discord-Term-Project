@@ -44,6 +44,13 @@
         enabled: true
       loop: "{{ realtime_systemd_services }}"
 
+- name: Set nginx worker_connections to 8192
+  ansible.builtin.lineinfile:
+    path: /etc/nginx/nginx.conf
+    regexp: '^\s*worker_connections\s+'
+    line: "\tworker_connections 8192;"
+    backrefs: false
+
 - name: Manage nginx config (optional)
   when: manage_nginx_config
   block:

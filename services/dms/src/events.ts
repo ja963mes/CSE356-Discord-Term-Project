@@ -71,8 +71,10 @@ async function directHttpFanout(event: WireDmEvent): Promise<void> {
             "direct fanout: non-2xx response"
           );
         } else {
-          // Instance down or slow. Pubsub is still the fallback path.
-          logger.warn({ err, instanceId, url, eventType: event.type }, "direct fanout: POST failed");
+          // Instance down or slow. Evict stale registry entry so future fanout
+          // doesn't keep hitting a dead instance. Pubsub is still the fallback.
+          logger.warn({ instanceId, url, eventType: event.type }, "direct fanout: POST failed");
+          kvRedis.hdel(INSTANCE_REGISTRY_KEY, instanceId).catch(() => {});
         }
       }
     })
@@ -127,7 +129,7 @@ function postDeliverDm(baseUrl: string, body: string): Promise<void> {
 
 async function enqueuePendingDmHint(
   participantIds: string[],
-  hint: { type: "dm:new_message"; conversationId: string; messageId: string; authorId: string; timeuuid: string }
+  hint: { type: "dm:message:create"; conversationId: string; participantIds: string[]; message: { messageId: string; authorId: string; content: string; attachments: string[]; createdAt: string; timeuuid: string } }
 ): Promise<void> {
   if (participantIds.length === 0) return;
   const payload = JSON.stringify(hint);
@@ -142,7 +144,7 @@ async function enqueuePendingDmHint(
     await pipeline.exec();
   } catch (err) {
     logger.warn(
-      { err, conversationId: hint.conversationId, messageId: hint.messageId, participantCount: participantIds.length },
+      { err, conversationId: hint.conversationId, messageId: hint.message.messageId, participantCount: participantIds.length },
       "dm pending-queue enqueue failed"
     );
   }
@@ -248,13 +250,7 @@ export async function publishDmEvent(event: DmEvent): Promise<void> {
   // Enqueue pending hint BEFORE publishing so the fallback is always in place,
   // even if the Redis publish fails. Realtime drains this on reconnect.
   if (event.type === "dm:message:create") {
-    await enqueuePendingDmHint(event.participantIds, {
-      type: "dm:new_message",
-      conversationId: event.conversationId,
-      messageId: event.message.messageId,
-      authorId: event.message.authorId,
-      timeuuid: event.message.timeuuid,
-    });
+    await enqueuePendingDmHint(event.participantIds, event);
   }
 
   // Per-participant shard publish. Each realtime instance subscribes to all

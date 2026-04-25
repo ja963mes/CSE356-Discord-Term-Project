@@ -5,7 +5,7 @@
 #   - messages   -> 10.0.3.199
 #   - dms        -> 10.0.3.52
 #   - read-state -> 10.0.1.189
-#   - realtime   -> 10.0.3.180
+#   - realtime   -> 10.0.3.180, 10.0.1.49
 #   - search     -> 10.0.2.26
 backend_systemd_services:
   - discord-communities

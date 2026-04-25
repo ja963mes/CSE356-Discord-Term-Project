@@ -3,14 +3,18 @@
 # Use this on the backend VM. All Node services run on dedicated VMs — this
 # host only proxies traffic to them via private IP.
 #
-# All services run on dedicated VMs — proxied via private IP:
-#   communities -> 10.0.1.148:80 (communities VM nginx)
-#   messages    -> 10.0.3.199:80 (messages VM nginx)
-#   realtime    -> 10.0.3.180:80 (realtime VM nginx, load-balances :3005/:3009)
-#   dms         -> 10.0.3.52:80  (frontend nginx proxies directly)
-#   read-state  -> 10.0.1.189:80 (frontend nginx proxies directly)
-#   auth        -> 10.0.3.158:80 (frontend nginx proxies directly)
-#   search      -> 10.0.2.26:80  (frontend nginx proxies directly)
+# Services on localhost (this VM):
+#   3002 communities
+#   3006 create-community
+#
+# All other services run on dedicated VMs — proxied via private IP:
+#   messages   -> 10.0.3.199:80 (messages VM nginx)
+#   realtime   -> 10.0.3.180:80 (realtime VM nginx 1, load-balances :3005/:3009/:3013/:3017)
+#              -> 10.0.1.49:80  (realtime VM nginx 2, load-balances :3005/:3009/:3013/:3017)
+#   dms        -> 10.0.3.52:80  (frontend nginx proxies directly)
+#   read-state -> 10.0.1.189:80 (frontend nginx proxies directly)
+#   auth       -> 10.0.3.158:80 (frontend nginx proxies directly)
+#   search     -> 10.0.2.26:80  (frontend nginx proxies directly)
 
 map $http_upgrade $connection_upgrade {
     default upgrade;
@@ -30,9 +34,10 @@ upstream backend_messages {
     server 10.0.3.199:80;
     keepalive 32;
 }
-# WebSocket: realtime VM nginx on :80 load-balances across 4 local instances.
+# WebSocket: two realtime VMs, each running 4 local instances behind their own nginx.
 upstream backend_realtime {
     server 10.0.3.180:80;
+    server 10.0.1.49:80;
     keepalive 16;
 }
 

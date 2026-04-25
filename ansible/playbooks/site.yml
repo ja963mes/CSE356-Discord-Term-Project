@@ -10,6 +10,12 @@
   roles:
     - common
 
+- name: Configure Zabbix agent on managed VMs
+  hosts: all
+  become: true
+  roles:
+    - zabbix-agent
+
 - name: Configure and deploy realtime VM
   hosts: realtime
   become: true
@@ -63,4 +69,3 @@
   become: true
   roles:
     - search
-
