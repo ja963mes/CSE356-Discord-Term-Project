@@ -63,11 +63,12 @@
     firstmatch: true
   notify: Restart nginx
 
-- name: Set nginx worker_connections to 8192
+# 4 vCPU: nginx worker_processes auto => 4 workers; 16384 slots each handles heavier fan-in than 8192.
+- name: Set nginx worker_connections to 16384
   ansible.builtin.lineinfile:
     path: /etc/nginx/nginx.conf
     regexp: "^\n?\\s*worker_connections\\s+"
-    line: "\tworker_connections 8192;"
+    line: "\tworker_connections 16384;"
   notify: Restart nginx
 
 # systemd default LimitNOFILE can cap nginx below worker_connections; raise for workers.

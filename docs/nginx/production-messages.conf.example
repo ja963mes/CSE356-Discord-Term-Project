@@ -13,14 +13,15 @@
 # Match production-frontend / PROD-SPLIT-NGINX guidance:
 #   worker_rlimit_nofile 65536;
 #   events {
-#       worker_connections 8192;   # or 16384; raise LimitNOFILE if needed
+#       worker_connections 16384;   # 4 vCPU messages VM: match ansible/roles/messages; raise LimitNOFILE if needed
 #       multi_accept on;
 #   }
-# The `ansible/roles/messages` playbook also applies worker_connections 8192 on deploy.
+# The `ansible/roles/messages` playbook also applies worker_connections 16384 on deploy.
 
 upstream messages_backend {
     server 127.0.0.1:3003;
-    keepalive 32;
+    # Match higher proxy concurrency to Node cluster (4 workers on 4 vCPU).
+    keepalive 128;
 }
 
 server {

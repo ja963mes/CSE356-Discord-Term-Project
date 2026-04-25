@@ -12,6 +12,8 @@ const envSchema = z.object({
   PORT: z.string().default("3003"),
   MESSAGES_PORT: z.string().optional(),
   DATABASE_URL: z.string().url(),
+  /** Per worker process. With cluster, total DB connections ≈ workers × this (watch Postgres / PgBouncer limits). */
+  PG_POOL_MAX: z.coerce.number().int().min(1).max(200).default(10),
   REDIS_URL: z.string(),
   /** KV redis (sessions) — port 6380 instance. */
   KV_REDIS_URL: z.string(),
@@ -29,6 +31,16 @@ const envSchema = z.object({
   CASSANDRA_READ_CONSISTENCY: z.enum(["one", "localOne", "quorum", "localQuorum"]).default("localOne"),
   /** Write consistency: one | localOne | quorum | localQuorum | all */
   CASSANDRA_WRITE_CONSISTENCY: z.enum(["one", "localOne", "quorum", "localQuorum", "all"]).default("localQuorum"),
+  /**
+   * `pooling.coreConnectionsPerHost[local]` in cassandra-driver (v4+ uses this instead of a separate max per host in typings).
+   * A 4 vCPU / 8GB messages VM can sustain more concurrent native connections to each Cassandra node per worker.
+   */
+  CASSANDRA_LOCAL_CORE_CONNECTIONS: z.coerce.number().int().min(1).max(32).default(2),
+  /**
+   * Simultaneous requests per native connection; raising can help under bursty read/write from many cluster workers.
+   * Driver default is 32768 for protocol v3+.
+   */
+  CASSANDRA_MAX_REQUESTS_PER_CONNECTION: z.coerce.number().int().min(1).max(32768).default(2048),
   /** MinIO / S3-compatible object storage */
   MINIO_ENDPOINT: z.string().default("http://localhost:9000"),
   MINIO_ACCESS_KEY: z.string().default("minioadmin"),
