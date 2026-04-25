@@ -20,6 +20,7 @@ manage_systemd_services: true
 frontend_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-frontend.conf.example"
 backend_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-backend.conf.example"
 # Isolated service VM nginx configs (used by their respective roles when manage_nginx_config=true)
+communities_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-communities.conf.example"
 messages_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-messages.conf.example"
 dms_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-dms.conf.example"
 read_state_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-read-state.conf.example"

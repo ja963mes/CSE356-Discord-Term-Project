@@ -52,6 +52,12 @@
   roles:
     - backend
 
+- name: Configure and deploy communities VM
+  hosts: communities
+  become: true
+  roles:
+    - communities
+
 - name: Configure and deploy frontend VM
   hosts: frontend
   become: true

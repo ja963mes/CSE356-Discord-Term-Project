@@ -1,0 +1,24 @@
+## Communities VM. Hosts communities-service + create-community-service.
+## These services were previously co-located on the backend VM (127.0.0.1).
+communities_systemd_services:
+  - discord-communities
+  - discord-create-community
+
+communities_workspace_build_commands:
+  - npm run build --workspace communities-service
+  - npm run build --workspace create-community-service
+
+communities_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-communities.conf.example"
+
+## /etc/discord.env values — shared by communities-service + create-community-service
+communities_log_level: info
+communities_log_pretty: "true"
+communities_database_url: "postgresql://postgres:123456789@10.0.2.247:6432/auth_db"
+communities_redis_url: "redis://10.0.3.49:6379"
+# kv instance on Redis VM — sessions + community read-cache + epoch keys.
+communities_kv_redis_url: "redis://10.0.3.49:6380"
+
+communities_port: "3002"
+communities_search_service_url: "http://10.0.2.26:3004"
+
+create_community_port: "3006"
