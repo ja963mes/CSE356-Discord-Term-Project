@@ -1,0 +1,5 @@
+# 1 = active/running, 0 = anything else
+UserParameter=discord.service.active[*],systemctl is-active "$1" >/dev/null 2>&1 && echo 1 || echo 0
+
+# 1 = HTTP endpoint returns 2xx/3xx, 0 = request failure
+UserParameter=discord.health[*],curl -fsS --max-time 5 "$1" >/dev/null 2>&1 && echo 1 || echo 0

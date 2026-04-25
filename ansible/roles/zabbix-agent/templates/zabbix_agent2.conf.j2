@@ -1,0 +1,13 @@
+PidFile=/run/zabbix/zabbix_agent2.pid
+LogFile={{ zabbix_agent_log_file }}
+LogFileSize={{ zabbix_agent_log_file_size }}
+Server={{ zabbix_agent_server }}
+ServerActive={{ zabbix_agent_server_active }}
+Hostname={{ zabbix_agent_hostname }}
+HostMetadata={{ zabbix_agent_hostmetadata }}
+ListenPort={{ zabbix_agent_listen_port }}
+Timeout={{ zabbix_agent_timeout }}
+RefreshActiveChecks={{ zabbix_agent_refresh_active_checks }}
+BufferSend={{ zabbix_agent_buffer_send }}
+BufferSize={{ zabbix_agent_buffer_size }}
+Include=/etc/zabbix/zabbix_agent2.d/*.conf
