@@ -1,19 +1,15 @@
-# Backend VM. Hosts only communities + create-community Node services plus
-# the stateful Docker containers (Postgres, Cassandra, etc.). All other
-# Node services have been scaled out to dedicated VMs:
-#   - auth       -> 10.0.3.158
-#   - messages   -> 10.0.3.199
-#   - dms        -> 10.0.3.52
-#   - read-state -> 10.0.1.189
-#   - realtime   -> 10.0.3.180, 10.0.1.49
-#   - search     -> 10.0.2.26
-backend_systemd_services:
-  - discord-communities
-  - discord-create-community
+# Backend VM. Hosts only stateful Docker containers (Postgres, Cassandra, etc.).
+# All Node services have been scaled out to dedicated VMs:
+#   - auth        -> 10.0.3.158
+#   - communities -> 10.0.1.148
+#   - messages    -> 10.0.3.199
+#   - dms         -> 10.0.3.52
+#   - read-state  -> 10.0.1.189
+#   - realtime    -> 10.0.3.180, 10.0.1.49
+#   - search      -> 10.0.2.26
+backend_systemd_services: []
 
-backend_workspace_build_commands:
-  - npm run build --workspace communities-service
-  - npm run build --workspace create-community-service
+backend_workspace_build_commands: []
 
 ## /etc/discord.env values — shared by communities-service + create-community-service
 backend_log_level: info
