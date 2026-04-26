@@ -130,7 +130,7 @@ export async function searchMessages(params: SearchParams): Promise<{ total: num
     return { total: 0, results: [] };
   }
 
-  const must: object[] = [{ match: { content: { query: params.query, fuzziness: 1, operator: "and" } } }];
+  const must: object[] = [{ match: { content: { query: params.query, operator: "and" } } }];
 
   const filter: object[] = [
     { terms: { scope_id: params.scopeIds } },
