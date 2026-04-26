@@ -1,5 +1,8 @@
 import { types as cassandraTypes } from "cassandra-driver";
 import { cassandra, readConsistency, writeConsistency } from "../cassandra";
+import { kvCacheRedis } from "../redis";
+
+const RS_LATEST_TTL_SEC = 7 * 24 * 60 * 60;
 
 const toUuid = (value: string): cassandraTypes.Uuid => cassandraTypes.Uuid.fromString(value);
 const toTimeUuid = (value: string): cassandraTypes.TimeUuid => cassandraTypes.TimeUuid.fromString(value);
@@ -60,6 +63,10 @@ export async function insertDmMessage(params: {
     ],
     { prepare: true, consistency: writeConsistency }
   );
+  // Cache latest timeuuid so read-state can skip messages_by_conversation LIMIT 1.
+  kvCacheRedis
+    .set(`rs:latest:dm:${params.conversationId}`, createdAt.toString(), "EX", RS_LATEST_TTL_SEC)
+    .catch(() => {});
   return { messageId: messageId.toString(), createdAt };
 }
 
