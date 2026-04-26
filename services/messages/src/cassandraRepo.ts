@@ -1,8 +1,13 @@
 import { types } from "cassandra-driver";
 import { cassandra, readConsistency, writeConsistency } from "./cassandra";
 import { env } from "./env";
+import { kvCacheRedis } from "./redis";
 
 const ks = () => env.MESSAGES_CASSANDRA_KEYSPACE;
+
+// 7-day TTL on rs:latest:ch:* — long enough to survive read-state cold start
+// without forcing a fallback Cassandra read for every channel.
+const RS_LATEST_TTL_SEC = 7 * 24 * 60 * 60;
 
 export type ChannelMessageRow = {
   messageId: string;
@@ -40,6 +45,11 @@ export async function insertChannelMessage(params: {
     ],
     { prepare: true, consistency: writeConsistency }
   );
+  // Cache latest timeuuid so read-state can skip messages_by_channel LIMIT 1.
+  // Best-effort — read-state falls back to Cassandra on miss.
+  kvCacheRedis
+    .set(`rs:latest:ch:${params.channelId}`, createdAt.toString(), "EX", RS_LATEST_TTL_SEC)
+    .catch(() => {});
   return { messageId: messageId.toString(), createdAt };
 }
 

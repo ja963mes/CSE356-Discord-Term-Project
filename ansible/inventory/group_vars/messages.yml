@@ -23,8 +23,10 @@ messages_service_limit_nofile: "65536"
 messages_database_url: "postgresql://postgres:123456789@10.0.2.247:6432/auth_db"
 messages_database_url_direct: "postgresql://postgres:123456789@10.0.2.247:5433/auth_db"
 messages_redis_url: "redis://10.0.3.49:6379"
-# kv instance — sessions only (messages does no client-side cache today).
+# kv (port 6380) — sessions only.
 messages_kv_redis_url: "redis://10.0.3.49:6380"
+# kv2 (port 6382) — rs:latest:ch:* writes after each insert, used by read-state.
+messages_kv_cache_redis_url: "redis://10.0.3.49:6382"
 
 ## Cassandra cluster (channel message history)
 messages_cassandra_contact_points: "10.0.2.111,10.0.0.225,10.0.1.200"

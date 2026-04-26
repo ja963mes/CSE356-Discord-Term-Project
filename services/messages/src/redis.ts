@@ -32,10 +32,15 @@ export const redis = new Redis(env.REDIS_URL, redisClientOptions);
 redis.on("connect", () => logger.info("redis (pubsub) connected"));
 redis.on("error", (err) => logger.error({ err }, "redis (pubsub) client error"));
 
-// KV instance — sessions (`session:*`). Lives on a separate redis-server
-// (port 6380) so session GETs aren't queued behind pubsub fanout on the
-// single-threaded event loop.
+// KV instance (port 6380) — sessions (`session:*`).
 export const kvRedis = new Redis(env.KV_REDIS_URL, redisClientOptions);
 
 kvRedis.on("connect", () => logger.info("redis (kv) connected"));
 kvRedis.on("error", (err) => logger.error({ err }, "redis (kv) client error"));
+
+// KV cache (port 6382) — `rs:latest:ch:*` writes after every channel insert
+// so read-state can skip a `messages_by_channel LIMIT 1` Cassandra read.
+export const kvCacheRedis = new Redis(env.KV_CACHE_REDIS_URL, redisClientOptions);
+
+kvCacheRedis.on("connect", () => logger.info("redis (kv-cache) connected"));
+kvCacheRedis.on("error", (err) => logger.error({ err }, "redis (kv-cache) client error"));

@@ -15,8 +15,10 @@ read_state_port: "3008"
 ## REQUIRED: set these to reachable endpoints (likely private IPs)
 read_state_database_url: "postgresql://postgres:123456789@10.0.2.247:6432/auth_db"
 read_state_redis_url: "redis://10.0.3.49:6379"
-# kv instance — sessions only.
+# kv (port 6380) — sessions only.
 read_state_kv_redis_url: "redis://10.0.3.49:6380"
+# kv2 (port 6382) — read-state caches: rs:latest:*, rs:cs:*, rs:ds:*, rs:mc:*.
+read_state_kv_cache_redis_url: "redis://10.0.3.49:6382"
 
 ## Cassandra cluster (read-state needs access to read_state + messaging + dms keyspaces)
 read_state_cassandra_contact_points: "10.0.2.111,10.0.0.225,10.0.1.200"
