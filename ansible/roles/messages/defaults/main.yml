@@ -4,3 +4,13 @@ messages_systemd_services:
 messages_workspace_build_commands:
   - npm run build --workspace messages-service
 
+# Tuned for a dedicated 4 vCPU / 8GB messages VM (adjust if you resize the instance):
+#   4 Node workers x PG_POOL_MAX ≈ 64 Postgres connections; ensure server/PgBouncer can absorb that.
+#   raising coreConnectionsPerHost + maxRequestsPerConnection (see src/cassandra.ts) for bursty I/O
+messages_pg_pool_max: "16"
+messages_cassandra_local_core_connections: "4"
+messages_cassandra_max_requests_per_connection: "8192"
+# Leave RAM for the OS, nginx, and 4 Node workers; tune down if you see OOM in journal.
+messages_node_options: "--max-old-space-size=4096"
+messages_service_limit_nofile: "65536"
+

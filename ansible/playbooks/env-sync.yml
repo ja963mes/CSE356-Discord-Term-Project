@@ -80,6 +80,21 @@
         state: restarted
       loop: "{{ auth_systemd_services }}"
 
+- name: Sync env - communities
+  hosts: communities
+  become: true
+  tasks:
+    - ansible.builtin.template:
+        src: "{{ deploy_path }}/ansible/roles/communities/templates/discord.env.j2"
+        dest: /etc/discord.env
+        owner: root
+        group: root
+        mode: "0640"
+    - ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: restarted
+      loop: "{{ communities_systemd_services }}"
+
 - name: Sync env - search
   hosts: search
   become: true

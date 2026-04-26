@@ -52,6 +52,41 @@
     group: root
     mode: "0640"
 
+# Default Ubuntu nginx uses worker_connections 768, which is too low for this ingress.
+# Match realtime role; see docs/nginx/production-frontend.conf.example and production-messages header.
+- name: Set nginx worker_rlimit_nofile (main context)
+  ansible.builtin.lineinfile:
+    path: /etc/nginx/nginx.conf
+    regexp: "^\n?\\s*worker_rlimit_nofile\\s+"
+    line: "worker_rlimit_nofile 65536;"
+    insertafter: "^[[:space:]]*worker_processes"
+    firstmatch: true
+  notify: Restart nginx
+
+# 4 vCPU: nginx worker_processes auto => 4 workers; 16384 slots each handles heavier fan-in than 8192.
+- name: Set nginx worker_connections to 16384
+  ansible.builtin.lineinfile:
+    path: /etc/nginx/nginx.conf
+    regexp: "^\n?\\s*worker_connections\\s+"
+    line: "\tworker_connections 16384;"
+  notify: Restart nginx
+
+# systemd default LimitNOFILE can cap nginx below worker_connections; raise for workers.
+- name: Ensure nginx.service.d directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/nginx.service.d
+    state: directory
+    mode: "0755"
+
+- name: Ensure high LimitNOFILE for nginx via systemd drop-in
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/nginx.service.d/override.conf
+    content: |
+      [Service]
+      LimitNOFILE=65536
+    mode: "0644"
+  notify: Reload systemd and restart nginx
+
 - name: Manage messages nginx config files (optional)
   when: manage_nginx_config | default(false)
   block:
