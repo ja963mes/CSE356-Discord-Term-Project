@@ -7,7 +7,7 @@ import { env } from "./env";
 import { requireAuth } from "./middleware/session";
 import { communities, communityMembers, channels, channelMembers } from "./db/schema";
 import { bumpCommunitiesReadCacheAfterCreate } from "./invalidateCommunitiesCache";
-import { redis } from "./redis";
+import { metaRedis } from "./redis";
 
 const COMMUNITY_EVENTS_CHANNEL = "community:events";
 
@@ -81,7 +81,7 @@ app.post("/create-community", requireAuth, async (req: Request, res: Response) =
     const createdAtIso =
       result.created_at instanceof Date ? result.created_at.toISOString() : String(result.created_at);
     try {
-      await redis.publish(
+      await metaRedis.publish(
         COMMUNITY_EVENTS_CHANNEL,
         JSON.stringify({
           type: "community:directory:upsert",

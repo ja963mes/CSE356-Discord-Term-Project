@@ -27,7 +27,7 @@ What this repository implements today versus typical course expectations (multi-
 | Expectation | In this repo |
 |-------------|----------------|
 | **nginx / TLS** | Example configs in `docs/`; production path is **frontend VM + backend VM** ([`PROD-SPLIT-NGINX.md`](./PROD-SPLIT-NGINX.md)). |
-| **Redis** | **Split into two instances** on the Redis VM: `REDIS_URL` (:6379) pubsub fanout + publishes; `KV_REDIS_URL` (:6380) sessions, OAuth state/temp, presence, directory cache, `dm:pending:*`, `INSTANCE_REGISTRY`. Locally both may point at one server. |
+| **Redis** | **Split into four single-threaded instances** on the 4-vCPU Redis VM. `REDIS_URL` (:6379) msg pubsub: `channel:events`, `dm:events`, `dm:userfeed:*`. `META_REDIS_URL` (:6381) meta pubsub: `community:events`, `presence:broadcast`. `KV_REDIS_URL` (:6380) sessions, `oauth_state:*`, `oauth_temp:*`, `realtime:instances`. `KV_CACHE_REDIS_URL` (:6382) `comm:e:*`, `comm:c:*`, `presence:*`, `dm:pending:*`. Locally all may point at one server. |
 | **PostgreSQL** | Shared app DB (migrations under `services/auth/drizzle/`): users, identities, communities, channels, memberships, etc., per actual schema. |
 | **Cassandra** | Channel message timeline, DM storage, read-state paths (see per-service `env` and docs). **Note:** `docker-compose.yml` in this repo may ship Cassandra **commented out**; local full stack often expects Cassandra on **9042** (install separately or enable the compose service). |
 | **Elasticsearch** | **search** service: message search + community directory index; compose includes ES for local/dev. |

@@ -11,8 +11,10 @@ const envSchema = z.object({
   DMS_PORT: z.string().default("3007"),
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().min(1),
-  /** KV redis (sessions, dm:pending:*, INSTANCE_REGISTRY) — port 6380. */
+  /** KV redis (sessions, INSTANCE_REGISTRY) — port 6380. */
   KV_REDIS_URL: z.string().min(1),
+  /** KV cache redis (dm:pending:*) — port 6382. */
+  KV_CACHE_REDIS_URL: z.string().min(1),
   CASSANDRA_CONTACT_POINTS: z.string().default("127.0.0.1"),
   CASSANDRA_PORT: z.coerce.number().int().positive().default(9042),
   CASSANDRA_LOCAL_DATACENTER: z.string().default("datacenter1"),

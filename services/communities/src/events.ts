@@ -1,4 +1,4 @@
-import { redis } from "./redis";
+import { metaRedis } from "./redis";
 import { logger } from "./logger";
 
 const CHANNEL = "community:events";
@@ -68,7 +68,7 @@ export type CommunityEvent =
 
 export async function publishCommunityEvent(event: CommunityEvent): Promise<void> {
   try {
-    await redis.publish(CHANNEL, JSON.stringify(event));
+    await metaRedis.publish(CHANNEL, JSON.stringify(event));
   } catch (err) {
     logger.error({ err, eventType: event.type }, "community event publish failed");
   }

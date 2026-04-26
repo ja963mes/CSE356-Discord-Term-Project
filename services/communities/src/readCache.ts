@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { kvRedis } from "./redis";
+import { kvCacheRedis } from "./redis";
 import { logger } from "./logger";
 
 /** Seconds */
@@ -26,7 +26,7 @@ function keyEpochDir(): string {
 
 export async function getDirectorySearchEpoch(): Promise<string> {
   try {
-    const v = await kvRedis.get(keyEpochDir());
+    const v = await kvCacheRedis.get(keyEpochDir());
     return v ?? "0";
   } catch {
     return "0";
@@ -35,7 +35,7 @@ export async function getDirectorySearchEpoch(): Promise<string> {
 
 export async function getUserCommunityEpoch(userId: string): Promise<string> {
   try {
-    const v = await kvRedis.get(keyEpochUcl(userId));
+    const v = await kvCacheRedis.get(keyEpochUcl(userId));
     return v ?? "0";
   } catch {
     return "0";
@@ -44,7 +44,7 @@ export async function getUserCommunityEpoch(userId: string): Promise<string> {
 
 export async function getCommunityMemEpoch(communityId: string): Promise<string> {
   try {
-    const v = await kvRedis.get(keyEpochMem(communityId));
+    const v = await kvCacheRedis.get(keyEpochMem(communityId));
     return v ?? "0";
   } catch {
     return "0";
@@ -53,7 +53,7 @@ export async function getCommunityMemEpoch(communityId: string): Promise<string>
 
 export async function getCommunityChEpoch(communityId: string): Promise<string> {
   try {
-    const v = await kvRedis.get(keyEpochCh(communityId));
+    const v = await kvCacheRedis.get(keyEpochCh(communityId));
     return v ?? "0";
   } catch {
     return "0";
@@ -62,7 +62,7 @@ export async function getCommunityChEpoch(communityId: string): Promise<string> 
 
 export async function bumpUserCommunityEpoch(userId: string): Promise<void> {
   try {
-    await kvRedis.incr(keyEpochUcl(userId));
+    await kvCacheRedis.incr(keyEpochUcl(userId));
   } catch (e) {
     logger.warn({ err: e }, "readCache: bump ucl epoch failed");
   }
@@ -74,7 +74,7 @@ export async function bumpCommunityEpochs(
   which: { mem?: boolean; ch?: boolean }
 ): Promise<void> {
   try {
-    const p = kvRedis.pipeline();
+    const p = kvCacheRedis.pipeline();
     if (which.mem) p.incr(keyEpochMem(communityId));
     if (which.ch) p.incr(keyEpochCh(communityId));
     await p.exec();
@@ -92,7 +92,7 @@ export async function bumpAllForUserCommunity(userId: string, communityId: strin
 
 export async function getCachedJson<T>(key: string): Promise<T | null> {
   try {
-    const s = await kvRedis.get(key);
+    const s = await kvCacheRedis.get(key);
     if (s == null) return null;
     return JSON.parse(s) as T;
   } catch (e) {
@@ -103,7 +103,7 @@ export async function getCachedJson<T>(key: string): Promise<T | null> {
 
 export async function setCachedJson(key: string, ttlSec: number, value: unknown): Promise<void> {
   try {
-    await kvRedis.setex(key, ttlSec, JSON.stringify(value));
+    await kvCacheRedis.setex(key, ttlSec, JSON.stringify(value));
   } catch (e) {
     logger.debug({ err: e, key }, "readCache: set failed");
   }

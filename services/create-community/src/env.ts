@@ -12,8 +12,12 @@ const envSchema = z.object({
   CREATE_COMMUNITY_PORT: z.string().default("3006"),
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string(),
-  /** KV redis (sessions, comm:e:* INCR pipeline) — port 6380 instance. */
+  /** Meta pubsub (community:events publishes) — port 6381 instance. */
+  META_REDIS_URL: z.string(),
+  /** KV redis (sessions) — port 6380 instance. */
   KV_REDIS_URL: z.string(),
+  /** KV cache redis (comm:e:* INCR pipeline) — port 6382 instance. */
+  KV_CACHE_REDIS_URL: z.string(),
 });
 
 export const env = envSchema.parse(process.env);

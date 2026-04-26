@@ -1,6 +1,6 @@
 import http from "http";
 import { URL } from "url";
-import { redis, kvRedis } from "./redis";
+import { redis, kvRedis, kvCacheRedis } from "./redis";
 import { logger } from "./logger";
 
 // Must match USER_FEED_SHARD_COUNT in realtime service
@@ -133,7 +133,7 @@ async function enqueuePendingDmHint(
 ): Promise<void> {
   if (participantIds.length === 0) return;
   const payload = JSON.stringify(hint);
-  const pipeline = kvRedis.pipeline();
+  const pipeline = kvCacheRedis.pipeline();
   for (const userId of participantIds) {
     const key = `${PENDING_KEY_PREFIX}${userId}`;
     pipeline.lpush(key, payload);
