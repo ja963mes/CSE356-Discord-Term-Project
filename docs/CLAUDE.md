@@ -104,7 +104,7 @@ Channel lifecycle and ACLs live on the **communities service (3002)** — no sep
 - **Spec gaps:** per-device vs global semantics, full read-receipt UX for all surfaces — align with course spec as needed.
 
 ## Key Architecture Decisions
-- **Redis split**: Two Redis instances (same VM, separate `redis-server` processes). `REDIS_URL` (port 6379) — pub/sub fanout + publishes. `KV_REDIS_URL` (port 6380) — sessions, OAuth state/temp, presence, directory cache, `dm:pending:*`, `INSTANCE_REGISTRY`. Rationale: KV reads shouldn't queue behind pubsub fanout on Redis's single-threaded event loop. Locally both URLs can point at one server.
+- **Redis split**: Four single-threaded `redis-server` instances on the 4-vCPU Redis VM. `REDIS_URL` (6379) msg pubsub — `channel:events`, `dm:events`, `dm:userfeed:*`. `META_REDIS_URL` (6381) meta pubsub — `community:events`, `presence:broadcast`. `KV_REDIS_URL` (6380) sessions + `oauth_state:*` + `oauth_temp:*` + `realtime:instances`. `KV_CACHE_REDIS_URL` (6382) `comm:e:*` + `comm:c:*` + `presence:*` + `dm:pending:*`. Rationale: each instance pins to one core, hot session GETs never queue behind cache/presence traffic, and pubsub fanout is split so message + presence broadcast don't contend on one event loop. Locally all URLs may point at one server.
 - **Sessions**: Opaque UUID tokens on the **KV Redis** (`session:<token>` → `internal_id`), cookie `session_token`
 - **Auth middleware**: `requireAuth` in `services/auth/src/middleware/session.ts`
 - **OAuth state**: KV Redis `oauth_state:<state>` (10 min TTL), temp profile `oauth_temp:<token>`

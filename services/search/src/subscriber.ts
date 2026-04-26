@@ -1,6 +1,6 @@
 import Redis from "ioredis";
 import { env } from "./env";
-import { kvRedis } from "./redis";
+import { kvCacheRedis } from "./redis";
 import { indexMessage, updateContent, markDeleted, deleteByScope } from "./elasticsearch";
 import { deleteCommunityDirectory, indexCommunityDirectory } from "./communitiesIndex";
 import { logger } from "./logger";
@@ -10,7 +10,7 @@ const COMMUNITIES_DIRECTORY_EPOCH_KEY = "comm:e:dir";
 
 async function bumpCommunitiesDirectorySearchEpoch(): Promise<void> {
   try {
-    await kvRedis.incr(COMMUNITIES_DIRECTORY_EPOCH_KEY);
+    await kvCacheRedis.incr(COMMUNITIES_DIRECTORY_EPOCH_KEY);
   } catch (e) {
     logger.warn({ err: e }, "bump directory search epoch failed");
   }
@@ -19,11 +19,16 @@ import { db } from "./db";
 import { users, channels } from "./db/schema";
 import { eq } from "drizzle-orm";
 
-const sub = new Redis(env.REDIS_URL, { enableReadyCheck: false });
+// msgSub: pubsub instance — channel:events + dm:events.
+// metaSub: meta pubsub instance — community:events.
+const msgSub = new Redis(env.REDIS_URL, { enableReadyCheck: false });
+const metaSub = new Redis(env.META_REDIS_URL, { enableReadyCheck: false });
 
-sub.on("connect", () => logger.info("redis subscriber connected"));
-sub.on("reconnecting", () => logger.warn("redis subscriber reconnecting"));
-sub.on("error", (err) => logger.error({ err }, "redis subscriber error"));
+for (const [name, client] of [["msg-sub", msgSub], ["meta-sub", metaSub]] as const) {
+  client.on("connect", () => logger.info({ sub: name }, "redis subscriber connected"));
+  client.on("reconnecting", () => logger.warn({ sub: name }, "redis subscriber reconnecting"));
+  client.on("error", (err) => logger.error({ err, sub: name }, "redis subscriber error"));
+}
 
 // Simple in-memory cache for username lookups
 const usernameCache = new Map<string, { username: string; ts: number }>();
@@ -193,7 +198,12 @@ function onMessage(channel: string, message: string): void {
 }
 
 export async function startSubscriber(): Promise<void> {
-  await sub.subscribe("channel:events", "dm:events", "community:events");
-  sub.on("message", onMessage);
-  logger.info({ channels: ["channel:events", "dm:events", "community:events"] }, "subscribed to pubsub channels");
+  await msgSub.subscribe("channel:events", "dm:events");
+  msgSub.on("message", onMessage);
+  await metaSub.subscribe("community:events");
+  metaSub.on("message", onMessage);
+  logger.info(
+    { msg: ["channel:events", "dm:events"], meta: ["community:events"] },
+    "subscribed to pubsub channels"
+  );
 }
