@@ -98,20 +98,12 @@ app.post("/read-state/channels/:channelId/read", requireAuth, async (req, res) =
     return;
   }
 
-  let resolvedMessageId: string | null;
+  // Trust client-provided messageId — the channel mark-read schema requires
+  // it. Skipping the timeuuid→messageId Cassandra lookup is the whole point.
+  // A bogus messageId only corrupts that user's own last_read; not worth the
+  // per-mark-read read against messages_by_channel.
   try {
-    resolvedMessageId = await getChannelMessageIdForTimeuuid(channelIdResult.data, body.data.timeuuid);
-  } catch {
-    res.status(400).json({ error: "Invalid timeuuid" });
-    return;
-  }
-  if (!resolvedMessageId) {
-    res.status(404).json({ error: "Message not found" });
-    return;
-  }
-
-  try {
-    await markChannelRead(req.user!.internal_id, channelIdResult.data, resolvedMessageId, body.data.timeuuid);
+    await markChannelRead(req.user!.internal_id, channelIdResult.data, body.data.messageId, body.data.timeuuid);
   } catch {
     res.status(400).json({ error: "Invalid timeuuid" });
     return;
@@ -151,47 +143,48 @@ app.post("/read-state/dms/:conversationId/read", requireAuth, async (req, res) =
     return;
   }
 
-  let messageId: string | null;
-  try {
-    messageId = await getDmMessageIdForTimeuuid(parsed.data, body.data.timeuuid);
-  } catch {
-    res.status(400).json({ error: "Invalid timeuuid" });
-    return;
-  }
+  // Fast path: trust client-provided messageId, skip the timeuuid→messageId
+  // Cassandra lookup against messages_by_conversation. Slow path (no messageId)
+  // keeps the original lookup + channelId compatibility fallback for old
+  // clients hitting this endpoint with a channelId by mistake.
+  let messageId: string | null = body.data.messageId ?? null;
   if (!messageId) {
-    // Compatibility path: some clients incorrectly call /read-state/dms/:id/read with a channelId.
-    const channelAccess = await assertChannelAccess(req.user!.internal_id, parsed.data);
-    if (!channelAccess.ok) {
-      res.status(404).json({ error: "Message not found" });
-      return;
-    }
-
-    let channelMessageId: string | null;
     try {
-      channelMessageId = await getChannelMessageIdForTimeuuid(parsed.data, body.data.timeuuid);
+      messageId = await getDmMessageIdForTimeuuid(parsed.data, body.data.timeuuid);
     } catch {
       res.status(400).json({ error: "Invalid timeuuid" });
       return;
     }
+    if (!messageId) {
+      const channelAccess = await assertChannelAccess(req.user!.internal_id, parsed.data);
+      if (!channelAccess.ok) {
+        res.status(404).json({ error: "Message not found" });
+        return;
+      }
 
-    if (!channelMessageId) {
-      res.status(404).json({ error: "Message not found" });
+      let channelMessageId: string | null;
+      try {
+        channelMessageId = await getChannelMessageIdForTimeuuid(parsed.data, body.data.timeuuid);
+      } catch {
+        res.status(400).json({ error: "Invalid timeuuid" });
+        return;
+      }
+
+      if (!channelMessageId) {
+        res.status(404).json({ error: "Message not found" });
+        return;
+      }
+
+      try {
+        await markChannelRead(req.user!.internal_id, parsed.data, channelMessageId, body.data.timeuuid);
+      } catch {
+        res.status(400).json({ error: "Invalid timeuuid" });
+        return;
+      }
+
+      res.status(204).send();
       return;
     }
-
-    try {
-      await markChannelRead(req.user!.internal_id, parsed.data, channelMessageId, body.data.timeuuid);
-    } catch {
-      res.status(400).json({ error: "Invalid timeuuid" });
-      return;
-    }
-
-    res.status(204).send();
-    return;
-  }
-  if (body.data.messageId !== undefined && body.data.messageId !== messageId) {
-    res.status(400).json({ error: "messageId does not match timeuuid" });
-    return;
   }
 
   try {

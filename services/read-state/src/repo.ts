@@ -263,13 +263,28 @@ export async function ensureMessageExists(channelId: string, messageId: string, 
   return row?.get("message_id")?.toString() === messageId;
 }
 
+async function getCurrentChannelLastRead(userId: string, channelId: string): Promise<string | null> {
+  // Cache hit (5min TTL, write-through) avoids the SELECT before UPDATE. Falls
+  // back to Cassandra on miss + repopulates so subsequent calls stay hot.
+  const cached = await getCachedString(csKey(userId, channelId));
+  if (cached) {
+    try {
+      const parsed = JSON.parse(cached) as CachedChannelState;
+      return parsed.lastReadTimeuuid;
+    } catch { /* fall through */ }
+  }
+  const state = await fetchAndCacheChannelState(userId, channelId);
+  return state.lastReadTimeuuid;
+}
+
+async function getCurrentMentionCount(userId: string, channelId: string): Promise<number> {
+  const cached = await getCachedString(mcKey(userId, channelId));
+  if (cached != null) return Number(cached) || 0;
+  return fetchAndCacheMentionCount(userId, channelId);
+}
+
 export async function markChannelRead(userId: string, channelId: string, messageId: string, timeuuid: string): Promise<boolean> {
-  const current = await cassandra.execute(
-    `SELECT last_read_timeuuid FROM ${readStateKs}.channel_state_by_user WHERE user_id = ? AND channel_id = ?`,
-    [toUuid(userId), toUuid(channelId)],
-    { prepare: true, consistency: readConsistency }
-  );
-  const currentTimeuuid = current.rows[0]?.get("last_read_timeuuid")?.toString() ?? null;
+  const currentTimeuuid = await getCurrentChannelLastRead(userId, channelId);
   if (currentTimeuuid && compareTimeuuids(timeuuid, currentTimeuuid) <= 0) {
     return false;
   }
@@ -281,19 +296,13 @@ export async function markChannelRead(userId: string, channelId: string, message
     [toUuid(messageId), toTimeUuid(timeuuid), toUuid(userId), toUuid(channelId)],
     { prepare: true, consistency: writeConsistency }
   );
-  // Write-through cache so the next getChannelState skips the Cassandra read.
   void setCachedString(
     csKey(userId, channelId),
     JSON.stringify({ lastReadMessageId: messageId, lastReadTimeuuid: timeuuid }),
     STATE_TTL_SEC
   );
 
-  const mentionResult = await cassandra.execute(
-    `SELECT mention_count FROM ${readStateKs}.channel_mentions_by_user WHERE user_id = ? AND channel_id = ?`,
-    [toUuid(userId), toUuid(channelId)],
-    { prepare: true, consistency: readConsistency }
-  );
-  const mentionCount = Number(mentionResult.rows[0]?.get("mention_count") ?? 0);
+  const mentionCount = await getCurrentMentionCount(userId, channelId);
   if (mentionCount > 0) {
     await cassandra.execute(
       `UPDATE ${readStateKs}.channel_mentions_by_user SET mention_count = mention_count - ? WHERE user_id = ? AND channel_id = ?`,
@@ -301,7 +310,6 @@ export async function markChannelRead(userId: string, channelId: string, message
       { prepare: true, consistency: writeConsistency }
     );
   }
-  // Mention count is now zero (or already was). Cache directly.
   void setCachedString(mcKey(userId, channelId), "0", STATE_TTL_SEC);
 
   return true;
@@ -334,22 +342,62 @@ export async function findMentionedUserIds(channelId: string, content: string): 
     .map((row) => row.user_id);
 }
 
+// Mention-increment batching: each mention used to fire one Cassandra UPDATE
+// per (user, channel). At 78 msg/sec with multi-mention messages this dominates
+// counter-table write load. Coalesce in-process for up to MENTION_FLUSH_MS;
+// flush as a single `mention_count = mention_count + N` per pair. On crash
+// pending increments are lost — acceptable for unread-badge UX.
+const MENTION_FLUSH_MS = 1000;
+const pendingMentions = new Map<string, { userId: string; channelId: string; count: number }>();
+let mentionFlushTimer: NodeJS.Timeout | null = null;
+
+function scheduleMentionFlush(): void {
+  if (mentionFlushTimer != null) return;
+  mentionFlushTimer = setTimeout(() => {
+    mentionFlushTimer = null;
+    void flushPendingMentions();
+  }, MENTION_FLUSH_MS);
+}
+
+async function flushPendingMentions(): Promise<void> {
+  if (pendingMentions.size === 0) return;
+  const batch = Array.from(pendingMentions.values());
+  pendingMentions.clear();
+  await Promise.all(
+    batch.map((entry) =>
+      cassandra
+        .execute(
+          `UPDATE ${readStateKs}.channel_mentions_by_user SET mention_count = mention_count + ? WHERE user_id = ? AND channel_id = ?`,
+          [entry.count, toUuid(entry.userId), toUuid(entry.channelId)],
+          { prepare: true, consistency: writeConsistency }
+        )
+        .catch((err) => {
+          console.error("[read-state] mention flush failed", { ...entry, err });
+        })
+    )
+  );
+  await delCached(...batch.map((e) => mcKey(e.userId, e.channelId)));
+}
+
 export async function incrementMentionCounts(channelId: string, authorId: string, content: string): Promise<void> {
   const mentionedUserIds = await findMentionedUserIds(channelId, content);
   const targets = mentionedUserIds.filter((userId) => userId !== authorId);
   if (targets.length === 0) return;
-  await Promise.all(
-    targets.map((userId) =>
-      cassandra.execute(
-        `UPDATE ${readStateKs}.channel_mentions_by_user SET mention_count = mention_count + 1 WHERE user_id = ? AND channel_id = ?`,
-        [toUuid(userId), toUuid(channelId)],
-        { prepare: true, consistency: writeConsistency }
-      )
-    )
-  );
-  // Invalidate cached mention_count for affected users — next read repopulates
-  // from the (now fresh) counter row.
-  void delCached(...targets.map((u) => mcKey(u, channelId)));
+  for (const userId of targets) {
+    const key = `${userId}:${channelId}`;
+    const existing = pendingMentions.get(key);
+    if (existing) existing.count += 1;
+    else pendingMentions.set(key, { userId, channelId, count: 1 });
+  }
+  scheduleMentionFlush();
+}
+
+export async function flushMentionsForShutdown(): Promise<void> {
+  if (mentionFlushTimer != null) {
+    clearTimeout(mentionFlushTimer);
+    mentionFlushTimer = null;
+  }
+  await flushPendingMentions();
 }
 
 async function fetchAndCacheDmState(userId: string, conversationId: string): Promise<CachedDmState> {
@@ -470,12 +518,16 @@ export async function markDmRead(
     return false;
   }
 
-  const current = await cassandra.execute(
-    `SELECT last_read_timeuuid FROM ${readStateKs}.dm_state_by_user WHERE user_id = ? AND conversation_id = ?`,
-    [toUuid(userId), toUuid(conversationId)],
-    { prepare: true, consistency: readConsistency }
-  );
-  const currentTimeuuid = current.rows[0]?.get("last_read_timeuuid")?.toString() ?? null;
+  // Cache hit avoids the SELECT before UPDATE. 5min TTL + write-through means
+  // most consecutive mark-reads from the same user pay 0 reads here.
+  let currentTimeuuid: string | null = null;
+  const cached = await getCachedString(dsKey(userId, conversationId));
+  if (cached) {
+    try { currentTimeuuid = (JSON.parse(cached) as CachedDmState).lastReadTimeuuid; }
+    catch { currentTimeuuid = (await fetchAndCacheDmState(userId, conversationId)).lastReadTimeuuid; }
+  } else {
+    currentTimeuuid = (await fetchAndCacheDmState(userId, conversationId)).lastReadTimeuuid;
+  }
   if (currentTimeuuid && compareTimeuuids(timeuuid, currentTimeuuid) <= 0) {
     return false;
   }
