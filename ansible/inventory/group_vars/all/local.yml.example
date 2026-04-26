@@ -2,5 +2,5 @@
 # out of git.
 
 # manage_zabbix_agent: true
-# zabbix_agent_server: "10.0.2.139"
+# zabbix_agent_server: "{{ zabbix_agent_server }}"
 # zabbix_agent_server_active: "{{ zabbix_agent_server }}"
