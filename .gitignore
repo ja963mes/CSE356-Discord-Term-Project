@@ -9,6 +9,7 @@ node_modules/
 
 # Ansible secrets (real OAuth/API keys — never commit)
 ansible/inventory/group_vars/auth/secrets.yml
+ansible/inventory/group_vars/all/local.yml
 
 # Build output
 dist/

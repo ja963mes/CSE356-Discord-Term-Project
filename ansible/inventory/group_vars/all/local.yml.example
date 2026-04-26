@@ -1,0 +1,6 @@
+# Local-only Ansible overrides. Copy to `local.yml` and keep the real values
+# out of git.
+
+# manage_zabbix_agent: true
+# zabbix_agent_server: "10.0.2.139"
+# zabbix_agent_server_active: "{{ zabbix_agent_server }}"
