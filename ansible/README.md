@@ -7,7 +7,7 @@ Deploy automation for the **split frontend / backend / auth / realtime / search 
 ```bash
 cd ansible
 cp inventory/hosts.ini.example inventory/hosts.ini
-# group_vars/all.yml is in git with defaults; copy from .example only if you override locally
+# group_vars/all/main.yml is in git with defaults; copy from .example only if you override locally
 ansible-playbook -i inventory/hosts.ini --private-key ~/.ssh/id_ed25519 playbooks/site.yml
 ```
 

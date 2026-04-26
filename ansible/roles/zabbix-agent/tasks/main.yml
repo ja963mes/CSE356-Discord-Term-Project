@@ -5,7 +5,7 @@
       ansible.builtin.assert:
         that:
           - zabbix_agent_server | length > 0
-        fail_msg: "Set zabbix_agent_server in inventory/group_vars/all.yml before enabling manage_zabbix_agent."
+        fail_msg: "Set zabbix_agent_server in inventory/group_vars/all/local.yml (or all/main.yml) before enabling manage_zabbix_agent."
 
     - name: Install Zabbix release repository package
       ansible.builtin.apt:
