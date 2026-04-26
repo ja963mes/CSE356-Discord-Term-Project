@@ -36,9 +36,8 @@ search_workspace_build_commands:
   - npm run build --workspace search-service
 
 # Optional: deploy Zabbix agent 2 to all managed VMs via the zabbix-agent role.
-# Disabled by default so routine deploys are unchanged until you opt in.
+# Keep real Zabbix server IPs in inventory/group_vars/all/local.yml, which is gitignored.
 manage_zabbix_agent: false
-# Required when enabling the role: IP or DNS name of your Zabbix server.
 zabbix_agent_server: ""
 # Optional override if active checks should point elsewhere.
 # zabbix_agent_server_active: "{{ zabbix_agent_server }}"
