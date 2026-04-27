@@ -16,6 +16,10 @@ supervised systemd
 maxmemory {{ instance.maxmemory }}
 maxmemory-policy {{ instance.maxmemory_policy }}
 
+{% if instance.client_output_buffer_limit is defined %}
+# Disconnect slow pub/sub subscribers before their output buffers exhaust VM RAM.
+client-output-buffer-limit {{ instance.client_output_buffer_limit }}
+{% endif %}
 # Disable persistence — both workloads (pubsub + sessions/cache) are
 # recoverable from upstream sources of truth (Postgres for users, login
 # flow for sessions, dms-service for pending hints, etc.). Skipping RDB
