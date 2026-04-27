@@ -19,8 +19,8 @@ import { db } from "./db";
 import { users, channels } from "./db/schema";
 import { eq } from "drizzle-orm";
 
-// msgSub: pubsub instance — channel:events + dm:events.
-// metaSub: meta pubsub instance — community:events.
+// msgSub: pubsub shard 0 — even-hashed channel:events + dm:events.
+// metaSub: pubsub shard 1 — odd-hashed channel:events + community:events.
 const msgSub = new Redis(env.REDIS_URL, { enableReadyCheck: false });
 const metaSub = new Redis(env.META_REDIS_URL, { enableReadyCheck: false });
 
@@ -200,10 +200,12 @@ function onMessage(channel: string, message: string): void {
 export async function startSubscriber(): Promise<void> {
   await msgSub.subscribe("channel:events", "dm:events");
   msgSub.on("message", onMessage);
-  await metaSub.subscribe("community:events");
+  // channel:events sharded across both pubsub instances (messages publishes
+  // odd-hashed channelIds to META_REDIS_URL). Subscribe both or miss half.
+  await metaSub.subscribe("community:events", "channel:events");
   metaSub.on("message", onMessage);
   logger.info(
-    { msg: ["channel:events", "dm:events"], meta: ["community:events"] },
+    { msg: ["channel:events", "dm:events"], meta: ["community:events", "channel:events"] },
     "subscribed to pubsub channels"
   );
 }

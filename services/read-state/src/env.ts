@@ -12,6 +12,8 @@ const envSchema = z.object({
   READ_STATE_PORT: z.string().optional(),
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string(),
+  /** Pubsub shard 1 (port 6381) — odd-hashed channel:events. Subscribe alongside REDIS_URL. */
+  META_REDIS_URL: z.string(),
   /** KV redis (sessions) — port 6380 instance. */
   KV_REDIS_URL: z.string(),
   /** KV cache (rs:latest:*, rs:cs:*, rs:ds:*, rs:mc:*) — port 6382 instance. */
