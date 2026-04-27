@@ -270,6 +270,10 @@ const upsertItem = async ({ hostid, interfaceid, item }) => {
     return "inherited";
   }
 
+  if (!interfaceid) {
+    throw new Error(`No agent interface found for host ${hostid} while creating ${item.key}.`);
+  }
+
   const payload = {
     name: item.name,
     key_: item.key,
@@ -277,11 +281,8 @@ const upsertItem = async ({ hostid, interfaceid, item }) => {
     value_type: 3,
     delay: "30s",
     status: 0,
+    interfaceid,
   };
-
-  if (item.key !== "agent.ping") {
-    payload.interfaceid = interfaceid;
-  }
 
   if (existing.length) {
     await rpc("item.update", {
