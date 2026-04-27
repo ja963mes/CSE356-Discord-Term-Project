@@ -130,7 +130,22 @@ export async function searchMessages(params: SearchParams): Promise<{ total: num
     return { total: 0, results: [] };
   }
 
-  const must: object[] = [{ match: { content: { query: params.query, fuzziness: 1 } } }];
+  // operator:"and" — every query term must match. Default OR returned docs
+  // matching any single word, e.g. "akko lavender purple" hit a doc with only
+  // "purple". prefix_length pins the first character so fuzziness:1 doesn't
+  // drift the leading letter.
+  const must: object[] = [
+    {
+      match: {
+        content: {
+          query: params.query,
+          operator: "and",
+          fuzziness: 1,
+          prefix_length: 1,
+        },
+      },
+    },
+  ];
 
   const filter: object[] = [
     { terms: { scope_id: params.scopeIds } },
