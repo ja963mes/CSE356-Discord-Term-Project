@@ -1000,7 +1000,7 @@ wss.on("connection", async (ws, req) => {
 
 // channel:events shard fan-out is owned by @discord/pubsub. msgSub = shard 0,
 // metaSub = shard 1. Bumping shard count = update shared module + wire one more client.
-void subscribeChannelEvents([msgSub, metaSub]).catch((err) =>
+void subscribeChannelEvents([msgSub, metaSub]).catch((err: unknown) =>
   logger.error({ err }, "channel:events subscribe failed")
 );
 msgSub.subscribe(...dmShardChannels, (err) => {

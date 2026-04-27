@@ -7,6 +7,7 @@ realtime_systemd_services:
   - discord-realtime-4
 
 realtime_workspace_build_commands:
+  - npm run build --workspace @discord/pubsub
   - npm run build --workspace realtime-service
 
 realtime_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-realtime.conf.example"
