@@ -1,7 +1,7 @@
 import Redis from "ioredis";
 import { env } from "./env";
 
-// Pubsub instance — publishes `dm:events`, subscribes to `channel:events`.
+// Pubsub instance — publishes `dm:userfeed:*` shards, subscribes to `channel:events`.
 export const redis = new Redis(env.REDIS_URL);
 
 redis.on("connect", () => console.log("[read-state] Redis (pubsub) connected"));
