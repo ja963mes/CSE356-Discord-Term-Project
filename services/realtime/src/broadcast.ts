@@ -1,8 +1,10 @@
 import Redis from "ioredis";
+import { PRESENCE_BROADCAST, publishPresenceBroadcast } from "@discord/pubsub";
 import { PresenceStatus } from "./presence";
 import { getPresenceTargets } from "./subscriptions";
 
-const PRESENCE_BROADCAST_CHANNEL = "presence:broadcast";
+// Re-export under the historical name so callsites don't churn.
+const PRESENCE_BROADCAST_CHANNEL = PRESENCE_BROADCAST;
 
 export type PresenceBroadcastMessage = {
   type: "presence_update";
@@ -29,7 +31,7 @@ export async function broadcastPresenceChange(
   const targetSet = [...new Set([...targets, userId])];
 
   const message: PresenceBroadcastMessage = { type: "presence_update", userId, status, awayMessage, targets: targetSet };
-  await pubRedis.publish(PRESENCE_BROADCAST_CHANNEL, JSON.stringify(message));
+  await publishPresenceBroadcast(pubRedis, JSON.stringify(message));
 }
 
 export { PRESENCE_BROADCAST_CHANNEL };

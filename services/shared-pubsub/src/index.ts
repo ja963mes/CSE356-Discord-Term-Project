@@ -86,3 +86,43 @@ export async function subscribeChannelEvents(clients: Redis[]): Promise<void> {
   }
   await Promise.all(clients.map((c) => c.subscribe(CHANNEL_EVENTS)));
 }
+
+/** Publish a community:events payload. Single instance — no sharding. */
+export async function publishCommunityEvent(client: Redis, payload: string): Promise<void> {
+  await client.publish(COMMUNITY_EVENTS, payload);
+}
+
+/** Publish a presence:broadcast payload. Single instance — no sharding. */
+export async function publishPresenceBroadcast(client: Redis, payload: string): Promise<void> {
+  await client.publish(PRESENCE_BROADCAST, payload);
+}
+
+/** Publish a dm:events payload (search/ES indexing). Single instance — no sharding. */
+export async function publishDmEvent(client: Redis, payload: string): Promise<void> {
+  await client.publish(DM_EVENTS, payload);
+}
+
+/**
+ * Publish a single dm:userfeed:N payload routed by userId hash. Use for
+ * one-off publishes; for fan-out across many users prefer the batch variant.
+ */
+export async function publishUserFeed(client: Redis, userId: string, payload: string): Promise<void> {
+  await client.publish(userFeedChannel(userId), payload);
+}
+
+/**
+ * Pipeline-publishes a batch of dm:userfeed entries — one PUBLISH per
+ * userId, all in a single round-trip. Caller serializes payload (each entry
+ * may have a different envelope, e.g. `{targetUserId, event}`).
+ */
+export async function publishUserFeedBatch(
+  client: Redis,
+  entries: Array<{ userId: string; payload: string }>
+): Promise<void> {
+  if (entries.length === 0) return;
+  const pipeline = client.pipeline();
+  for (const { userId, payload } of entries) {
+    pipeline.publish(userFeedChannel(userId), payload);
+  }
+  await pipeline.exec();
+}

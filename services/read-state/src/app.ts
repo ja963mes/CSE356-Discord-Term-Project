@@ -17,7 +17,7 @@ import {
   markDmRead,
 } from "./repo";
 import { redis } from "./redis";
-import { userFeedChannel } from "@discord/pubsub";
+import { publishUserFeedBatch } from "@discord/pubsub";
 
 const app = express();
 app.use(express.json());
@@ -204,11 +204,13 @@ app.post("/read-state/dms/:conversationId/read", requireAuth, async (req, res) =
     messageId,
     timeuuid: body.data.timeuuid,
   };
-  const pipeline = redis.pipeline();
-  for (const participantId of participantIds) {
-    pipeline.publish(userFeedChannel(participantId), JSON.stringify({ targetUserId: participantId, event }));
-  }
-  await pipeline.exec();
+  await publishUserFeedBatch(
+    redis,
+    participantIds.map((participantId) => ({
+      userId: participantId,
+      payload: JSON.stringify({ targetUserId: participantId, event }),
+    }))
+  );
 
   res.status(204).send();
 });

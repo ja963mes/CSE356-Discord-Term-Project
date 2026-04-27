@@ -1,7 +1,6 @@
+import { publishCommunityEvent as sharedPublishCommunityEvent } from "@discord/pubsub";
 import { metaRedis } from "./redis";
 import { logger } from "./logger";
-
-const CHANNEL = "community:events";
 
 export type CommunityEvent =
   | {
@@ -68,7 +67,7 @@ export type CommunityEvent =
 
 export async function publishCommunityEvent(event: CommunityEvent): Promise<void> {
   try {
-    await metaRedis.publish(CHANNEL, JSON.stringify(event));
+    await sharedPublishCommunityEvent(metaRedis, JSON.stringify(event));
   } catch (err) {
     logger.error({ err, eventType: event.type }, "community event publish failed");
   }
