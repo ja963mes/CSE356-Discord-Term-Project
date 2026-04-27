@@ -277,6 +277,13 @@ export async function publishDmEvent(event: DmEvent): Promise<void> {
     throw publishErr;
   }
 
+  // Fan-out shard channels target realtime only. Search subscribes to a
+  // single broadcast channel for ES indexing — publish the unwrapped event
+  // there so DMs land in the search index.
+  redis
+    .publish("dm:events", JSON.stringify(wireEvent))
+    .catch((err) => logger.error({ err, eventType: event.type }, "dm:events publish failed"));
+
   if (event.type === "dm:message:create") {
     logger.info(
       {
