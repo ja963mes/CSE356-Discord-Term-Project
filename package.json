@@ -31,7 +31,8 @@
     "diagnostics:local": "bash ./scripts/collect-diagnostics.sh",
     "diagnostics:watch-cpu": "bash ./scripts/capture-on-high-cpu.sh",
     "k6:routes": "k6 run k6/routes-latency.js",
-    "k6:search-messages": "k6 run k6/search-messages-latency.js"
+    "k6:search-messages": "k6 run k6/search-messages-latency.js",
+    "zabbix:bootstrap": "node scripts/zabbix-bootstrap.mjs"
   },
   "keywords": [],
   "author": "",
