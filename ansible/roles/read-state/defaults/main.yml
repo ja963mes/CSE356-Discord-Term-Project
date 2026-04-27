@@ -2,6 +2,7 @@ read_state_systemd_services:
   - discord-read-state
 
 read_state_workspace_build_commands:
+  - npm run build --workspace @discord/pubsub
   - npm run build --workspace read-state-service
 
 read_state_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-read-state.conf.example"

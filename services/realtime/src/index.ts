@@ -34,6 +34,13 @@ import {
 } from "./subscriptions";
 import { logger } from "./logger";
 import { initCassandra, listDmMessagesNewerThanTimestamp } from "./cassandra";
+import {
+  CHANNEL_EVENTS,
+  COMMUNITY_EVENTS,
+  USER_FEED_SHARD_COUNT,
+  subscribeChannelEvents,
+  userFeedShardChannels,
+} from "@discord/pubsub";
 
 // Unique ID for this instance — used to namespace presence:conns fields
 // so multiple instances don't stomp on each other's connection data at startup
@@ -621,9 +628,7 @@ function fanOutDmEventLocal(
   return { delivered: dmSentCount, localMiss: dmNotConnectedCount, totalTargets: targetUserIds.size };
 }
 
-// Must match USER_FEED_SHARD_COUNT in dms service
-const USER_FEED_SHARD_COUNT = 20;
-const dmShardChannels = Array.from({ length: USER_FEED_SHARD_COUNT }, (_, i) => `dm:userfeed:${i}`);
+const dmShardChannels = userFeedShardChannels();
 
 // Targeted per-user fanout used by the shard pubsub path. Delivers to exactly
 // one user's connections; dedup prevents double-send with direct HTTP path.
@@ -993,15 +998,18 @@ wss.on("connection", async (ws, req) => {
 // runUserIdleCheck above. computePresence still provides cluster-wide truth;
 // only the WHEN of polling is now event-driven, not the WHAT.
 
-// msgSub: pubsub instance — per-user shard channels + channel:events.
-// metaSub: meta pubsub instance — community:events + presence:broadcast.
-msgSub.subscribe(...dmShardChannels, "channel:events", (err) => {
+// channel:events shard fan-out is owned by @discord/pubsub. msgSub = shard 0,
+// metaSub = shard 1. Bumping shard count = update shared module + wire one more client.
+void subscribeChannelEvents([msgSub, metaSub]).catch((err) =>
+  logger.error({ err }, "channel:events subscribe failed")
+);
+msgSub.subscribe(...dmShardChannels, (err) => {
   if (err) logger.error({ err }, "msg-sub subscribe failed");
-  else logger.info({ shards: USER_FEED_SHARD_COUNT }, "subscribed to msg pubsub: dm:userfeed:*, channel:events");
+  else logger.info({ shards: USER_FEED_SHARD_COUNT }, "subscribed to msg pubsub: dm:userfeed:*");
 });
-metaSub.subscribe("community:events", PRESENCE_BROADCAST_CHANNEL, "channel:events", (err) => {
+metaSub.subscribe(COMMUNITY_EVENTS, PRESENCE_BROADCAST_CHANNEL, (err) => {
   if (err) logger.error({ err }, "meta-sub subscribe failed");
-  else logger.info({}, "subscribed to meta pubsub: community:events, presence:broadcast, channel:events");
+  else logger.info({}, "subscribed to meta pubsub: community:events, presence:broadcast");
 });
 
 const onPubsubMessage = (channel: string, message: string) => {
@@ -1019,7 +1027,7 @@ const onPubsubMessage = (channel: string, message: string) => {
     }
     return;
   }
-  if (channel === "community:events") {
+  if (channel === COMMUNITY_EVENTS) {
     let event: { type: string; communityId?: string; userId?: string; [key: string]: unknown };
     try { event = JSON.parse(message); } catch { return; }
 
@@ -1115,7 +1123,7 @@ const onPubsubMessage = (channel: string, message: string) => {
     return;
   }
 
-  if (channel === "channel:events") {
+  if (channel === CHANNEL_EVENTS) {
     let event: { type: string; channelId?: string; communityId?: string; [key: string]: unknown };
     try { event = JSON.parse(message); } catch { return; }
 

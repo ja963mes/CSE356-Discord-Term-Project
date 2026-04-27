@@ -1,15 +1,15 @@
 import http from "http";
 import { URL } from "url";
+import {
+  USER_FEED_SHARD_COUNT,
+  publishDmEvent as sharedPublishDmEvent,
+  publishUserFeedBatch,
+} from "@discord/pubsub";
 import { redis, kvRedis, kvCacheRedis } from "./redis";
 import { logger } from "./logger";
 
-// Must match USER_FEED_SHARD_COUNT in realtime service
-const USER_FEED_SHARD_COUNT = 20;
-
-function userFeedChannel(userId: string): string {
-  const shard = parseInt(userId.replace(/-/g, "").substring(0, 8), 16) % USER_FEED_SHARD_COUNT;
-  return `dm:userfeed:${shard}`;
-}
+// Re-export for any internal callers that referenced the local constant.
+export { USER_FEED_SHARD_COUNT };
 
 /**
  * Keep-alive HTTP pool for direct fanout. Node's global fetch opens a fresh
@@ -257,14 +257,14 @@ export async function publishDmEvent(event: DmEvent): Promise<void> {
   // shard channels but routes each message to only the targeted user — O(1)
   // lookup vs O(participants) scan on every instance for every event.
   const participants = event.participantIds ?? [];
+  const entries = participants.map((participantId) => ({
+    userId: participantId,
+    payload: JSON.stringify({ targetUserId: participantId, event: wireEvent }),
+  }));
   let publishErr: unknown;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const pipeline = redis.pipeline();
-      for (const participantId of participants) {
-        pipeline.publish(userFeedChannel(participantId), JSON.stringify({ targetUserId: participantId, event: wireEvent }));
-      }
-      await pipeline.exec();
+      await publishUserFeedBatch(redis, entries);
       publishErr = undefined;
       break;
     } catch (err) {
@@ -280,9 +280,9 @@ export async function publishDmEvent(event: DmEvent): Promise<void> {
   // Fan-out shard channels target realtime only. Search subscribes to a
   // single broadcast channel for ES indexing — publish the unwrapped event
   // there so DMs land in the search index.
-  redis
-    .publish("dm:events", JSON.stringify(wireEvent))
-    .catch((err) => logger.error({ err, eventType: event.type }, "dm:events publish failed"));
+  sharedPublishDmEvent(redis, JSON.stringify(wireEvent)).catch((err) =>
+    logger.error({ err, eventType: event.type }, "dm:events publish failed")
+  );
 
   if (event.type === "dm:message:create") {
     logger.info(

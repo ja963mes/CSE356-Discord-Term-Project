@@ -1,4 +1,5 @@
 backend_workspace_build_commands:
+  - npm run build --workspace @discord/pubsub
   - npm run build --workspace communities-service
   - npm run build --workspace create-community-service
 

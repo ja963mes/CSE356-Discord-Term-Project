@@ -1,4 +1,5 @@
 search_workspace_build_commands:
+  - npm run build --workspace @discord/pubsub
   - npm run build --workspace search-service
 
 search_systemd_services:

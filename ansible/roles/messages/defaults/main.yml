@@ -2,6 +2,7 @@ messages_systemd_services:
   - discord-messages
 
 messages_workspace_build_commands:
+  - npm run build --workspace @discord/pubsub
   - npm run build --workspace messages-service
 
 # Tuned for a dedicated 4 vCPU / 8GB messages VM (adjust if you resize the instance):
