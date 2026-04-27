@@ -15,6 +15,8 @@ const envSchema = z.object({
   /** Per worker process. With cluster, total DB connections ≈ workers × this (watch Postgres / PgBouncer limits). */
   PG_POOL_MAX: z.coerce.number().int().min(1).max(200).default(10),
   REDIS_URL: z.string(),
+  /** Pubsub shard 2 — port 6381. channel:events are sharded across REDIS_URL and this. */
+  PUBSUB2_REDIS_URL: z.string(),
   /** KV redis (sessions) — port 6380 instance. */
   KV_REDIS_URL: z.string(),
   /** KV cache (rs:latest:ch:* writes for read-state) — port 6382 instance. */
