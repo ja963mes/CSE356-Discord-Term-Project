@@ -48,6 +48,13 @@
     masked: true
   failed_when: false
 
+- name: Enable vm.overcommit_memory for Redis background saves
+  ansible.posix.sysctl:
+    name: vm.overcommit_memory
+    value: "1"
+    state: present
+    reload: true
+
 - name: Ensure per-instance data directories exist
   ansible.builtin.file:
     path: "/var/lib/redis/{{ item.name }}"

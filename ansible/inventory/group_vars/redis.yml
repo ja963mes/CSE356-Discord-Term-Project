@@ -26,10 +26,14 @@ redis_instances:
     maxmemory: "1gb"
     # Pubsub holds no durable data — losing keys under memory pressure is fine.
     maxmemory_policy: "allkeys-lru"
+    # Hard-limit subscriber output buffers: disconnect slow consumers at 32mb
+    # (or 8mb sustained for 10s) before they can exhaust VM RAM and trigger OOM.
+    client_output_buffer_limit: "pubsub 32mb 8mb 10"
   - name: pubsub2
     port: 6381
     maxmemory: "1gb"
     maxmemory_policy: "allkeys-lru"
+    client_output_buffer_limit: "pubsub 32mb 8mb 10"
   - name: kv
     port: 6380
     maxmemory: "2gb"
