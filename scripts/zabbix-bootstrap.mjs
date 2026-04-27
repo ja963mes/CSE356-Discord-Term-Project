@@ -261,10 +261,14 @@ const getOrCreateHost = async (plan, groupid, templateid) => {
 
 const upsertItem = async ({ hostid, interfaceid, item }) => {
   const existing = await rpc("item.get", {
-    output: ["itemid", "name", "key_", "interfaceid"],
+    output: ["itemid", "name", "key_", "interfaceid", "templateid"],
     hostids: hostid,
     filter: { key_: [item.key] },
   });
+
+  if (existing.length && existing[0].templateid && existing[0].templateid !== "0") {
+    return "inherited";
+  }
 
   const payload = {
     name: item.name,
