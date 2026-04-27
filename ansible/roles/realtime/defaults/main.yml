@@ -2,4 +2,5 @@ realtime_systemd_services:
   - discord-realtime
 
 realtime_workspace_build_commands:
+  - npm run build --workspace @discord/pubsub
   - npm run build --workspace realtime-service

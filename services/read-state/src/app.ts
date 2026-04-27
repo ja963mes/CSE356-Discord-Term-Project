@@ -17,6 +17,7 @@ import {
   markDmRead,
 } from "./repo";
 import { redis } from "./redis";
+import { userFeedChannel } from "@discord/pubsub";
 
 const app = express();
 app.use(express.json());
@@ -195,7 +196,6 @@ app.post("/read-state/dms/:conversationId/read", requireAuth, async (req, res) =
   }
 
   const participantIds = await listDmParticipantIdsForEvent(parsed.data);
-  const USER_FEED_SHARD_COUNT = 20;
   const event = {
     type: "dm:read-state:update",
     conversationId: parsed.data,
@@ -206,8 +206,7 @@ app.post("/read-state/dms/:conversationId/read", requireAuth, async (req, res) =
   };
   const pipeline = redis.pipeline();
   for (const participantId of participantIds) {
-    const shard = parseInt(participantId.replace(/-/g, "").substring(0, 8), 16) % USER_FEED_SHARD_COUNT;
-    pipeline.publish(`dm:userfeed:${shard}`, JSON.stringify({ targetUserId: participantId, event }));
+    pipeline.publish(userFeedChannel(participantId), JSON.stringify({ targetUserId: participantId, event }));
   }
   await pipeline.exec();
 

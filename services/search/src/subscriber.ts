@@ -1,4 +1,5 @@
 import Redis from "ioredis";
+import { CHANNEL_EVENTS, COMMUNITY_EVENTS, DM_EVENTS, subscribeChannelEvents } from "@discord/pubsub";
 import { env } from "./env";
 import { kvCacheRedis } from "./redis";
 import { indexMessage, updateContent, markDeleted, deleteByScope } from "./elasticsearch";
@@ -198,14 +199,15 @@ function onMessage(channel: string, message: string): void {
 }
 
 export async function startSubscriber(): Promise<void> {
-  await msgSub.subscribe("channel:events", "dm:events");
+  // channel:events shard fan-out is owned by @discord/pubsub. Subscribe shard 0
+  // (msgSub) and shard 1 (metaSub) — adding shards = bump constant in shared module.
+  await subscribeChannelEvents([msgSub, metaSub]);
+  await msgSub.subscribe(DM_EVENTS);
+  await metaSub.subscribe(COMMUNITY_EVENTS);
   msgSub.on("message", onMessage);
-  // channel:events sharded across both pubsub instances (messages publishes
-  // odd-hashed channelIds to META_REDIS_URL). Subscribe both or miss half.
-  await metaSub.subscribe("community:events", "channel:events");
   metaSub.on("message", onMessage);
   logger.info(
-    { msg: ["channel:events", "dm:events"], meta: ["community:events", "channel:events"] },
+    { msg: [CHANNEL_EVENTS, DM_EVENTS], meta: [CHANNEL_EVENTS, COMMUNITY_EVENTS] },
     "subscribed to pubsub channels"
   );
 }
