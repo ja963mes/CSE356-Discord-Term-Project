@@ -44,7 +44,8 @@ const shouldRegisterInstance = !cluster.isWorker || cluster.worker?.id === 1;
 logger.info({ instanceId, workerId: cluster.worker?.id ?? "primary" }, "startup");
 
 // Meta pubsub (port 6381) — `metaRedis.publish(...)` for presence:broadcast.
-// channel:events + dm:userfeed:* live on the message pubsub instance instead.
+// Also receives the odd-hashed shard of channel:events (publisher shards by channelId hash).
+// dm:userfeed:* live on the message pubsub instance (6379) only.
 const metaRedis = new Redis(env.META_REDIS_URL);
 metaRedis.on("connect", () => logger.info("redis (meta) connected"));
 metaRedis.on("error", (err) => logger.error({ err }, "redis (meta) error"));
@@ -89,8 +90,8 @@ kvCacheRedis.on("connect", async () => {
 kvCacheRedis.on("error", (err) => logger.error({ err }, "redis (kv-cache) error"));
 
 // Dedicated subscriber clients (ioredis requires a separate connection per
-// subscribe call). msgSub: pubsub instance — channel:events + dm:userfeed:*.
-// metaSub: meta pubsub instance — community:events + presence:broadcast.
+// subscribe call). msgSub: pubsub shard 0 — even-hashed channel:events + dm:userfeed:*.
+// metaSub: pubsub shard 1 — odd-hashed channel:events + community:events + presence:broadcast.
 const msgSub = new Redis(env.REDIS_URL);
 msgSub.on("error", (err) => logger.error({ err }, "redis msg-sub error"));
 const metaSub = new Redis(env.META_REDIS_URL);
@@ -998,9 +999,9 @@ msgSub.subscribe(...dmShardChannels, "channel:events", (err) => {
   if (err) logger.error({ err }, "msg-sub subscribe failed");
   else logger.info({ shards: USER_FEED_SHARD_COUNT }, "subscribed to msg pubsub: dm:userfeed:*, channel:events");
 });
-metaSub.subscribe("community:events", PRESENCE_BROADCAST_CHANNEL, (err) => {
+metaSub.subscribe("community:events", PRESENCE_BROADCAST_CHANNEL, "channel:events", (err) => {
   if (err) logger.error({ err }, "meta-sub subscribe failed");
-  else logger.info({}, "subscribed to meta pubsub: community:events, presence:broadcast");
+  else logger.info({}, "subscribed to meta pubsub: community:events, presence:broadcast, channel:events");
 });
 
 const onPubsubMessage = (channel: string, message: string) => {

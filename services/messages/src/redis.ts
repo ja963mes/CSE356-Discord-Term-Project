@@ -26,11 +26,17 @@ const redisClientOptions: RedisOptions = {
   },
 };
 
-// Pubsub instance — `channel:events` publishes go here.
+// Pubsub shard 0 — even-hashed channel:events go here.
 export const redis = new Redis(env.REDIS_URL, redisClientOptions);
 
 redis.on("connect", () => logger.info("redis (pubsub) connected"));
 redis.on("error", (err) => logger.error({ err }, "redis (pubsub) client error"));
+
+// Pubsub shard 1 (port 6381) — odd-hashed channel:events go here.
+export const pubsub2Redis = new Redis(env.PUBSUB2_REDIS_URL, redisClientOptions);
+
+pubsub2Redis.on("connect", () => logger.info("redis (pubsub2) connected"));
+pubsub2Redis.on("error", (err) => logger.error({ err }, "redis (pubsub2) client error"));
 
 // KV instance (port 6380) — sessions (`session:*`).
 export const kvRedis = new Redis(env.KV_REDIS_URL, redisClientOptions);
