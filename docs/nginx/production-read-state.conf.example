@@ -9,6 +9,8 @@
 upstream read_state_backend {
     server 127.0.0.1:3008;
     keepalive 32;
+    keepalive_requests 1000;
+    keepalive_time 60s;
 }
 
 server {
@@ -28,6 +30,8 @@ server {
         proxy_connect_timeout 3s;
         proxy_read_timeout 30s;
         proxy_send_timeout 30s;
+        proxy_next_upstream error timeout;
+        proxy_next_upstream_tries 2;
     }
 
     # API-only host in split production
