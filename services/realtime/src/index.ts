@@ -268,6 +268,19 @@ async function listUserDmConversationIds(userId: string): Promise<string[]> {
   return result.rows.map((r) => String(r.conversation_id));
 }
 
+/** Hot DM conversation ids for Cassandra catch-up; must match services/dms/src/events.ts prefix. */
+const DM_CATCHUP_CONVS_PREFIX = "dm:catchup:convs:";
+
+async function getAndClearCatchupConversationIds(userId: string): Promise<string[]> {
+  const key = `${DM_CATCHUP_CONVS_PREFIX}${userId}`;
+  const results = await kvCacheRedis.multi().smembers(key).del(key).exec();
+  const smembersExec = results?.[0];
+  if (!smembersExec) return [];
+  const [err, members] = smembersExec as [Error | null, string[]];
+  if (err) throw err;
+  return Array.isArray(members) ? members : [];
+}
+
 async function withRetry<T>(
   label: string,
   ctx: Record<string, unknown>,
@@ -294,22 +307,48 @@ async function replayMissedDmHintsFromDisconnect(
 ): Promise<void> {
   const MAX_CONVERSATIONS = 50;
   const CONCURRENCY = 5;
+  /** Lower burst when only cold-start Postgres enumeration is available. */
+  const FALLBACK_CONCURRENCY = 2;
+  /** Cold-start / emergency Postgres path only — hot path uses Redis dm:catchup:convs. */
+  const FALLBACK_PG_MAX = 10;
   // Abnormal closes (1006) are detected by heartbeat up to 25s late; use a
   // larger grace window so messages sent during the dead-socket window are
   // always included in the replay.
   const gracePeriodMs = closeCode === 1006 ? 30_000 : 5_000;
   const sinceMs = disconnectedAt - gracePeriodMs;
 
-  let conversationIds: string[];
+  let queue: string[];
+  let effectiveConcurrency: number;
+  let catchupConversationSource: "redis" | "fallback";
+
   try {
-    conversationIds = await listUserDmConversationIds(userId);
+    const fromRedis = await getAndClearCatchupConversationIds(userId);
+    if (fromRedis.length > 0) {
+      queue = fromRedis.slice(0, MAX_CONVERSATIONS);
+      effectiveConcurrency = CONCURRENCY;
+      catchupConversationSource = "redis";
+    } else {
+      const pgList = await listUserDmConversationIds(userId);
+      queue = pgList.slice(0, FALLBACK_PG_MAX);
+      effectiveConcurrency = FALLBACK_CONCURRENCY;
+      catchupConversationSource = "fallback";
+    }
   } catch (err) {
     logger.warn({ err, userId }, "dm catch-up failed to list conversations");
     return;
   }
 
-  const queue = conversationIds.slice(0, MAX_CONVERSATIONS);
-  logger.info({ userId, conversationCount: queue.length, sinceMs, gracePeriodMs, closeCode }, "dm catch-up started");
+  logger.info(
+    {
+      userId,
+      conversationCount: queue.length,
+      sinceMs,
+      gracePeriodMs,
+      closeCode,
+      catchupConversationSource,
+    },
+    "dm catch-up started"
+  );
 
   let idx = 0;
   const worker = async (): Promise<void> => {
@@ -352,7 +391,7 @@ async function replayMissedDmHintsFromDisconnect(
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(effectiveConcurrency, queue.length) }, worker));
 }
 
 function enqueueSend(

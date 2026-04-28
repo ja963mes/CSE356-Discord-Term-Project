@@ -30,6 +30,8 @@ const realtimeHttpAgent = new http.Agent({
  * on the next reconnect, without waiting for Cassandra catch-up.
  */
 const PENDING_KEY_PREFIX = "dm:pending:";
+/** Realtime Cassandra catch-up: hot conversation ids (must match realtime service). */
+const CATCHUP_CONVS_KEY_PREFIX = "dm:catchup:convs:";
 const PENDING_MAX_PER_USER = 1000;
 const PENDING_TTL_SECONDS = 7200;
 
@@ -139,6 +141,9 @@ async function enqueuePendingDmHint(
     pipeline.lpush(key, payload);
     pipeline.ltrim(key, 0, PENDING_MAX_PER_USER - 1);
     pipeline.expire(key, PENDING_TTL_SECONDS);
+    const catchupKey = `${CATCHUP_CONVS_KEY_PREFIX}${userId}`;
+    pipeline.sadd(catchupKey, hint.conversationId);
+    pipeline.expire(catchupKey, PENDING_TTL_SECONDS);
   }
   try {
     await pipeline.exec();
