@@ -6,7 +6,6 @@ import { cassandra, messagesCassandra } from "./cassandra";
 import { requireAuth } from "./middleware/session";
 import {
   assertChannelAccess,
-  getChannelMessageIdForTimeuuid,
   getDmMessageIdForTimeuuid,
   getChannelState,
   getChannelStatesForCommunity,
@@ -18,6 +17,10 @@ import {
 } from "./repo";
 import { redis } from "./redis";
 import { publishUserFeedBatch } from "@discord/pubsub";
+
+type AsyncHandler = (req: express.Request, res: express.Response, next: express.NextFunction) => Promise<void>;
+const ah = (fn: AsyncHandler): express.RequestHandler =>
+  (req, res, next) => { fn(req, res, next).catch(next); };
 
 const app = express();
 app.use(express.json());
@@ -53,7 +56,7 @@ app.get("/health", async (_req, res) => {
   }
 });
 
-app.get("/read-state/channels", requireAuth, async (req, res) => {
+app.get("/read-state/channels", requireAuth, ah(async (req, res) => {
   const parsed = querySchema.safeParse(req.query);
   if (!parsed.success) {
     res.status(400).json({ error: "communityId (UUID) is required" });
@@ -62,9 +65,9 @@ app.get("/read-state/channels", requireAuth, async (req, res) => {
 
   const channels = await getChannelStatesForCommunity(req.user!.internal_id, parsed.data.communityId);
   res.json({ channels });
-});
+}));
 
-app.get("/read-state/channels/:channelId", requireAuth, async (req, res) => {
+app.get("/read-state/channels/:channelId", requireAuth, ah(async (req, res) => {
   const channelIdResult = z.string().uuid().safeParse(req.params.channelId);
   if (!channelIdResult.success) {
     res.status(400).json({ error: "channelId (UUID) is required" });
@@ -79,9 +82,9 @@ app.get("/read-state/channels/:channelId", requireAuth, async (req, res) => {
 
   const state = await getChannelState(req.user!.internal_id, channelIdResult.data);
   res.json({ state });
-});
+}));
 
-app.post("/read-state/channels/:channelId/read", requireAuth, async (req, res) => {
+app.post("/read-state/channels/:channelId/read", requireAuth, ah(async (req, res) => {
   const channelIdResult = z.string().uuid().safeParse(req.params.channelId);
   if (!channelIdResult.success) {
     res.status(400).json({ error: "channelId (UUID) is required" });
@@ -110,14 +113,14 @@ app.post("/read-state/channels/:channelId/read", requireAuth, async (req, res) =
     return;
   }
   res.status(204).send();
-});
+}));
 
-app.get("/read-state/dms", requireAuth, async (req, res) => {
+app.get("/read-state/dms", requireAuth, ah(async (req, res) => {
   const conversations = await getDmStatesForUser(req.user!.internal_id);
   res.json({ conversations });
-});
+}));
 
-app.get("/read-state/dms/:conversationId", requireAuth, async (req, res) => {
+app.get("/read-state/dms/:conversationId", requireAuth, ah(async (req, res) => {
   const parsed = conversationIdSchema.safeParse(req.params.conversationId);
   if (!parsed.success) {
     res.status(400).json({ error: "conversationId (UUID) is required" });
@@ -130,9 +133,9 @@ app.get("/read-state/dms/:conversationId", requireAuth, async (req, res) => {
   } catch {
     res.status(403).json({ error: "Forbidden" });
   }
-});
+}));
 
-app.post("/read-state/dms/:conversationId/read", requireAuth, async (req, res) => {
+app.post("/read-state/dms/:conversationId/read", requireAuth, ah(async (req, res) => {
   const parsed = conversationIdSchema.safeParse(req.params.conversationId);
   if (!parsed.success) {
     res.status(400).json({ error: "conversationId (UUID) is required" });
@@ -144,10 +147,7 @@ app.post("/read-state/dms/:conversationId/read", requireAuth, async (req, res) =
     return;
   }
 
-  // Fast path: trust client-provided messageId, skip the timeuuid→messageId
-  // Cassandra lookup against messages_by_conversation. Slow path (no messageId)
-  // keeps the original lookup + channelId compatibility fallback for old
-  // clients hitting this endpoint with a channelId by mistake.
+  // Fast path: client-provided messageId skips Cassandra timeuuid→messageId lookup.
   let messageId: string | null = body.data.messageId ?? null;
   if (!messageId) {
     try {
@@ -157,33 +157,7 @@ app.post("/read-state/dms/:conversationId/read", requireAuth, async (req, res) =
       return;
     }
     if (!messageId) {
-      const channelAccess = await assertChannelAccess(req.user!.internal_id, parsed.data);
-      if (!channelAccess.ok) {
-        res.status(404).json({ error: "Message not found" });
-        return;
-      }
-
-      let channelMessageId: string | null;
-      try {
-        channelMessageId = await getChannelMessageIdForTimeuuid(parsed.data, body.data.timeuuid);
-      } catch {
-        res.status(400).json({ error: "Invalid timeuuid" });
-        return;
-      }
-
-      if (!channelMessageId) {
-        res.status(404).json({ error: "Message not found" });
-        return;
-      }
-
-      try {
-        await markChannelRead(req.user!.internal_id, parsed.data, channelMessageId, body.data.timeuuid);
-      } catch {
-        res.status(400).json({ error: "Invalid timeuuid" });
-        return;
-      }
-
-      res.status(204).send();
+      res.status(404).json({ error: "Message not found" });
       return;
     }
   }
@@ -213,6 +187,13 @@ app.post("/read-state/dms/:conversationId/read", requireAuth, async (req, res) =
   );
 
   res.status(204).send();
+}));
+
+// Catch unhandled async errors in route handlers (Express 4 doesn't do this automatically).
+// Without this, a Cassandra/Postgres error in a bare `await` crashes the worker process → 502.
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error("[read-state] unhandled route error", err);
+  if (!res.headersSent) res.status(500).json({ error: "Internal server error" });
 });
 
 export { app };
