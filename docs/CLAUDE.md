@@ -9,8 +9,7 @@ A cloud-hosted, real-time text messaging app (Discord clone) built as a microser
 ```
 services/
   auth/             # Port 3001 - Auth (local + OAuth Google/GitHub/OIDC)
-  create-community/ # Port 3006 - Create community (100/user cap, seeds #general)
-  communities/      # Port 3002 - Guilds, directory search, channels (CRUD + ACLs); Postgres DAOs under src/dao/
+  communities/      # Port 3002 - Guilds, directory search, channels (CRUD + ACLs), POST /create-community (100/user cap, seeds #general); Postgres DAOs under src/dao/
   messages/         # Port 3003 - Channel messages (Cassandra history; Postgres ACL + session; MinIO presign)
   search/           # Port 3004 - Message search (Elasticsearch + Postgres scope for membership)
   realtime/         # Port 3005 - WebSocket /ws fan-out
@@ -22,7 +21,7 @@ frontend/           # Port 5173 - React Vite app
 ## Dev Commands
 ```bash
 npm run dev:auth          # Start auth service
-npm run dev:communities   # Start communities service
+npm run dev:communities   # Start communities service (handles POST /create-community)
 npm run dev:messages      # Start messages service
 npm run dev:search        # Start search service (Elasticsearch for message search)
 npm run dev:realtime      # Start realtime service
@@ -34,8 +33,7 @@ npm run db:migrate        # Run migrations
 
 ## What's Already Done
 - **Auth** (`services/auth/`): local login/register, OAuth (Google, GitHub, OIDC), Redis sessions, Drizzle + migrations (shared Postgres)
-- **Create-community** (`services/create-community/`): 100 communities/user cap, seeds `#general`, owner membership
-- **Communities** (`services/communities/`): list/join/leave, members, `GET /search-communities` (proxies to **search-service** / Elasticsearch), channels (public/private, `channel_members`, admin CRUD); **Postgres DAO layer** under `src/dao/`
+- **Communities** (`services/communities/`): `POST /create-community` (100/user cap, seeds `#general`, owner membership), list/join/leave, members, `GET /search-communities` (proxies to **search-service** / Elasticsearch), channels (public/private, `channel_members`, admin CRUD); **Postgres DAO layer** under `src/dao/`
 - **Messages** (`services/messages/`): `GET/POST /messages`, ACLs, Cassandra history, attachment presign (MinIO)
 - **Search** (`services/search/`): Elasticsearch-backed `GET /search/messages` and **`GET /directory/communities`** (directory index synced from Postgres + Redis events)
 - **Realtime** (`services/realtime/`): WebSocket `/ws` for delivery fan-out
@@ -54,7 +52,7 @@ npm run db:migrate        # Run migrations
 - `offline`: no connections
 
 ### 3. Communities
-- **Implemented:** create (100/user cap via create-community), join, leave, membership listing; Postgres `communities` / `community_members` (see migrations).
+- **Implemented:** create (100/user cap via `POST /create-community` on communities-service), join, leave, membership listing; Postgres `communities` / `community_members` (see migrations).
 - **Polish / product:** richer presence in member list, invites — see §2 and frontend backlog.
 
 ### 4. Channels (within communities) — requirements & status
@@ -71,7 +69,7 @@ Channel lifecycle and ACLs live on the **communities service (3002)** — no sep
 
 **Done (scaffold)**  
 - Migration **`0006_*`**: `channel_members` table, `channels.is_private`, backfill public-channel membership for existing `community_members`.  
-- **create-community**: seeds `#general` as public and inserts owner into `channel_members`.  
+- **POST /create-community** (communities-service): seeds `#general` as public and inserts owner into `channel_members`.  
 - **Join community**: adds user to all public channels’ `channel_members`. **Leave community**: removes user’s `channel_members` for channels in that guild.  
 - **Routes** (all under `/communities/...`, session required except N/A): `GET .../channels` (with `joined`), `POST .../channels`, `PATCH .../channels/:channelId`, `POST .../join`, `POST .../leave`, `POST .../members`.
 
@@ -129,7 +127,7 @@ Channel lifecycle and ACLs live on the **communities service (3002)** — no sep
 ## Frontend Proxy Config (vite.config.ts)
 ```
 /auth               → localhost:3001
-/create-community   → localhost:3006
+/create-community   → localhost:3002
 /communities        → localhost:3002
 /search-communities → localhost:3002
 /channels           → localhost:3002 (legacy path; channel APIs use `/communities/.../channels`)

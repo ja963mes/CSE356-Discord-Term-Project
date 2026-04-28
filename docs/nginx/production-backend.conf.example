@@ -4,8 +4,7 @@
 # host only proxies traffic to them via private IP.
 #
 # Services on localhost (this VM):
-#   3002 communities
-#   3006 create-community
+#   3002 communities (handles POST /create-community)
 #
 # All other services run on dedicated VMs — proxied via private IP:
 #   messages   -> 10.0.3.199:80 (messages VM nginx)
@@ -22,8 +21,9 @@ map $http_upgrade $connection_upgrade {
 }
 
 upstream backend_communities {
-    # communities-service + create-community-service run on the communities VM
-    # (10.0.1.148). The communities VM nginx on :80 routes by path locally.
+    # communities-service runs on the communities VM (10.0.1.148) and serves
+    # /create-community, /communities, /channels, /search-communities. The
+    # communities VM nginx on :80 routes those paths to 127.0.0.1:3002.
     server 10.0.1.148:80;
     keepalive 32;
 }

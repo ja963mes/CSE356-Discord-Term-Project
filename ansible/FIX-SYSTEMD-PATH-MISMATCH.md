@@ -52,7 +52,7 @@ WorkingDirectory=/home/deploy/CSE356-Discord-Term-Project
 Then reload and restart:
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl restart discord-auth discord-communities discord-create-community \
+sudo systemctl restart discord-auth discord-communities \
   discord-messages discord-realtime discord-realtime-2 discord-dms discord-read-state
 ```
 

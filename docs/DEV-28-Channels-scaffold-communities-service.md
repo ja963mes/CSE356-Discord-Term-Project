@@ -29,13 +29,12 @@ Schema copies stay aligned in:
 
 - `services/auth/src/db/schema.ts`
 - `services/communities/src/db/schema.ts`
-- `services/create-community/src/db/schema.ts`
 
 **Apply locally:** `npm run db:migrate` (from repo root).
 
 ---
 
-## create-community service
+## POST /create-community (communities-service)
 
 - After creating `#general`, inserts **`channel_members`** for the **creator** so the owner can read history immediately.
 - Channel row includes `is_private: false`.
@@ -89,7 +88,6 @@ Schema copies stay aligned in:
 ```bash
 npm run build --workspace auth-service
 npm run build --workspace communities-service
-npm run build --workspace create-community-service
 npm run build --workspace frontend
 npm run build   # root: auth + frontend
 ```

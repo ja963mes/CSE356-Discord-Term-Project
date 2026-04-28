@@ -5,8 +5,7 @@ export type CreateCommunityResult =
   | { ok: false; error: string };
 
 /**
- * Creates a community via POST /create-community (create-community service). At most 100 communities
- * per user; joins are unlimited via a separate flow.
+ * Creates a community via POST /create-community on communities-service. Max 100 per user.
  */
 export async function createCommunity(serverName: string): Promise<CreateCommunityResult> {
   const name = serverName.trim();

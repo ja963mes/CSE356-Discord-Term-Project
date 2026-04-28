@@ -11,6 +11,7 @@ import * as channelsDao from "./dao/channelsDao";
 import * as channelMembersDao from "./dao/channelMembersDao";
 import * as usersDao from "./dao/usersDao";
 import {
+  bumpAfterCommunityCreate,
   bumpAllForUserCommunity,
   bumpCommunityEpochs,
   cacheTtl,
@@ -25,6 +26,9 @@ import {
   setCachedJson,
   userCommunitiesCacheKey,
 } from "./readCache";
+
+const MAX_COMMUNITIES_PER_USER = 100;
+const MAX_COMMUNITY_NAME_LENGTH = 100;
 
 function isCommunityAdminRole(role: string): boolean {
   return role === "owner" || role === "admin";
@@ -103,6 +107,54 @@ app.get("/search-communities", async (req, res) => {
   } catch (e) {
     logRouteError("GET /search-communities failed", e, { reqId: req.id, q });
     res.status(500).json({ error: "Failed to search communities" });
+  }
+});
+
+/** Create a community (caps at 100/user, seeds #general, owner membership). */
+app.post("/create-community", requireAuth, async (req: Request, res: Response) => {
+  const userId = req.user!.internal_id;
+  const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+  if (!name) {
+    res.status(400).json({ error: "name is required" });
+    return;
+  }
+  if (name.length > MAX_COMMUNITY_NAME_LENGTH) {
+    res.status(400).json({ error: `name must be ${MAX_COMMUNITY_NAME_LENGTH} characters or fewer` });
+    return;
+  }
+
+  try {
+    const result = await communitiesDao.createWithOwnerAndGeneralChannel(
+      userId,
+      name,
+      MAX_COMMUNITIES_PER_USER,
+    );
+    if (!result.ok) {
+      res.status(403).json({ error: `You can create at most ${MAX_COMMUNITIES_PER_USER} communities` });
+      return;
+    }
+
+    const createdAtIso = result.created_at.toISOString();
+
+    void bumpAfterCommunityCreate(userId, result.id);
+    void publishCommunityEvent({
+      type: "community:directory:upsert",
+      communityId: result.id,
+      name: result.name,
+      created_at: createdAtIso,
+    });
+
+    res.status(201).json({
+      community: {
+        id: result.id,
+        name: result.name,
+        created_at: createdAtIso,
+        role: "owner" as const,
+      },
+    });
+  } catch (e) {
+    logRouteError("POST /create-community failed", e, { reqId: req.id, userId });
+    res.status(500).json({ error: "Failed to create community" });
   }
 });
 

@@ -6,8 +6,7 @@ Use this runbook to deploy and validate the chat path on a **staging VM** before
 
 Typical Node processes on staging:
 - `auth` (3001) — session + identity
-- `communities` (3002) — guild/channels/ACL
-- `create-community` (3006)
+- `communities` (3002) — guild/channels/ACL, also serves `POST /create-community`
 - `messages` (3003) — channel history in Cassandra + ACL checks
 - `realtime` (3005) — WebSocket fan-out
 - `dms` (3007) — direct messages (Cassandra)
@@ -87,7 +86,6 @@ git pull
 npm install
 npm run build --workspace auth-service
 npm run build --workspace communities-service
-npm run build --workspace create-community-service
 npm run build --workspace messages-service
 npm run build --workspace realtime-service
 npm run build --workspace dms-service
@@ -138,7 +136,6 @@ CASSANDRA_READ_CONSISTENCY=localOne
 CASSANDRA_WRITE_CONSISTENCY=localQuorum
 PORT=3001
 COMMUNITIES_PORT=3002
-CREATE_COMMUNITY_PORT=3006
 REALTIME_PORT=3005
 DMS_PORT=3007
 EOF
@@ -183,26 +180,6 @@ User=root
 WorkingDirectory=/opt/CSE356-Discord-Term-Project
 EnvironmentFile=/etc/discord-staging.env
 ExecStart=/usr/bin/npm run start --workspace communities-service
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-```
-
-`discord-create-community.service`
-
-```ini
-[Unit]
-Description=Discord staging create-community service
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/opt/CSE356-Discord-Term-Project
-EnvironmentFile=/etc/discord-staging.env
-ExecStart=/usr/bin/npm run start --workspace create-community-service
 Restart=always
 RestartSec=3
 
@@ -274,8 +251,8 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now discord-auth discord-communities discord-create-community discord-messages discord-realtime discord-dms
-sudo systemctl status discord-auth discord-communities discord-create-community discord-messages discord-realtime discord-dms --no-pager
+sudo systemctl enable --now discord-auth discord-communities discord-messages discord-realtime discord-dms
+sudo systemctl status discord-auth discord-communities discord-messages discord-realtime discord-dms --no-pager
 ```
 
 Follow logs:
@@ -283,7 +260,6 @@ Follow logs:
 ```bash
 sudo journalctl -u discord-auth -f
 sudo journalctl -u discord-communities -f
-sudo journalctl -u discord-create-community -f
 sudo journalctl -u discord-messages -f
 sudo journalctl -u discord-realtime -f
 sudo journalctl -u discord-dms -f
@@ -296,7 +272,6 @@ If you’re using `tmux` for “keep running after SSH disconnect”, create one
 ```bash
 npm run dev --workspace auth-service
 npm run dev --workspace communities-service
-npm run dev --workspace create-community-service
 ```
 
 This does **not** restart on reboot; prefer systemd for stability.
@@ -334,12 +309,11 @@ Deploy in this order:
 
 1. Data dependencies (Postgres, Redis, Cassandra, MinIO if using attachments)
 2. `auth`
-3. `communities`
-4. `create-community`
-5. `messages`
-6. `dms`
-7. `realtime`
-8. `frontend` (if you use one)
+3. `communities` (handles `POST /create-community`)
+4. `messages`
+5. `dms`
+6. `realtime`
+7. `frontend` (if you use one)
 
 Rationale: auth/session and ACL metadata should be healthy before messages/DMs/realtime receive traffic. **Do not** deploy `search` on this VM unless you add resources and Elasticsearch.
 
@@ -353,18 +327,16 @@ git pull
 npm install
 npm run build --workspace auth-service
 npm run build --workspace communities-service
-npm run build --workspace create-community-service
 npm run build --workspace messages-service
 npm run build --workspace realtime-service
 npm run build --workspace dms-service
 npm run db:migrate
 sudo systemctl restart discord-auth
 sudo systemctl restart discord-communities
-sudo systemctl restart discord-create-community
 sudo systemctl restart discord-messages
 sudo systemctl restart discord-realtime
 sudo systemctl restart discord-dms
-sudo systemctl status discord-auth discord-communities discord-create-community discord-messages discord-realtime discord-dms --no-pager
+sudo systemctl status discord-auth discord-communities discord-messages discord-realtime discord-dms --no-pager
 ```
 
 If frontend is local Vite on the same host:
@@ -417,7 +389,6 @@ Default local ports are unique:
 - messages `3003`
 - search `3004` (not deployed on staging)
 - realtime `3005`
-- create-community `3006`
 - dms `3007`
 - frontend `5173`
 
@@ -442,11 +413,10 @@ git checkout <last-known-good-commit>
 npm install
 npm run build --workspace auth-service
 npm run build --workspace communities-service
-npm run build --workspace create-community-service
 npm run build --workspace messages-service
 npm run build --workspace realtime-service
 npm run build --workspace dms-service
-sudo systemctl restart discord-auth discord-communities discord-create-community discord-messages discord-realtime discord-dms
+sudo systemctl restart discord-auth discord-communities discord-messages discord-realtime discord-dms
 ```
 
 ## 11) Observability minimum
@@ -462,7 +432,7 @@ Track these during rollout:
 Useful checks:
 
 ```bash
-sudo systemctl status discord-auth discord-communities discord-create-community discord-messages discord-realtime discord-dms --no-pager
+sudo systemctl status discord-auth discord-communities discord-messages discord-realtime discord-dms --no-pager
 sudo journalctl -u discord-messages -n 200 --no-pager
 sudo journalctl -u discord-realtime -n 200 --no-pager
 ```
@@ -471,7 +441,7 @@ sudo journalctl -u discord-realtime -n 200 --no-pager
 
 Rollout is considered healthy when:
 
-- All deployed Node services (`auth`, `communities`, `create-community`, `messages`, `realtime`, `dms`) are passing health checks (excluding `search`).
+- All deployed Node services (`auth`, `communities`, `messages`, `realtime`, `dms`) are passing health checks (excluding `search`).
 - Login + authenticated communities listing works.
 - Channel message write/read works across refresh.
 - Realtime fan-out works for at least two concurrent clients.

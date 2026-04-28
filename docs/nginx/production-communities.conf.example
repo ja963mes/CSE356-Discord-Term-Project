@@ -1,21 +1,16 @@
-# Nginx — production communities VM (communities-service + create-community-service)
+# Nginx — production communities VM (communities-service)
 #
-# Use this on the dedicated communities VM that runs both Node services locally.
-# Backend VM nginx proxies /communities, /channels, /search-communities, and
-# /create-community traffic here via private IP (10.0.1.148:80).
+# Use this on the dedicated communities VM. Backend VM nginx proxies
+# /communities, /channels, /search-communities, and /create-community traffic
+# here via private IP (10.0.1.148:80). All four paths land on the same Node
+# service.
 #
 # Services on localhost (this VM):
-#   3002 communities
-#   3006 create-community
+#   3002 communities (handles POST /create-community)
 
 upstream communities_backend {
     server 127.0.0.1:3002;
     keepalive 32;
-}
-
-upstream create_community_backend {
-    server 127.0.0.1:3006;
-    keepalive 16;
 }
 
 server {
@@ -64,7 +59,7 @@ server {
     }
 
     location ^~ /create-community {
-        proxy_pass http://create_community_backend;
+        proxy_pass http://communities_backend;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
         proxy_set_header Host $host;

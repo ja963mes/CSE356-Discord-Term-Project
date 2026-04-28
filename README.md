@@ -27,7 +27,6 @@ flowchart TB
     M[messages :3003]
     S[search :3004]
     R[realtime :3005]
-    CC[create-community :3006]
     D[dms :3007]
     RS[read-state :3008]
   end
@@ -42,11 +41,10 @@ flowchart TB
   end
 
   Vite -->|/auth| A
-  Vite -->|/communities /channels /search-communities| C
+  Vite -->|/create-community /communities /channels /search-communities| C
   Vite -->|/messages /attachments| M
   Vite -->|/search /directory| S
   Vite -->|/ws| R
-  Vite -->|/create-community| CC
   Vite -->|/dms| D
   Vite -->|/read-state| RS
 
@@ -56,9 +54,6 @@ flowchart TB
   C --> PG
   C --> RDK
   C -. publish .-> RDP
-  CC --> PG
-  CC --> RDK
-  CC -. publish .-> RDP
   M --> PG
   M --> CAS
   M --> RDK
@@ -84,7 +79,6 @@ flowchart TB
   M -. messages:index .-> S
   D -. dm:events .-> R
   C -. community:events .-> R
-  CC -. community:events .-> R
   RS -. dm:events (read-state) .-> R
 ```
 
@@ -94,7 +88,7 @@ flowchart TB
 |---------|------------|-------------|---------|
 | `dm:events` | dms, read-state | realtime | DM create/edit/delete, read-state updates |
 | `channel:events` | messages | realtime | Channel message create/edit/delete |
-| `community:events` | communities, create-community | realtime | Guild / channel / membership changes |
+| `community:events` | communities | realtime | Guild / channel / membership changes |
 | `presence:broadcast` | realtime | realtime (cross-instance) | Presence deltas between realtime instances |
 | Indexing | messages | search | Elasticsearch indexing of channel messages |
 
@@ -103,8 +97,7 @@ flowchart TB
 | Prefix | Port | Service area |
 |--------|------|----------------|
 | `/auth` | 3001 | Sessions, OAuth |
-| `/create-community` | 3006 | Create guild |
-| `/communities`, `/channels`, `/search-communities` | 3002 | Guilds, channels; directory search **proxies to search (ES)** |
+| `/create-community`, `/communities`, `/channels`, `/search-communities` | 3002 | Guilds, channels; directory search **proxies to search (ES)** |
 | `/messages`, `/attachments` | 3003 | Channel messages, presign |
 | `/search` | 3004 | Message search + ES directory API (`/directory/communities`) |
 | `/dms` | 3007 | Direct messages |
@@ -212,7 +205,7 @@ npm run dev:local
 | Script | Description |
 |--------|-------------|
 | `npm run dev` | Frontend → staging API (`VITE_API_ORIGIN` default) |
-| `npm run dev:all` | Auth, communities, messages, search, realtime, create-community, dms, read-state, frontend → **localhost** |
+| `npm run dev:all` | Auth, communities, messages, search, realtime, dms, read-state, frontend → **localhost** |
 | `npm run dev:local` | `docker compose up -d` then `dev:all` |
 | `npm run dev:auth` … `npm run dev:read-state` | Individual services |
 | `npm run dev:frontend` | Vite only (use with `VITE_API_ORIGIN`) |
@@ -226,7 +219,7 @@ npm run dev:local
 
 ## Communities & channels (quick reference)
 
-Create/join/list guilds and channels on **:3002**; create flow on **:3006**. Full route table lives in **[docs/DEV-28-Channels-scaffold-communities-service.md](./docs/DEV-28-Channels-scaffold-communities-service.md)**.
+Create/join/list guilds and channels on **:3002** (the same service handles `POST /create-community`). Full route table lives in **[docs/DEV-28-Channels-scaffold-communities-service.md](./docs/DEV-28-Channels-scaffold-communities-service.md)**.
 
 ---
 
@@ -238,11 +231,10 @@ k6/                   # Load / latency smoke tests
 ansible/              # Optional split-VM deploy playbook
 services/
   auth/               # 3001
-  communities/        # 3002
+  communities/        # 3002 (also serves POST /create-community)
   messages/           # 3003
   search/             # 3004
   realtime/           # 3005 (+ 3009 as realtime-2 in production)
-  create-community/   # 3006
   dms/                # 3007
   read-state/         # 3008
 frontend/             # Vite 5173
