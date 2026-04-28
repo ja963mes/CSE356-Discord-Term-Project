@@ -89,6 +89,24 @@ export async function bumpAllForUserCommunity(userId: string, communityId: strin
   ]);
 }
 
+/**
+ * Single-pipeline bump for the create-community path: ucl + mem + ch + dir in
+ * one round trip. The dir epoch invalidates `/search-communities` Redis cache
+ * so newly-created guilds appear before the 45s TTL expires.
+ */
+export async function bumpAfterCommunityCreate(userId: string, communityId: string): Promise<void> {
+  try {
+    const p = kvCacheRedis.pipeline();
+    p.incr(keyEpochUcl(userId));
+    p.incr(keyEpochMem(communityId));
+    p.incr(keyEpochCh(communityId));
+    p.incr(keyEpochDir());
+    await p.exec();
+  } catch (e) {
+    logger.warn({ err: e, userId, communityId }, "readCache: bump after community create failed");
+  }
+}
+
 export async function getCachedJson<T>(key: string): Promise<T | null> {
   try {
     const s = await kvCacheRedis.get(key);

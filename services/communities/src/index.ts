@@ -11,6 +11,7 @@ import * as channelsDao from "./dao/channelsDao";
 import * as channelMembersDao from "./dao/channelMembersDao";
 import * as usersDao from "./dao/usersDao";
 import {
+  bumpAfterCommunityCreate,
   bumpAllForUserCommunity,
   bumpCommunityEpochs,
   cacheTtl,
@@ -27,6 +28,7 @@ import {
 } from "./readCache";
 
 const MAX_COMMUNITIES_PER_USER = 100;
+const MAX_COMMUNITY_NAME_LENGTH = 100;
 
 function isCommunityAdminRole(role: string): boolean {
   return role === "owner" || role === "admin";
@@ -116,29 +118,36 @@ app.post("/create-community", requireAuth, async (req: Request, res: Response) =
     res.status(400).json({ error: "name is required" });
     return;
   }
+  if (name.length > MAX_COMMUNITY_NAME_LENGTH) {
+    res.status(400).json({ error: `name must be ${MAX_COMMUNITY_NAME_LENGTH} characters or fewer` });
+    return;
+  }
 
   try {
-    const n = await communitiesDao.countByCreator(userId);
-    if (n >= MAX_COMMUNITIES_PER_USER) {
+    const result = await communitiesDao.createWithOwnerAndGeneralChannel(
+      userId,
+      name,
+      MAX_COMMUNITIES_PER_USER,
+    );
+    if (!result.ok) {
       res.status(403).json({ error: `You can create at most ${MAX_COMMUNITIES_PER_USER} communities` });
       return;
     }
 
-    const created = await communitiesDao.createWithOwnerAndGeneralChannel(userId, name);
-    const createdAtIso = created.created_at.toISOString();
+    const createdAtIso = result.created_at.toISOString();
 
-    void bumpAllForUserCommunity(userId, created.id);
+    void bumpAfterCommunityCreate(userId, result.id);
     void publishCommunityEvent({
       type: "community:directory:upsert",
-      communityId: created.id,
-      name: created.name,
+      communityId: result.id,
+      name: result.name,
       created_at: createdAtIso,
     });
 
     res.status(201).json({
       community: {
-        id: created.id,
-        name: created.name,
+        id: result.id,
+        name: result.name,
         created_at: createdAtIso,
         role: "owner" as const,
       },

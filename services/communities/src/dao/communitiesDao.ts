@@ -1,4 +1,4 @@
-import { eq, count } from "drizzle-orm";
+import { eq, count, sql } from "drizzle-orm";
 import { db } from "../db";
 import { communities, communityMembers, channels, channelMembers } from "../db/schema";
 import { UserCommunityRow } from "./types";
@@ -25,19 +25,32 @@ export async function existsById(communityId: string): Promise<boolean> {
   return Boolean(row);
 }
 
-export async function countByCreator(userId: string): Promise<number> {
-  const [row] = await db
-    .select({ c: count() })
-    .from(communities)
-    .where(eq(communities.created_by, userId));
-  return Number(row?.c ?? 0);
-}
+export type CreateCommunityResult =
+  | { ok: true; id: string; name: string; created_at: Date }
+  | { ok: false; reason: "cap_exceeded" };
 
+/**
+ * Create community + owner membership + #general + channel_members in a single tx.
+ * Cap check runs inside the tx behind a per-user pg_advisory_xact_lock so concurrent
+ * requests serialize and the cap can't be bypassed by races between count-then-insert.
+ */
 export async function createWithOwnerAndGeneralChannel(
   userId: string,
   name: string,
-): Promise<{ id: string; name: string; created_at: Date }> {
+  maxPerUser: number,
+): Promise<CreateCommunityResult> {
   return db.transaction(async (tx) => {
+    // Lock auto-releases on COMMIT/ROLLBACK; safe under pgbouncer transaction pooling.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${userId}, 0))`);
+
+    const [countRow] = await tx
+      .select({ c: count() })
+      .from(communities)
+      .where(eq(communities.created_by, userId));
+    if (Number(countRow?.c ?? 0) >= maxPerUser) {
+      return { ok: false, reason: "cap_exceeded" } as const;
+    }
+
     const [c] = await tx.insert(communities).values({ name, created_by: userId }).returning();
     await tx.insert(communityMembers).values({
       community_id: c.id,
@@ -56,9 +69,10 @@ export async function createWithOwnerAndGeneralChannel(
       .returning({ id: channels.id });
     await tx.insert(channelMembers).values({ channel_id: general.id, user_id: userId });
     return {
+      ok: true,
       id: c.id,
       name: c.name,
       created_at: c.created_at instanceof Date ? c.created_at : new Date(String(c.created_at)),
-    };
+    } as const;
   });
 }
