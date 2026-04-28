@@ -8,7 +8,9 @@ const port = Number(env.READ_STATE_PORT);
 
 void (async () => {
   await initializeCassandra();
-  await startSubscriber();
+  if (process.env.READ_STATE_SUBSCRIBER !== "false") {
+    await startSubscriber();
+  }
   const server = app.listen(port, () => {
     console.log(`Read-state service running on port ${port} (Cassandra keyspace=${env.READ_STATE_CASSANDRA_KEYSPACE})`);
   });

@@ -12,7 +12,7 @@ realtime_workspace_build_commands:
 
 realtime_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-realtime.conf.example"
 
-realtime_log_level: warn
+realtime_log_level: info
 
 realtime_database_url: "postgresql://postgres:123456789@10.0.2.247:6432/auth_db"
 realtime_database_url_direct: "postgresql://postgres:123456789@10.0.2.247:5433/auth_db"

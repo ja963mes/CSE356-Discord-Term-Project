@@ -7,7 +7,9 @@ Type=simple
 User={{ deploy_user }}
 WorkingDirectory={{ deploy_path }}
 EnvironmentFile=/etc/discord.env
-ExecStart=/usr/bin/node {{ deploy_path }}/services/read-state/dist/index.js
+Environment="READ_STATE_WORKERS={{ read_state_workers | default(1) }}"
+Environment="LOG_PRETTY=false"
+ExecStart=/usr/bin/node {{ deploy_path }}/services/read-state/dist/cluster.js
 Restart=always
 RestartSec=3
 StandardOutput=journal

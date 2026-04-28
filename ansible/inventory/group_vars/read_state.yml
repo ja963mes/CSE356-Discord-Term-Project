@@ -10,8 +10,9 @@ read_state_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-read-state.c
 
 ## /etc/discord.env values for read-state-service
 read_state_log_level: info
-read_state_log_pretty: "true"
+read_state_log_pretty: "false"
 read_state_port: "3008"
+read_state_workers: 4
 
 ## REQUIRED: set these to reachable endpoints (likely private IPs)
 read_state_database_url: "postgresql://postgres:123456789@10.0.2.247:6432/auth_db"
