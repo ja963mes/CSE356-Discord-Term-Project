@@ -26,6 +26,8 @@ import {
   userCommunitiesCacheKey,
 } from "./readCache";
 
+const MAX_COMMUNITIES_PER_USER = 100;
+
 function isCommunityAdminRole(role: string): boolean {
   return role === "owner" || role === "admin";
 }
@@ -103,6 +105,47 @@ app.get("/search-communities", async (req, res) => {
   } catch (e) {
     logRouteError("GET /search-communities failed", e, { reqId: req.id, q });
     res.status(500).json({ error: "Failed to search communities" });
+  }
+});
+
+/** Create a community (caps at 100/user, seeds #general, owner membership). */
+app.post("/create-community", requireAuth, async (req: Request, res: Response) => {
+  const userId = req.user!.internal_id;
+  const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+  if (!name) {
+    res.status(400).json({ error: "name is required" });
+    return;
+  }
+
+  try {
+    const n = await communitiesDao.countByCreator(userId);
+    if (n >= MAX_COMMUNITIES_PER_USER) {
+      res.status(403).json({ error: `You can create at most ${MAX_COMMUNITIES_PER_USER} communities` });
+      return;
+    }
+
+    const created = await communitiesDao.createWithOwnerAndGeneralChannel(userId, name);
+    const createdAtIso = created.created_at.toISOString();
+
+    void bumpAllForUserCommunity(userId, created.id);
+    void publishCommunityEvent({
+      type: "community:directory:upsert",
+      communityId: created.id,
+      name: created.name,
+      created_at: createdAtIso,
+    });
+
+    res.status(201).json({
+      community: {
+        id: created.id,
+        name: created.name,
+        created_at: createdAtIso,
+        role: "owner" as const,
+      },
+    });
+  } catch (e) {
+    logRouteError("POST /create-community failed", e, { reqId: req.id, userId });
+    res.status(500).json({ error: "Failed to create community" });
   }
 });
 

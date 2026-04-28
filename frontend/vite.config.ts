@@ -9,7 +9,6 @@ export default defineConfig(({ mode }) => {
   const messagesTarget = env.VITE_MESSAGES_ORIGIN || `${apiOrigin}:3003`;
   const searchTarget = env.VITE_SEARCH_ORIGIN || `${apiOrigin}:3004`;
   const realtimeTarget = env.VITE_REALTIME_ORIGIN || `${apiOrigin}:3005`;
-  const createCommunityTarget = env.VITE_CREATE_COMMUNITY_ORIGIN || `${apiOrigin}:3006`;
   const dmsTarget = env.VITE_DMS_ORIGIN || `${apiOrigin}:3007`;
   const readStateTarget = env.VITE_READ_STATE_ORIGIN || `${apiOrigin}:3008`;
 
@@ -23,12 +22,11 @@ export default defineConfig(({ mode }) => {
         target: authTarget,
         changeOrigin: true,
       },
-      // Create-community service (POST only; max 100 created per user)
+      // Communities service: list, join, channels, members, POST /create-community
       "/create-community": {
-        target: createCommunityTarget,
+        target: communitiesTarget,
         changeOrigin: true,
       },
-      // Communities service (list, join, channels, members)
       "/communities": {
         target: communitiesTarget,
         changeOrigin: true,

@@ -9,12 +9,11 @@
   ],
   "scripts": {
     "dev": "npm run dev:frontend:staging",
-    "dev:all": "concurrently -n auth,create-community,communities,messages,search,realtime,dms,read-state,frontend -c auto \"npm run dev:auth\" \"npm run dev:create-community\" \"npm run dev:communities\" \"npm run dev:messages\" \"npm run dev:search\" \"npm run dev:realtime\" \"npm run dev:dms\" \"npm run dev:read-state\" \"VITE_API_ORIGIN=http://localhost npm run dev:frontend\"",
+    "dev:all": "concurrently -n auth,communities,messages,search,realtime,dms,read-state,frontend -c auto \"npm run dev:auth\" \"npm run dev:communities\" \"npm run dev:messages\" \"npm run dev:search\" \"npm run dev:realtime\" \"npm run dev:dms\" \"npm run dev:read-state\" \"VITE_API_ORIGIN=http://localhost npm run dev:frontend\"",
     "dev:local": "docker compose up -d && npm run dev:all",
     "dev:frontend:staging": "VITE_API_ORIGIN=http://130.245.136.45 npm run dev:frontend",
     "dev:frontend:local": "VITE_API_ORIGIN=http://localhost npm run dev:frontend",
     "dev:auth": "npm run dev --workspace auth-service",
-    "dev:create-community": "npm run dev --workspace create-community-service",
     "dev:communities": "npm run dev --workspace communities-service",
     "dev:messages": "npm run dev --workspace messages-service",
     "dev:search": "npm run dev --workspace search-service",

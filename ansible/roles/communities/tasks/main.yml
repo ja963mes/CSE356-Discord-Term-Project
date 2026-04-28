@@ -20,6 +20,28 @@
   become_user: "{{ deploy_user }}"
   loop: "{{ communities_workspace_build_commands }}"
 
+# Deprecated discord-create-community service: the route was folded back into
+# communities-service. Stop, disable, and remove the unit if it exists so old
+# hosts don't keep a stale process running on port 3006.
+- name: Stop deprecated discord-create-community service
+  ansible.builtin.systemd:
+    name: discord-create-community
+    state: stopped
+    enabled: false
+  failed_when: false
+  register: deprecated_create_community_stopped
+
+- name: Remove deprecated discord-create-community unit file
+  ansible.builtin.file:
+    path: /etc/systemd/system/discord-create-community.service
+    state: absent
+  register: deprecated_create_community_unit_removed
+
+- name: Reload systemd daemon after removing deprecated unit
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: deprecated_create_community_unit_removed.changed
+
 - name: Manage communities systemd service files (optional)
   when: manage_systemd_services | default(false)
   block:

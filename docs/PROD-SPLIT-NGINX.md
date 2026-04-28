@@ -27,7 +27,7 @@ Client traffic should go to the frontend VM only:
 2. Frontend VM serves static SPA from `/var/www/discord-frontend`.
 3. Frontend VM nginx proxies `/auth` directly to auth-service on the auth VM over private network (`http://10.0.3.158:3001`).
 4. Remaining API and WS routes are proxied by frontend VM nginx to backend VM nginx over private network (`http://10.0.2.247:80`).
-5. Backend VM nginx proxies non-auth APIs to localhost (`127.0.0.1:3002,3003,3006,3007,3008`); `/ws` is proxied to the realtime VM on the private network (see `nginx/production-backend.conf.example`, `upstream backend_realtime`).
+5. Backend VM nginx proxies non-auth APIs to localhost (`127.0.0.1:3002,3003,3007,3008`); `/ws` is proxied to the realtime VM on the private network (see `nginx/production-backend.conf.example`, `upstream backend_realtime`).
 6. Optional: frontend `/search` can target dedicated search ingress instead of backend nginx.
 
 This avoids exposing all backend service ports publicly.
@@ -138,8 +138,7 @@ curl -I https://group-6.cse356.compas.cs.stonybrook.edu/assets/index-*.js
 
 Run and monitor on **this** backend VM:
 
-- `discord-communities` (3002)
-- `discord-create-community` (3006)
+- `discord-communities` (3002, also handles `POST /create-community`)
 - `discord-messages` (3003)
 - `discord-dms` (3007)
 - `discord-read-state` (3008)

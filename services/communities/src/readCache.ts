@@ -8,7 +8,6 @@ const TTL_USER_COMMUNITIES = 90;
 const TTL_CHANNELS = 120;
 const TTL_MEMBERS = 120;
 
-/** Keep epoch key strings aligned with `services/create-community/src/invalidateCommunitiesCache.ts`. */
 function keyEpochUcl(userId: string): string {
   return `comm:e:ucl:${userId}`;
 }
@@ -19,7 +18,7 @@ function keyEpochCh(communityId: string): string {
   return `comm:e:ch:${communityId}`;
 }
 
-/** Bumped when the public directory index changes (align with create-community `invalidateCommunitiesCache.ts`). */
+/** Bumped when the public directory index changes. */
 function keyEpochDir(): string {
   return `comm:e:dir`;
 }

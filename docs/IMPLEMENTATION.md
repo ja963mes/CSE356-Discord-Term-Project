@@ -42,11 +42,10 @@ What this repository implements today versus typical course expectations (multi-
 | Port | Workspace / folder | Role |
 |------|-------------------|------|
 | **3001** | `services/auth` | Auth, OAuth, static login assets, `/health` |
-| **3002** | `services/communities` | Guilds, channels, members; `/search-communities` → search (ES) |
+| **3002** | `services/communities` | Guilds, channels, members; `POST /create-community` (seeds `#general`); `/search-communities` → search (ES) |
 | **3003** | `services/messages` | Channel messages, `/attachments` presign |
 | **3004** | `services/search` | Message + directory search (ES), `/health` pings ES |
 | **3005** | `services/realtime` | WebSocket server |
-| **3006** | `services/create-community` | Create guild + seed `#general` |
 | **3007** | `services/dms` | Direct messages API |
 | **3008** | `services/read-state` | Read receipts / unread state |
 | **5173** | `frontend` | Vite dev server (SPA) |
