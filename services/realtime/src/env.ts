@@ -1,10 +1,18 @@
 import dotenv from "dotenv";
 import path from "path";
 
-dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
+// Repo root — __dirname is the src/ dir, so 3 levels up.
+const repoRoot = path.resolve(__dirname, "../../..");
+dotenv.config({ path: path.join(repoRoot, ".env") });
 // Optional override for staging/local switching: ENV_FILE=/path/to/.env.staging
 if (process.env.ENV_FILE) {
-  dotenv.config({ path: process.env.ENV_FILE, override: true });
+  // Resolve relative paths from repo root — npm workspaces set cwd to the
+  // package dir before running scripts, so a bare filename like
+  // ".env.staging-infra-local" would otherwise resolve to services/realtime/.
+  const envFilePath = path.isAbsolute(process.env.ENV_FILE)
+    ? process.env.ENV_FILE
+    : path.join(repoRoot, process.env.ENV_FILE);
+  dotenv.config({ path: envFilePath, override: true });
 }
 
 if (!process.env.REDIS_URL) throw new Error("REDIS_URL is required");
@@ -23,7 +31,12 @@ export const env = {
   // KV cache redis (presence:*, dm:pending:* drain) — port 6382.
   KV_CACHE_REDIS_URL: process.env.KV_CACHE_REDIS_URL,
   DATABASE_URL: process.env.DATABASE_URL,
-  LOG_LEVEL: process.env.LOG_LEVEL ?? "info",
+  LOG_LEVEL: (() => {
+    const v = process.env.LOG_LEVEL ?? "info";
+    const valid = ["trace", "debug", "info", "warn", "error", "fatal"] as const;
+    if (!valid.includes(v as typeof valid[number])) throw new Error(`Invalid LOG_LEVEL: ${v}`);
+    return v as typeof valid[number];
+  })(),
   LOG_PRETTY: process.env.LOG_PRETTY === "true",
   CASSANDRA_CONTACT_POINTS: process.env.CASSANDRA_CONTACT_POINTS ?? "127.0.0.1",
   CASSANDRA_PORT: parseInt(process.env.CASSANDRA_PORT ?? "9042", 10),

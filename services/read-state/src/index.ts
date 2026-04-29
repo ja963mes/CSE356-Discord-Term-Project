@@ -3,6 +3,7 @@ import { initializeCassandra } from "./cassandra";
 import { startSubscriber } from "./subscriber";
 import { app } from "./app";
 import { flushMentionsForShutdown } from "./repo";
+import { logger } from "./logger";
 
 const port = Number(env.READ_STATE_PORT);
 
@@ -12,7 +13,7 @@ void (async () => {
     await startSubscriber();
   }
   const server = app.listen(port, () => {
-    console.log(`Read-state service running on port ${port} (Cassandra keyspace=${env.READ_STATE_CASSANDRA_KEYSPACE})`);
+    logger.info({ port, cassandraKeyspace: env.READ_STATE_CASSANDRA_KEYSPACE }, "read-state-service listening");
   });
   // keepAliveTimeout > nginx upstream keepalive_timeout (60s default) + headersTimeout > keepAliveTimeout
   // Prevents ERR_INCOMPLETE_CHUNKED_ENCODING when nginx reuses a socket Node just closed.
@@ -21,8 +22,8 @@ void (async () => {
 })();
 
 async function gracefulShutdown(signal: string): Promise<void> {
-  console.log(`[read-state] ${signal} received, flushing pending mentions`);
-  try { await flushMentionsForShutdown(); } catch (err) { console.error("[read-state] mention flush on shutdown failed", err); }
+  logger.info({ signal }, "flushing pending mentions before shutdown");
+  try { await flushMentionsForShutdown(); } catch (err) { logger.error({ err }, "mention flush on shutdown failed"); }
   process.exit(0);
 }
 process.on("SIGTERM", () => void gracefulShutdown("SIGTERM"));

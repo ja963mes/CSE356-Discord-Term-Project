@@ -1,4 +1,7 @@
+import { randomUUID } from "crypto";
 import pino from "pino";
+import pinoHttp from "pino-http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { env } from "./env";
 
 export const logger = pino({
@@ -19,3 +22,11 @@ export const logger = pino({
     : {}),
 });
 
+export const httpLogger = pinoHttp({
+  logger,
+  genReqId: (req: IncomingMessage) => {
+    const h = req.headers["x-request-id"];
+    if (typeof h === "string" && h.length > 0) return h;
+    return randomUUID();
+  },
+});

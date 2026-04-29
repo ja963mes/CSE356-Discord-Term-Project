@@ -810,6 +810,17 @@ app.post("/internal/deliver-dm", (req, res) => {
   res.json(result);
 });
 
+app.post("/internal/log-level", (req, res) => {
+  const { level } = req.body as { level?: string };
+  const valid = ["trace", "debug", "info", "warn", "error", "fatal"];
+  if (!level || !valid.includes(level)) {
+    res.status(400).json({ error: `level must be one of: ${valid.join(", ")}` });
+    return;
+  }
+  logger.level = level;
+  res.json({ level: logger.level });
+});
+
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
