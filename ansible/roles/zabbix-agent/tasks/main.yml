@@ -19,6 +19,12 @@
         state: present
         update_cache: true
 
+    - name: Allow zabbix user to read systemd journal
+      ansible.builtin.user:
+        name: zabbix
+        groups: systemd-journal
+        append: true
+
     - name: Ensure zabbix log directory exists
       ansible.builtin.file:
         path: /var/log/zabbix
