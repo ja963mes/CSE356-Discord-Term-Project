@@ -453,12 +453,19 @@ export async function presignAttachments(
 
 /** Upload a file directly to MinIO using a presigned PUT URL. */
 export async function uploadToMinIO(uploadUrl: string, file: File): Promise<void> {
-  const res = await fetch(uploadUrl, {
-    method: "PUT",
-    headers: { "Content-Type": file.type },
-    body: file,
-  });
-  if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const res = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: { "Content-Type": file.type },
+      body: file,
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export function getSampleChannels(): Channel[] {

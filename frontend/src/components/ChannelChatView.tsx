@@ -256,8 +256,18 @@ export default function ChannelChatView({
     e.target.value = "";
   };
 
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const files = Array.from(e.dataTransfer.files).filter((f) => ALLOWED_TYPES.has(f.type));
+    if (files.length > 0) setPendingFiles((prev) => [...prev, ...files].slice(0, MAX_ATTACHMENTS));
+  };
+
   return (
-    <section className="flex-1 bg-surface-container flex flex-col relative min-w-0">
+    <section
+      className="flex-1 bg-surface-container flex flex-col relative min-w-0"
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={handleDrop}
+    >
       {/* Header */}
       <header className="h-16 flex items-center px-6 w-full bg-[#171a1f]/60 backdrop-blur-xl shadow-sm z-10 gap-3">
         <span className="material-symbols-outlined text-on-surface-variant shrink-0">
