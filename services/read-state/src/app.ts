@@ -17,7 +17,7 @@ import {
 } from "./repo";
 import { redis } from "./redis";
 import { publishUserFeedBatch } from "@discord/pubsub";
-import { httpLogger, logRouteError } from "./logger";
+import { logger, httpLogger, logRouteError } from "./logger";
 
 type AsyncHandler = (req: express.Request, res: express.Response, next: express.NextFunction) => Promise<void>;
 const ah = (fn: AsyncHandler): express.RequestHandler =>
