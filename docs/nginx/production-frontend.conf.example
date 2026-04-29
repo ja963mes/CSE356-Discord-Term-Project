@@ -260,6 +260,24 @@ server {
         proxy_send_timeout 30s;
     }
 
+    # MinIO object storage — proxied here so browser uploads/downloads use HTTPS.
+    # MINIO_ENDPOINT and ATTACHMENT_BASE_URL in services must point to this domain,
+    # not http://10.0.2.247:9000, to avoid mixed-content blocks.
+    # Host header is passed through unchanged so presigned URL signatures validate.
+    location ^~ /discord-attachments {
+        proxy_pass http://10.0.2.247:9000;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        client_max_body_size 50m;
+        proxy_request_buffering off;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
+    }
+
     location ^~ /search-communities {
         proxy_pass http://search_api;
         proxy_http_version 1.1;
