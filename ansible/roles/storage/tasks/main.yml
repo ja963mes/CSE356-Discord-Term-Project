@@ -53,9 +53,14 @@
   args:
     chdir: "{{ deploy_path }}"
 
-- name: Verify MinIO is healthy
-  ansible.builtin.uri:
-    url: "http://localhost:9000/minio/health/live"
-    status_code: 200
-  retries: 5
-  delay: 5
+- name: Wait for MinIO port to be available
+  ansible.builtin.wait_for:
+    host: localhost
+    port: 9000
+    timeout: 60
+
+- name: Check MinIO container is running
+  ansible.builtin.command: docker inspect --format='{{ "{{" }}.State.Running{{ "}}" }}' discord-clone-minio
+  register: minio_running
+  changed_when: false
+  failed_when: minio_running.stdout != 'true'
