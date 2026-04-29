@@ -1,4 +1,4 @@
-import { S3Client, CreateBucketCommand, HeadBucketCommand, PutBucketPolicyCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, CreateBucketCommand, HeadBucketCommand, PutBucketPolicyCommand, PutBucketCorsCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { env } from "./env";
 
@@ -36,6 +36,24 @@ export async function initializeBucket(): Promise<void> {
     );
     console.log(`[minio] bucket "${env.MINIO_BUCKET}" created with public read policy`);
   }
+
+  await s3.send(
+    new PutBucketCorsCommand({
+      Bucket: env.MINIO_BUCKET,
+      CORSConfiguration: {
+        CORSRules: [
+          {
+            AllowedOrigins: ["*"],
+            AllowedMethods: ["GET", "PUT", "HEAD", "DELETE"],
+            AllowedHeaders: ["*"],
+            ExposeHeaders: ["ETag"],
+            MaxAgeSeconds: 3600,
+          },
+        ],
+      },
+    })
+  );
+  console.log(`[minio] CORS configured for bucket "${env.MINIO_BUCKET}"`);
 }
 
 /** Generate a presigned PUT URL for direct browser upload. Expires in 15 minutes. */

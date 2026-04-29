@@ -48,9 +48,9 @@ messages_cassandra_read_consistency: "localOne"
 messages_cassandra_write_consistency: "localQuorum"
 
 ## MinIO / attachments (messages service issues presign URLs)
-messages_minio_endpoint: "http://10.0.2.247:9000"
+messages_minio_endpoint: "https://group-6.cse356.compas.cs.stonybrook.edu"
 messages_minio_access_key: "minioadmin"
 messages_minio_secret_key: "minioadmin"
 messages_minio_bucket: "discord-attachments"
-messages_attachment_base_url: "http://130.245.136.45/attachments"
+messages_attachment_base_url: "https://group-6.cse356.compas.cs.stonybrook.edu/discord-attachments"
 
