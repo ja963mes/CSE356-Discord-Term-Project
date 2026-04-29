@@ -24,6 +24,15 @@ on:
   pull_request:
     branches: [main-dev]
   workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to deploy (branch, tag, or commit SHA). Defaults to main-dev.'
+        required: false
+        default: ''
+      limit:
+        description: 'Ansible limit (e.g. read_state,dms). Leave blank for full deploy.'
+        required: false
+        default: ''
 
 concurrency:
   group: deploy-${{ github.ref }}
@@ -57,22 +66,62 @@ jobs:
         if: github.event_name == 'push'
         with:
           filters: |
-            auth: 'services/auth/**'
-            communities: 'services/communities/**'
-            dms: 'services/dms/**'
-            messages: 'services/messages/**'
-            read_state: 'services/read-state/**'
-            realtime: 'services/realtime/**'
-            search: 'services/search/**'
-            frontend: 'frontend/**'
+            # Each service filter covers:
+            #   1. service source code
+            #   2. nginx config (docs/nginx/production-<service>.conf.example — Ansible copies
+            #      this directly to /etc/nginx/sites-available/ on the VM, it is the real config)
+            #   3. Ansible role (templates, tasks, handlers for that service)
+            #   4. group_vars for that service (env vars, ports, feature flags)
+            # Note: search role has no nginx block in Ansible tasks yet — nginx conf change
+            # triggers deploy but Ansible won't apply it until the role is updated.
+            # backend has no Node services (just DB containers) — use workflow_dispatch.
+            auth:        ['services/auth/**',
+                          'docs/nginx/production-auth.conf.example',
+                          'ansible/roles/auth/**',
+                          'ansible/inventory/group_vars/auth/**']
+            communities: ['services/communities/**',
+                          'docs/nginx/production-communities.conf.example',
+                          'ansible/roles/communities/**',
+                          'ansible/inventory/group_vars/communities.yml']
+            dms:         ['services/dms/**',
+                          'docs/nginx/production-dms.conf.example',
+                          'ansible/roles/dms/**',
+                          'ansible/inventory/group_vars/dms.yml']
+            messages:    ['services/messages/**',
+                          'docs/nginx/production-messages.conf.example',
+                          'ansible/roles/messages/**',
+                          'ansible/inventory/group_vars/messages.yml']
+            read_state:  ['services/read-state/**',
+                          'docs/nginx/production-read-state.conf.example',
+                          'ansible/roles/read-state/**',
+                          'ansible/inventory/group_vars/read_state.yml']
+            realtime:    ['services/realtime/**',
+                          'docs/nginx/production-realtime.conf.example',
+                          'ansible/roles/realtime/**',
+                          'ansible/inventory/group_vars/realtime.yml']
+            search:      ['services/search/**',
+                          'docs/nginx/production-search.conf.example',
+                          'ansible/roles/search/**',
+                          'ansible/inventory/group_vars/search.yml']
+            frontend:    ['frontend/**',
+                          'docs/nginx/production-frontend.conf.example',
+                          'ansible/roles/frontend/**']
             shared_pubsub: 'services/shared-pubsub/**'
-            infra: ['ansible/**', 'package.json', 'package-lock.json']
+            # infra = changes that affect all VMs: common role, playbooks, root deps
+            infra: ['ansible/roles/common/**',
+                    'ansible/roles/redis/**',
+                    'ansible/roles/zabbix-agent/**',
+                    'ansible/playbooks/**',
+                    'ansible/ansible.cfg',
+                    'ansible/inventory/group_vars/all/**',
+                    'package.json',
+                    'package-lock.json']
       - id: limit
         run: |
           set -euo pipefail
-          # workflow_dispatch always does full deploy
+          # workflow_dispatch: respect manual limit input, or full deploy if blank
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "value=" >> $GITHUB_OUTPUT
+            echo "value=${{ github.event.inputs.limit }}" >> $GITHUB_OUTPUT
             echo "skip_deploy=false" >> $GITHUB_OUTPUT
             exit 0
           fi
@@ -135,10 +184,12 @@ jobs:
           DEPLOY_BRANCH: ${{ secrets.DEPLOY_BRANCH }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
           ANSIBLE_LIMIT: ${{ needs.detect.outputs.ansible_limit }}
+          DEPLOY_REF: ${{ github.event.inputs.ref }}
         run: |
           set -euo pipefail
-          BRANCH="$DEPLOY_BRANCH"
-          if [ -z "$BRANCH" ]; then BRANCH=main-dev; fi
+          # ref input overrides branch (enables rollback to any commit/tag)
+          BRANCH="${DEPLOY_REF:-}"
+          if [ -z "$BRANCH" ]; then BRANCH="${DEPLOY_BRANCH:-main-dev}"; fi
 
           ssh -i ~/.ssh/id_backend -o StrictHostKeyChecking=no "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.BACKEND_SSH_HOST }}" "bash -s" <<EOF
           set -euo pipefail
@@ -152,7 +203,8 @@ jobs:
           cd "\$DEPLOY_PATH"
           git fetch origin
           git checkout "\$BRANCH"
-          git pull --ff-only origin "\$BRANCH"
+          # only pull if on a branch (tags/SHAs are detached HEAD, pull would fail)
+          git symbolic-ref HEAD &>/dev/null && git pull --ff-only origin "\$BRANCH" || true
           cd ansible
           LIMIT_FLAG=""
           if [ -n "\$ANSIBLE_LIMIT" ]; then LIMIT_FLAG="--limit \$ANSIBLE_LIMIT"; fi
