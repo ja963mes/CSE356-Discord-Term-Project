@@ -17,6 +17,7 @@ import {
 } from "./repo";
 import { redis } from "./redis";
 import { publishUserFeedBatch } from "@discord/pubsub";
+import { httpLogger, logRouteError } from "./logger";
 
 type AsyncHandler = (req: express.Request, res: express.Response, next: express.NextFunction) => Promise<void>;
 const ah = (fn: AsyncHandler): express.RequestHandler =>
@@ -25,6 +26,7 @@ const ah = (fn: AsyncHandler): express.RequestHandler =>
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
+app.use(httpLogger);
 
 const querySchema = z.object({
   communityId: z.string().uuid(),
@@ -51,7 +53,7 @@ app.get("/health", async (_req, res) => {
     ]);
     res.json({ status: "ok", service: "read-state-service", storage: "cassandra" });
   } catch (error) {
-    console.error("[read-state] health check failed", error);
+    logRouteError("health check failed", error);
     res.status(503).json({ status: "degraded", service: "read-state-service", storage: "cassandra_unreachable" });
   }
 });
@@ -189,10 +191,21 @@ app.post("/read-state/dms/:conversationId/read", requireAuth, ah(async (req, res
   res.status(204).send();
 }));
 
+app.post("/internal/log-level", (req, res) => {
+  const { level } = req.body as { level?: string };
+  const valid = ["trace", "debug", "info", "warn", "error", "fatal"];
+  if (!level || !valid.includes(level)) {
+    res.status(400).json({ error: `level must be one of: ${valid.join(", ")}` });
+    return;
+  }
+  logger.level = level;
+  res.json({ level: logger.level });
+});
+
 // Catch unhandled async errors in route handlers (Express 4 doesn't do this automatically).
 // Without this, a Cassandra/Postgres error in a bare `await` crashes the worker process → 502.
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error("[read-state] unhandled route error", err);
+  logRouteError("unhandled route error", err);
   if (!res.headersSent) res.status(500).json({ error: "Internal server error" });
 });
 

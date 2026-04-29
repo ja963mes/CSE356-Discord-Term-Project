@@ -1,0 +1,10 @@
+# Uncomment services you want to run locally against staging infra.
+# Then run: npm run dev:hybrid  (opens tunnel + services + frontend in one terminal)
+
+#auth
+#communities
+#messages
+#search
+#realtime
+#dms
+#read-state

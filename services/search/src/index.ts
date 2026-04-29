@@ -8,11 +8,12 @@ import searchRouter from "./routes/search";
 import directoryRouter from "./routes/directory";
 import { ensureCommunitiesIndex, reindexAllCommunitiesFromPostgres } from "./communitiesIndex";
 import { kvCacheRedis } from "./redis";
-import { logger } from "./logger";
+import { logger, httpLogger } from "./logger";
 
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
+app.use(httpLogger);
 
 app.get("/health", async (_req, res) => {
   try {
@@ -26,6 +27,17 @@ app.get("/health", async (_req, res) => {
 
 app.use(searchRouter);
 app.use(directoryRouter);
+
+app.post("/internal/log-level", (req, res) => {
+  const { level } = req.body as { level?: string };
+  const valid = ["trace", "debug", "info", "warn", "error", "fatal"];
+  if (!level || !valid.includes(level)) {
+    res.status(400).json({ error: `level must be one of: ${valid.join(", ")}` });
+    return;
+  }
+  logger.level = level;
+  res.json({ level: logger.level });
+});
 
 const port = Number(env.SEARCH_PORT);
 

@@ -45,6 +45,17 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "auth-service" });
 });
 
+app.post("/internal/log-level", (req, res) => {
+  const { level } = req.body as { level?: string };
+  const valid = ["trace", "debug", "info", "warn", "error", "fatal"];
+  if (!level || !valid.includes(level)) {
+    res.status(400).json({ error: `level must be one of: ${valid.join(", ")}` });
+    return;
+  }
+  logger.level = level;
+  res.json({ level: logger.level });
+});
+
 app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
   if (res.headersSent) {
     next(err);

@@ -2,9 +2,17 @@ import { z } from "zod";
 import dotenv from "dotenv";
 import path from "path";
 
-dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
+// Repo root — __dirname is the src/ dir, so 3 levels up.
+const repoRoot = path.resolve(__dirname, "../../..");
+dotenv.config({ path: path.join(repoRoot, ".env") });
 if (process.env.ENV_FILE) {
-  dotenv.config({ path: process.env.ENV_FILE, override: true });
+  // Resolve relative paths from repo root — npm workspaces set cwd to the
+  // package dir before running scripts, so a bare filename like
+  // ".env.staging-infra-local" would otherwise resolve to services/search/.
+  const envFilePath = path.isAbsolute(process.env.ENV_FILE)
+    ? process.env.ENV_FILE
+    : path.join(repoRoot, process.env.ENV_FILE);
+  dotenv.config({ path: envFilePath, override: true });
 }
 
 const envSchema = z.object({

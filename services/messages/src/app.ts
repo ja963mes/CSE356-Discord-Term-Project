@@ -330,6 +330,17 @@ app.delete("/messages/:channelId/:timeuuid", requireAuth, async (req: Request, r
   res.status(204).send();
 });
 
+app.post("/internal/log-level", (req: Request, res: Response) => {
+  const { level } = req.body as { level?: string };
+  const valid = ["trace", "debug", "info", "warn", "error", "fatal"];
+  if (!level || !valid.includes(level)) {
+    res.status(400).json({ error: `level must be one of: ${valid.join(", ")}` });
+    return;
+  }
+  logger.level = level;
+  res.json({ level: logger.level });
+});
+
 app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
   if (res.headersSent) {
     next(err);

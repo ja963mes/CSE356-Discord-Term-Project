@@ -139,6 +139,83 @@ Channel lifecycle and ACLs live on the **communities service (3002)** — no sep
 /read-state         → localhost:3008
 ```
 
+## Hybrid Dev Workflow (local service + staging infra)
+
+Run one service locally against the live staging infrastructure without spinning up Docker.
+
+**Prerequisites:** `sshuttle` installed locally (tunnels the entire `10.0.0.0/8` subnet through SSH).
+
+```bash
+# 1. Open tunnel (keep this terminal open)
+sshuttle -r deploy@130.245.136.45 10.0.0.0/8
+
+# 2. Run a single service against staging infra
+npm run dev:dms:staging          # DMs service on :3007 → staging Redis/Cassandra/Postgres
+npm run dev:messages:staging     # Messages service on :3003
+npm run dev:realtime:staging     # Realtime on :3005
+
+# 3. Point the frontend at the local service, staging for everything else
+# Option A — all services local (full staging-infra mode):
+npm run dev:staging              # all 7 services + frontend (VITE_API_ORIGIN=localhost)
+
+# Option B — one service local, rest on staging:
+# Run the local service (step 2), then run frontend in hybrid mode so it
+# proxies only that service locally and hits staging for the rest:
+VITE_DMS_ORIGIN=http://localhost:3007 npm run dev:frontend:hybrid
+# hybrid mode sets VITE_API_ORIGIN=https://group-6.cse356... so any service
+# NOT overridden via VITE_*_ORIGIN routes to the staging VM.
+```
+
+**How `ENV_FILE` works:** every service reads `process.env.ENV_FILE` at startup and calls `dotenv.config({ path: ENV_FILE, override: true })`. `.env.staging-infra` in repo root has all staging IPs pre-filled (Redis, Postgres, Cassandra, MinIO). The `dev:*:staging` scripts set `ENV_FILE=.env.staging-infra` automatically.
+
+**Session note:** sessions are Redis-backed (KV Redis at `10.0.3.49:6380`), not JWT. Any service pointed at staging KV Redis will validate real user sessions — no `SESSION_SECRET` mismatch issue for non-auth services. Only matters if running `auth-service` locally.
+
+**Per-service `VITE_*_ORIGIN` vars** (set before `npm run dev:frontend`):
+```
+VITE_AUTH_ORIGIN       VITE_COMMUNITIES_ORIGIN  VITE_MESSAGES_ORIGIN
+VITE_SEARCH_ORIGIN     VITE_REALTIME_ORIGIN     VITE_DMS_ORIGIN
+VITE_READ_STATE_ORIGIN
+```
+Unset vars fall back to `VITE_API_ORIGIN:<port>`.
+
+## Log Level (Runtime, No Redeploy)
+
+All 7 services expose `POST /internal/log-level` and support runtime level changes via npm scripts that SSH to staging.
+
+```bash
+# Set one service
+npm run log-level <service> <level>
+# e.g.
+npm run log-level dms debug
+npm run log-level messages trace
+
+# Set all services at once
+npm run log-level all debug
+
+# Reset everything back to info
+npm run log-level:reset
+```
+
+Valid services: `auth`, `communities`, `messages`, `search`, `realtime`, `dms`, `read-state`  
+Valid levels: `trace`, `debug`, `info`, `warn`, `error`, `fatal`
+
+**Local override:** set `LOG_LEVEL=debug` in your `.env` or prefix the dev command:
+```bash
+LOG_LEVEL=debug npm run dev:dms:staging
+```
+
+## Test Scripts
+
+```bash
+npm run test:api      # Full API test suite against staging (uses GeneratedClient)
+npm run test:trace    # WebSocket / realtime trace test against staging
+```
+
+To update with a new grader client: paste new client into `scripts/generated-client.ts`, replace the top import with:
+```typescript
+import { CookieJar, fetchWithRetry, RealtimeManager } from './test-harness/helpers.js';
+```
+
 ## Coding Conventions
 - TypeScript everywhere (strict mode)
 - Zod for env validation (`services/auth/src/config/env.ts` as reference)
