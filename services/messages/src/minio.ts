@@ -10,6 +10,9 @@ export const s3 = new S3Client({
     secretAccessKey: env.MINIO_SECRET_KEY,
   },
   forcePathStyle: true, // Required for MinIO — uses path-style URLs (host/bucket/key)
+  // MinIO returns 501 for checksum headers added by default in SDK v3.x; only send when required
+  requestChecksumCalculation: "WHEN_REQUIRED",
+  responseChecksumValidation: "WHEN_REQUIRED",
 });
 
 export async function initializeBucket(): Promise<void> {
