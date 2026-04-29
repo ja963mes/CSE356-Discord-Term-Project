@@ -10,7 +10,6 @@ upstream read_state_backend {
     server 127.0.0.1:3008;
     keepalive 32;
     keepalive_requests 1000;
-    keepalive_time 60s;
 }
 
 server {
