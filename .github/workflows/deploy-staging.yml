@@ -25,6 +25,10 @@ on:
     branches: [main-dev]
   workflow_dispatch:
 
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ci:
     runs-on: ubuntu-latest
@@ -37,9 +41,83 @@ jobs:
       - run: npm ci
       - run: npm run build --workspace frontend
 
-  deploy_from_control_node:
+  detect:
     needs: ci
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main-dev')
+    runs-on: ubuntu-latest
+    outputs:
+      ansible_limit: ${{ steps.limit.outputs.value }}
+      skip_deploy: ${{ steps.limit.outputs.skip_deploy }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        id: changes
+        if: github.event_name == 'push'
+        with:
+          filters: |
+            auth: 'services/auth/**'
+            communities: 'services/communities/**'
+            dms: 'services/dms/**'
+            messages: 'services/messages/**'
+            read_state: 'services/read-state/**'
+            realtime: 'services/realtime/**'
+            search: 'services/search/**'
+            frontend: 'frontend/**'
+            shared_pubsub: 'services/shared-pubsub/**'
+            infra: ['ansible/**', 'package.json', 'package-lock.json']
+      - id: limit
+        run: |
+          set -euo pipefail
+          # workflow_dispatch always does full deploy
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "value=" >> $GITHUB_OUTPUT
+            echo "skip_deploy=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          # infra changes = full deploy (ansible roles, root deps)
+          if [[ "${{ steps.changes.outputs.infra }}" == "true" ]]; then
+            echo "value=" >> $GITHUB_OUTPUT
+            echo "skip_deploy=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          # shared-pubsub change = all 6 consumer VMs (not auth/frontend)
+          if [[ "${{ steps.changes.outputs.shared_pubsub }}" == "true" ]]; then
+            echo "value=communities,dms,messages,read_state,realtime,search" >> $GITHUB_OUTPUT
+            echo "skip_deploy=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          # build limit from individual service changes
+          PARTS=()
+          [[ "${{ steps.changes.outputs.auth }}"        == "true" ]] && PARTS+=(auth)
+          [[ "${{ steps.changes.outputs.communities }}"  == "true" ]] && PARTS+=(communities)
+          [[ "${{ steps.changes.outputs.dms }}"          == "true" ]] && PARTS+=(dms)
+          [[ "${{ steps.changes.outputs.messages }}"     == "true" ]] && PARTS+=(messages)
+          [[ "${{ steps.changes.outputs.read_state }}"   == "true" ]] && PARTS+=(read_state)
+          [[ "${{ steps.changes.outputs.realtime }}"     == "true" ]] && PARTS+=(realtime)
+          [[ "${{ steps.changes.outputs.search }}"       == "true" ]] && PARTS+=(search)
+          [[ "${{ steps.changes.outputs.frontend }}"     == "true" ]] && PARTS+=(frontend)
+          if [[ ${#PARTS[@]} -eq 0 ]]; then
+            echo "skip_deploy=true" >> $GITHUB_OUTPUT
+          else
+            JOINED=$(IFS=','; echo "${PARTS[*]}")
+            echo "value=${JOINED}" >> $GITHUB_OUTPUT
+            echo "skip_deploy=false" >> $GITHUB_OUTPUT
+          fi
+      - name: Deploy summary
+        if: steps.limit.outputs.skip_deploy != 'true'
+        run: |
+          LIMIT="${{ steps.limit.outputs.value }}"
+          if [ -z "$LIMIT" ]; then
+            echo "Deploying: ALL services"
+          else
+            echo "Deploying: ${LIMIT//,/ }"
+          fi
+
+  deploy_from_control_node:
+    needs: [ci, detect]
+    if: needs.detect.outputs.skip_deploy != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Configure SSH key (control node)
@@ -56,6 +134,7 @@ jobs:
         env:
           DEPLOY_BRANCH: ${{ secrets.DEPLOY_BRANCH }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          ANSIBLE_LIMIT: ${{ needs.detect.outputs.ansible_limit }}
         run: |
           set -euo pipefail
           BRANCH="$DEPLOY_BRANCH"
@@ -65,6 +144,7 @@ jobs:
           set -euo pipefail
           BRANCH='$BRANCH'
           DEPLOY_PATH='${DEPLOY_PATH}'
+          ANSIBLE_LIMIT='${ANSIBLE_LIMIT}'
           if [ -z "\$DEPLOY_PATH" ]; then
             echo 'DEPLOY_PATH secret is required.'
             exit 1
@@ -74,5 +154,34 @@ jobs:
           git checkout "\$BRANCH"
           git pull --ff-only origin "\$BRANCH"
           cd ansible
-          ANSIBLE_CONFIG=ansible.cfg ansible-playbook -i inventory/hosts.ini playbooks/site.yml
+          LIMIT_FLAG=""
+          if [ -n "\$ANSIBLE_LIMIT" ]; then LIMIT_FLAG="--limit \$ANSIBLE_LIMIT"; fi
+          ANSIBLE_CONFIG=ansible.cfg ansible-playbook -i inventory/hosts.ini playbooks/site.yml \$LIMIT_FLAG
+          EOF
+
+      - name: Health check deployed services
+        env:
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          ANSIBLE_LIMIT: ${{ needs.detect.outputs.ansible_limit }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_backend -o StrictHostKeyChecking=no "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.BACKEND_SSH_HOST }}" "bash -s" <<EOF
+          set -euo pipefail
+          declare -A HEALTH_PORTS=([auth]=3001 [communities]=3002 [messages]=3003 [search]=3004 [realtime]=3005 [dms]=3007 [read_state]=3008)
+          cd "${DEPLOY_PATH}/ansible"
+          TARGETS="${ANSIBLE_LIMIT:-auth,communities,messages,search,realtime,dms,read_state}"
+          FAILED=()
+          for svc in \${TARGETS//,/ }; do
+            port="\${HEALTH_PORTS[\$svc]:-}"
+            [ -z "\$port" ] && continue
+            echo "Checking \$svc :\$port ..."
+            ANSIBLE_CONFIG=ansible.cfg ansible "\$svc" -i inventory/hosts.ini -m uri \
+              -a "url=http://localhost:\${port}/health status_code=200" \
+              --one-line 2>&1 || FAILED+=("\$svc")
+          done
+          if [ \${#FAILED[@]} -gt 0 ]; then
+            echo "Health check FAILED for: \${FAILED[*]}"
+            exit 1
+          fi
+          echo "All health checks passed."
           EOF
