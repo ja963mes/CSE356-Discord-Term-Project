@@ -378,7 +378,7 @@ async function replayMissedDmHintsFromDisconnect(
               messageId: row.messageId,
               authorId: row.authorId,
               content: row.content,
-              attachments: row.attachments,
+              attachmentUrls: row.attachments,
               timeuuid: row.timeuuid,
               createdAt: "",
             },

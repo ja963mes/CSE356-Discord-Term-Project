@@ -38,6 +38,8 @@ function authorLabel(authorId: string | undefined | null, displayNameByUserId: R
 const MAX_ATTACHMENTS = 4;
 const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
 
+type LocalMessage = DmMessage & { pending?: boolean; uploadFailed?: boolean };
+
 export default function DmChatView({
   conversation,
   currentUserId,
@@ -46,7 +48,7 @@ export default function DmChatView({
   onLeave,
   onReadStateUpdated,
 }: Props) {
-  const [messages, setMessages] = useState<DmMessage[]>([]);
+  const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [composerText, setComposerText] = useState("");
@@ -62,7 +64,6 @@ export default function DmChatView({
   const [showSearch, setShowSearch] = useState(false);
   const [readStateByUserId, setReadStateByUserId] = useState<Record<string, string | null>>({});
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
-  const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -213,33 +214,55 @@ export default function DmChatView({
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     const text = composerText.trim();
-    if ((!text && pendingFiles.length === 0) || sending) return;
+    const filesToUpload = [...pendingFiles];
+    if ((!text && filesToUpload.length === 0) || sending) return;
     setSending(true);
+
+    const tempId = `pending-${Date.now()}`;
+    const blobUrls = filesToUpload.map((f) => URL.createObjectURL(f));
+
+    const optimistic: LocalMessage = {
+      messageId: tempId,
+      conversationId,
+      authorId: currentUserId,
+      content: text || "​",
+      attachmentKeys: [],
+      attachmentUrls: blobUrls,
+      createdAt: new Date().toISOString(),
+      timeuuid: "",
+      updatedAt: null,
+      deleted: false,
+      pending: true,
+    };
+
+    setMessages((prev) => [optimistic, ...prev]);
+    setComposerText("");
+    setPendingFiles([]);
+    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+
     try {
       let attachmentKeys: string[] = [];
-      if (pendingFiles.length > 0) {
-        setUploadingAttachments(true);
-        try {
-          const presigned = await presignAttachments(
-            pendingFiles.map((f) => ({ filename: f.name, contentType: f.type }))
-          );
-          await Promise.all(presigned.map((p, i) => uploadToMinIO(p.uploadUrl, pendingFiles[i])));
-          attachmentKeys = presigned.map((p) => p.key);
-        } finally {
-          setUploadingAttachments(false);
-        }
+      if (filesToUpload.length > 0) {
+        const presigned = await presignAttachments(
+          filesToUpload.map((f) => ({ filename: f.name, contentType: f.type }))
+        );
+        await Promise.all(presigned.map((p, i) => uploadToMinIO(p.uploadUrl, filesToUpload[i])));
+        attachmentKeys = presigned.map((p) => p.key);
       }
-      if (!text && attachmentKeys.length === 0) return;
+
       const msg = await sendMessage(conversationId, text || "​", attachmentKeys);
-      setMessages((prev) =>
-        prev.some((m) => m.messageId === msg.messageId) ? prev : [msg, ...prev]
-      );
-      setComposerText("");
-      setPendingFiles([]);
+      setMessages((prev) => {
+        const without = prev.filter((m) => m.messageId !== tempId);
+        if (without.some((m) => m.messageId === msg.messageId)) return without;
+        return [msg, ...without];
+      });
+      blobUrls.forEach((url) => URL.revokeObjectURL(url));
       void markLatestRead(msg);
-      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
     } catch {
-      // ignore
+      setMessages((prev) =>
+        prev.map((m) => m.messageId === tempId ? { ...m, pending: false, uploadFailed: true } : m)
+      );
+      blobUrls.forEach((url) => URL.revokeObjectURL(url));
     } finally {
       setSending(false);
     }
@@ -292,14 +315,22 @@ export default function DmChatView({
         authorId: String(raw.authorId),
         content: String(raw.content ?? ""),
         attachmentKeys: Array.isArray(raw.attachmentKeys) ? (raw.attachmentKeys as string[]) : [],
-        attachmentUrls: Array.isArray(raw.attachmentUrls) ? (raw.attachmentUrls as string[]) : [],
+        // backend publishes URLs as "attachments"; fall back to "attachmentUrls" for forward compat
+        attachmentUrls: Array.isArray(raw.attachmentUrls) ? (raw.attachmentUrls as string[]) :
+                        Array.isArray(raw.attachments) ? (raw.attachments as string[]) : [],
         createdAt: String(raw.createdAt ?? ""),
         timeuuid: String(raw.timeuuid ?? ""),
         updatedAt: null,
         deleted: false,
       };
       setMessages((prev) => {
-        if (prev.some((m) => m.messageId === msg.messageId)) return prev;
+        const existing = prev.find((m) => m.messageId === msg.messageId);
+        if (existing) {
+          // API response may have arrived first with empty attachmentUrls (race); patch it
+          if (existing.attachmentUrls.length === 0 && msg.attachmentUrls.length > 0)
+            return prev.map((m) => m.messageId === msg.messageId ? { ...m, attachmentUrls: msg.attachmentUrls } : m);
+          return prev;
+        }
         return [msg, ...prev];
       });
       if (atBottomRef.current || raw.authorId === currentUserId) {
@@ -662,15 +693,33 @@ export default function DmChatView({
                     {m.attachmentUrls && m.attachmentUrls.length > 0 && (
                       <div className="flex flex-wrap gap-2 mt-2">
                         {m.attachmentUrls.map((url, i) => (
-                          <a key={i} href={url} target="_blank" rel="noopener noreferrer">
+                          m.pending ? (
                             <img
+                              key={i}
                               src={url}
                               alt={`attachment ${i + 1}`}
-                              className="max-h-48 max-w-xs rounded-lg object-cover cursor-pointer hover:opacity-90"
+                              className="max-h-48 max-w-xs rounded-lg object-cover opacity-60"
                             />
-                          </a>
+                          ) : (
+                            <a key={i} href={url} target="_blank" rel="noopener noreferrer">
+                              <img
+                                src={url}
+                                alt={`attachment ${i + 1}`}
+                                className="max-h-48 max-w-xs rounded-lg object-cover cursor-pointer hover:opacity-90"
+                              />
+                            </a>
+                          )
                         ))}
                       </div>
+                    )}
+                    {m.pending && (
+                      <p className="text-[10px] text-on-surface-variant italic mt-1">Sending…</p>
+                    )}
+                    {m.uploadFailed && (
+                      <p className="text-[10px] text-error mt-1 flex items-center gap-1">
+                        <span className="material-symbols-outlined text-sm">error</span>
+                        Failed to send
+                      </p>
                     )}
                   </>
                 )}
@@ -732,10 +781,10 @@ export default function DmChatView({
           />
           <button
             type="submit"
-            disabled={sending || uploadingAttachments || (!composerText.trim() && pendingFiles.length === 0)}
+            disabled={sending || (!composerText.trim() && pendingFiles.length === 0)}
             className="material-symbols-outlined text-on-surface-variant hover:text-on-surface cursor-pointer disabled:opacity-50"
           >
-            {uploadingAttachments ? "uploading…" : "send"}
+            send
           </button>
         </form>
       </div>
