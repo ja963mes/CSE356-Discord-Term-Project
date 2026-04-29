@@ -1190,12 +1190,6 @@ const onPubsubMessage = (channel: string, message: string) => {
           const conns = userConnections.get(normUserId(uid));
           if (!conns || conns.size === 0) {
             notConnectedCount++;
-            logger.info({
-              targetUid: uid,
-              channelId,
-              messageId: chMsg?.messageId,
-              authorId: chMsg?.authorId,
-            }, "channel fanout: target not connected on this instance");
             continue;
           }
           for (const connId of conns) {
@@ -1203,14 +1197,6 @@ const onPubsubMessage = (channel: string, message: string) => {
             if (conn) {
               enqueueSend(conn.ws, payload, "channel", undefined, true);
               sentCount++;
-              logger.info({
-                targetUid: uid,
-                connId,
-                channelId,
-                messageId: chMsg?.messageId,
-                authorId: chMsg?.authorId,
-                sentAt: new Date().toISOString(),
-              }, "channel fanout: sent to client");
             }
           }
         }
