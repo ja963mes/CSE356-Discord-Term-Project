@@ -69,3 +69,9 @@
   become: true
   roles:
     - search
+
+- name: Configure storage VM (MinIO)
+  hosts: storage
+  become: true
+  roles:
+    - storage

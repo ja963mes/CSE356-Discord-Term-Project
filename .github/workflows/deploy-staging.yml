@@ -107,6 +107,8 @@ jobs:
                           'docs/nginx/production-frontend.conf.example',
                           'ansible/roles/frontend/**']
             shared_pubsub: 'services/shared-pubsub/**'
+            storage:     ['ansible/roles/storage/**',
+                          'docker-compose.yml']
             # infra = changes that affect all VMs: common role, playbooks, root deps
             infra: ['ansible/roles/common/**',
                     'ansible/roles/redis/**',
@@ -147,6 +149,7 @@ jobs:
           [[ "${{ steps.changes.outputs.realtime }}"     == "true" ]] && PARTS+=(realtime)
           [[ "${{ steps.changes.outputs.search }}"       == "true" ]] && PARTS+=(search)
           [[ "${{ steps.changes.outputs.frontend }}"     == "true" ]] && PARTS+=(frontend)
+          [[ "${{ steps.changes.outputs.storage }}"      == "true" ]] && PARTS+=(storage)
           if [[ ${#PARTS[@]} -eq 0 ]]; then
             echo "skip_deploy=true" >> $GITHUB_OUTPUT
           else

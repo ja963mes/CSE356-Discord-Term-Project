@@ -12,6 +12,7 @@ import {
   inviteParticipant,
   leaveConversation,
 } from "../api/dms";
+import { presignAttachments, uploadToMinIO } from "../api/discord";
 import { DmUser, displayNameForDmUser, getDmUsers } from "../api/auth";
 import SearchPanel from "./SearchPanel";
 
@@ -33,6 +34,9 @@ function authorLabel(authorId: string | undefined | null, displayNameByUserId: R
   if (typeof fromMap === "string" && fromMap.trim() !== "") return fromMap;
   return `${authorId.slice(0, 8)}…`;
 }
+
+const MAX_ATTACHMENTS = 4;
+const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
 
 export default function DmChatView({
   conversation,
@@ -57,6 +61,9 @@ export default function DmChatView({
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [readStateByUserId, setReadStateByUserId] = useState<Record<string, string | null>>({});
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [uploadingAttachments, setUploadingAttachments] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -190,18 +197,45 @@ export default function DmChatView({
     }
   }, [loadOlder]);
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []).filter((f) => ALLOWED_TYPES.has(f.type));
+    setPendingFiles((prev) => [...prev, ...files].slice(0, MAX_ATTACHMENTS));
+    e.target.value = "";
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const files = Array.from(e.dataTransfer.files).filter((f) => ALLOWED_TYPES.has(f.type));
+    if (files.length > 0) setPendingFiles((prev) => [...prev, ...files].slice(0, MAX_ATTACHMENTS));
+  };
+
   // Send a new message
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     const text = composerText.trim();
-    if (!text || sending) return;
+    if ((!text && pendingFiles.length === 0) || sending) return;
     setSending(true);
     try {
-      const msg = await sendMessage(conversationId, text);
+      let attachmentKeys: string[] = [];
+      if (pendingFiles.length > 0) {
+        setUploadingAttachments(true);
+        try {
+          const presigned = await presignAttachments(
+            pendingFiles.map((f) => ({ filename: f.name, contentType: f.type }))
+          );
+          await Promise.all(presigned.map((p, i) => uploadToMinIO(p.uploadUrl, pendingFiles[i])));
+          attachmentKeys = presigned.map((p) => p.key);
+        } finally {
+          setUploadingAttachments(false);
+        }
+      }
+      if (!text && attachmentKeys.length === 0) return;
+      const msg = await sendMessage(conversationId, text || "​", attachmentKeys);
       setMessages((prev) =>
         prev.some((m) => m.messageId === msg.messageId) ? prev : [msg, ...prev]
       );
       setComposerText("");
+      setPendingFiles([]);
       void markLatestRead(msg);
       setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
     } catch {
@@ -347,7 +381,7 @@ export default function DmChatView({
   }
 
   return (
-    <section className="flex-1 flex min-w-0">
+    <section className="flex-1 flex min-w-0" onDragOver={(e) => e.preventDefault()} onDrop={handleDrop}>
       <div className="flex-1 bg-surface-container flex flex-col relative min-w-0">
       {/* Header */}
       <header className="h-16 flex items-center justify-between px-6 w-full bg-[#171a1f]/60 backdrop-blur-xl shadow-sm z-10">
@@ -650,8 +684,45 @@ export default function DmChatView({
       </div>
 
       {/* Composer */}
-      <div className="p-4 border-t border-outline-variant/20">
-        <form onSubmit={handleSend} className="flex items-center gap-3">
+      <div className="border-t border-outline-variant/20" onDragOver={(e) => e.preventDefault()} onDrop={handleDrop}>
+        {pendingFiles.length > 0 && (
+          <div className="px-4 pt-2 flex gap-2 flex-wrap">
+            {pendingFiles.map((f, i) => (
+              <div key={i} className="relative">
+                <img
+                  src={URL.createObjectURL(f)}
+                  alt={f.name}
+                  className="h-16 w-16 rounded object-cover"
+                />
+                <button
+                  type="button"
+                  onClick={() => setPendingFiles((prev) => prev.filter((_, idx) => idx !== i))}
+                  className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full text-white text-[10px] flex items-center justify-center"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <form onSubmit={handleSend} className="p-4 flex items-center gap-3">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/gif,image/webp"
+            multiple
+            className="hidden"
+            onChange={handleFileChange}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={pendingFiles.length >= MAX_ATTACHMENTS}
+            className="material-symbols-outlined text-on-surface-variant hover:text-on-surface disabled:opacity-30 flex-shrink-0"
+            title="Attach image"
+          >
+            attach_file
+          </button>
           <input
             className="flex-1 bg-surface-container-lowest border-none rounded-lg px-4 py-2 text-sm text-on-surface placeholder:text-on-surface-variant focus:ring-1 focus:ring-primary"
             placeholder={`Message ${label}`}
@@ -661,10 +732,10 @@ export default function DmChatView({
           />
           <button
             type="submit"
-            disabled={sending || !composerText.trim()}
+            disabled={sending || uploadingAttachments || (!composerText.trim() && pendingFiles.length === 0)}
             className="material-symbols-outlined text-on-surface-variant hover:text-on-surface cursor-pointer disabled:opacity-50"
           >
-            send
+            {uploadingAttachments ? "uploading…" : "send"}
           </button>
         </form>
       </div>
