@@ -107,4 +107,8 @@
 - name: Check realtime services are active
   ansible.builtin.command: "systemctl is-active {{ item }}"
   changed_when: false
+  register: realtime_active_check
+  until: realtime_active_check.rc == 0
+  retries: 10
+  delay: 3
   loop: "{{ realtime_systemd_services }}"

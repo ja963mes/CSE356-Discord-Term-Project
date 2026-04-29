@@ -564,7 +564,7 @@ async function buildPresencePayload(userId: string): Promise<{ status: PresenceS
 // Writes the materialized key BEFORE broadcasting so any concurrent target-side
 // snapshot read via getPresenceSnapshotForTargets sees the new value rather
 // than the stale one.
-async function updateAndBroadcast(userId: string, prevStatus: PresenceStatus): Promise<void> {
+async function updateAndBroadcast(userId: string, prevStatus: PresenceStatus): Promise<{ status: PresenceStatus; awayMessage?: string }> {
   const { status: newStatus, awayMessage } = await buildPresencePayload(userId);
   if (newStatus !== prevStatus) {
     logger.info({ userId, from: prevStatus, to: newStatus }, "presence changed");
@@ -572,6 +572,7 @@ async function updateAndBroadcast(userId: string, prevStatus: PresenceStatus): P
     snapshotCacheInvalidate(userId);
     await broadcastPresenceChange(kvCacheRedis, metaRedis, userId, newStatus, awayMessage);
   }
+  return { status: newStatus, awayMessage };
 }
 
 function scheduleUserIdleCheck(userId: string): void {
@@ -926,8 +927,7 @@ wss.on("connection", async (ws, req) => {
   await subscribeUser(kvCacheRedis, userId);
 
   logger.info({ userId, connId, total: connections.size }, "client connected");
-  await updateAndBroadcast(userId, prevStatus);
-  const { status: currentStatus, awayMessage: currentAwayMessage } = await buildPresencePayload(userId);
+  const { status: currentStatus, awayMessage: currentAwayMessage } = await updateAndBroadcast(userId, prevStatus);
   await setLastKnownPresence(userId, currentStatus);
 
   // Reconcile missed DMs after reconnect. First drain the dm:pending queue
@@ -996,12 +996,23 @@ wss.on("connection", async (ws, req) => {
     }
 
     if (msg.type === "ping") {
-      await updateActivity(kvCacheRedis, userId, connId, instanceId);
-      scheduleUserIdleCheck(userId);
+      const prevPing = await computePresence(kvCacheRedis, userId, liveInstanceIds);
+      // don't update activity for manually-set away — it would push the idle timer
+      // indefinitely while the user's away state stays frozen
+      if (prevPing !== "away") {
+        await updateActivity(kvCacheRedis, userId, connId, instanceId);
+        scheduleUserIdleCheck(userId);
+      }
+      // broadcast on idle→online and offline→online (offline can occur if the stale
+      // reaper cleared connection fields while the socket was still live)
+      if (prevPing === "idle" || prevPing === "offline") {
+        // re-check materialized key before broadcasting: a concurrent ping from
+        // another tab may have already written presence:last=online
+        const alreadyOnline = await getLastKnownPresence(userId);
+        if (alreadyOnline !== "online") await updateAndBroadcast(userId, prevPing);
+      }
       return;
     }
-
-    const prev = await computePresence(kvCacheRedis, userId, liveInstanceIds);
 
     if (msg.type === "subscribe_channel") {
       const channelId = (msg as { channelId?: string }).channelId;
@@ -1009,7 +1020,12 @@ wss.on("connection", async (ws, req) => {
         await subscribeChannel(kvCacheRedis, channelId, userId);
         logger.info({ userId, connId, channelId }, "client subscribed to channel");
       }
-    } else if (msg.type === "away") {
+      return;
+    }
+
+    const prev = await computePresence(kvCacheRedis, userId, liveInstanceIds);
+
+    if (msg.type === "away") {
       // Manually set away status with an optional message that other users can see.
       // Materialized key is written before the broadcast so concurrent snapshots
       // never observe a stale online/idle status for an already-away user.

@@ -61,4 +61,8 @@
 - name: Check search services are active
   ansible.builtin.command: "systemctl is-active {{ item }}"
   changed_when: false
+  register: search_active_check
+  until: search_active_check.rc == 0
+  retries: 10
+  delay: 3
   loop: "{{ search_systemd_services }}"
