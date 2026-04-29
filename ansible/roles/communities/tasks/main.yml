@@ -116,4 +116,8 @@
 - name: Check communities services are active
   ansible.builtin.command: "systemctl is-active {{ item }}"
   changed_when: false
+  register: communities_active_check
+  until: communities_active_check.rc == 0
+  retries: 10
+  delay: 3
   loop: "{{ communities_systemd_services }}"

@@ -94,4 +94,8 @@
 - name: Check dms services are active
   ansible.builtin.command: "systemctl is-active {{ item }}"
   changed_when: false
+  register: dms_active_check
+  until: dms_active_check.rc == 0
+  retries: 10
+  delay: 3
   loop: "{{ dms_systemd_services }}"

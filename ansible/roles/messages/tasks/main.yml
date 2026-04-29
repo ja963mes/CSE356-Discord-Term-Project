@@ -129,5 +129,9 @@
 - name: Check messages services are active
   ansible.builtin.command: "systemctl is-active {{ item }}"
   changed_when: false
+  register: messages_active_check
+  until: messages_active_check.rc == 0
+  retries: 10
+  delay: 3
   loop: "{{ messages_systemd_services }}"
 

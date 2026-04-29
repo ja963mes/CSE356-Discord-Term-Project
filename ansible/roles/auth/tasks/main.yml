@@ -94,4 +94,8 @@
 - name: Check auth services are active
   ansible.builtin.command: "systemctl is-active {{ item }}"
   changed_when: false
+  register: auth_active_check
+  until: auth_active_check.rc == 0
+  retries: 10
+  delay: 3
   loop: "{{ auth_systemd_services }}"
