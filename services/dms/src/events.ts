@@ -131,7 +131,7 @@ function postDeliverDm(baseUrl: string, body: string): Promise<void> {
 
 async function enqueuePendingDmHint(
   participantIds: string[],
-  hint: { type: "dm:message:create"; conversationId: string; participantIds: string[]; message: { messageId: string; authorId: string; content: string; attachments: string[]; createdAt: string; timeuuid: string } }
+  hint: { type: "dm:message:create"; conversationId: string; participantIds: string[]; message: { messageId: string; authorId: string; content: string; attachmentUrls: string[]; attachmentKeys: string[]; createdAt: string; timeuuid: string } }
 ): Promise<void> {
   if (participantIds.length === 0) return;
   const payload = JSON.stringify(hint);
@@ -177,7 +177,8 @@ export type DmEvent =
         messageId: string;
         authorId: string;
         content: string;
-        attachments: string[];
+        attachmentUrls: string[];
+        attachmentKeys: string[];
         createdAt: string;
         timeuuid: string;
       };
