@@ -96,6 +96,11 @@ const healthItem = (label, url) => ({
   key: `discord.health[${url}]`,
 });
 
+const logCountItem = (label, service, pattern) => ({
+  name: `${label} log matches (5m)`,
+  key: `discord.log.count[${service},${pattern}]`,
+});
+
 const baseItems = [{ name: "Agent ping", key: "agent.ping" }];
 
 const planForHost = (host) => {
@@ -135,6 +140,11 @@ const planForHost = (host) => {
     items.push(
       serviceItem("discord-dms"),
       healthItem("DMs", "http://127.0.0.1:3007/health"),
+      logCountItem("DM publish retries exhausted", "discord-dms", "redis shard publish failed after retries"),
+      logCountItem("DM direct fanout POST failures", "discord-dms", "direct fanout: POST failed"),
+      logCountItem("DM pending queue enqueue failures", "discord-dms", "dm pending-queue enqueue failed"),
+      logCountItem("DM redis pubsub client errors", "discord-dms", "redis (pubsub) client error"),
+      logCountItem("DM redis kv client errors", "discord-dms", "redis (kv) client error"),
     );
   }
 
@@ -155,15 +165,24 @@ const planForHost = (host) => {
   }
 
   if (groups.includes("realtime")) {
+    const realtimeServices = [
+      "discord-realtime",
+      "discord-realtime-2",
+      "discord-realtime-3",
+      "discord-realtime-4",
+    ];
     items.push(
-      serviceItem("discord-realtime"),
-      serviceItem("discord-realtime-2"),
-      serviceItem("discord-realtime-3"),
-      serviceItem("discord-realtime-4"),
+      ...realtimeServices.map(serviceItem),
       healthItem("Realtime 3005", "http://127.0.0.1:3005/health"),
       healthItem("Realtime 3009", "http://127.0.0.1:3009/health"),
       healthItem("Realtime 3013", "http://127.0.0.1:3013/health"),
       healthItem("Realtime 3017", "http://127.0.0.1:3017/health"),
+      ...realtimeServices.flatMap((service) => [
+        logCountItem(`${service} ws drop`, service, "ws not open, dropping send"),
+        logCountItem(`${service} ws queue full`, service, "ws important queue full; killing connection"),
+        logCountItem(`${service} redis pubsub errors`, service, "redis (pubsub) error"),
+        logCountItem(`${service} redis kv errors`, service, "redis (kv) error"),
+      ]),
     );
   }
 

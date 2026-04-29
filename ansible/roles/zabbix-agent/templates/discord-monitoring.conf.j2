@@ -3,3 +3,6 @@ UserParameter=discord.service.active[*],systemctl is-active "$1" >/dev/null 2>&1
 
 # 1 = HTTP endpoint returns 2xx/3xx, 0 = request failure
 UserParameter=discord.health[*],curl -fsS --max-time 5 "$1" >/dev/null 2>&1 && echo 1 || echo 0
+
+# count recent journald lines for a systemd unit in the last 5 minutes
+UserParameter=discord.log.count[*],journalctl -u "$1" --since "-5 min" --grep "$2" -q --no-pager 2>/dev/null | wc -l
