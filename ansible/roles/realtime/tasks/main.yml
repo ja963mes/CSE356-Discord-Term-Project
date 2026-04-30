@@ -92,6 +92,59 @@
     group: root
     mode: "0640"
 
+- name: Install tighter logrotate config for syslog
+  ansible.builtin.copy:
+    dest: /etc/logrotate.d/rsyslog
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      /var/log/syslog
+      /var/log/mail.info
+      /var/log/mail.warn
+      /var/log/mail.err
+      /var/log/mail.log
+      /var/log/daemon.log
+      /var/log/kern.log
+      /var/log/auth.log
+      /var/log/user.log
+      /var/log/lpr.log
+      /var/log/cron.log
+      /var/log/debug
+      /var/log/messages
+      {
+              rotate 3
+              daily
+              maxsize 200M
+              missingok
+              notifempty
+              compress
+              delaycompress
+              sharedscripts
+              postrotate
+                      /usr/lib/rsyslog/rsyslog-rotate
+              endscript
+      }
+
+- name: Ensure journald config dir exists
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Cap journald size
+  ansible.builtin.copy:
+    dest: /etc/systemd/journald.conf.d/discord.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Journal]
+      SystemMaxUse=300M
+  notify: Restart journald
+
 
 - name: Restart realtime services
   ansible.builtin.systemd:
