@@ -44,3 +44,17 @@ redis_instances:
     port: 6382
     maxmemory: "2gb"
     maxmemory_policy: "noeviction"
+
+# Zabbix agent2 Redis-plugin sessions — one per local instance. Items poll via
+# `redis.info[<section>,<session>]` (e.g. redis.info[Server,kv2],
+# redis.info[Stats,pubsub]) and `redis.config[*,<session>]` for maxmemory etc.
+# Loopback so traffic never leaves the VM.
+zabbix_agent_redis_sessions:
+  - name: pubsub
+    uri: "tcp://127.0.0.1:6379"
+  - name: pubsub2
+    uri: "tcp://127.0.0.1:6381"
+  - name: kv
+    uri: "tcp://127.0.0.1:6380"
+  - name: kv2
+    uri: "tcp://127.0.0.1:6382"

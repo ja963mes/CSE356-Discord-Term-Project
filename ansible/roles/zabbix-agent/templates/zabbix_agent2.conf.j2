@@ -11,3 +11,14 @@ RefreshActiveChecks={{ zabbix_agent_refresh_active_checks }}
 BufferSend={{ zabbix_agent_buffer_send }}
 BufferSize={{ zabbix_agent_buffer_size }}
 Include=/etc/zabbix/zabbix_agent2.d/*.conf
+
+{% if zabbix_agent_redis_sessions | default([]) | length > 0 %}
+# Redis plugin sessions — one per redis-server instance on this host.
+# Items poll via key like `redis.info[<section>,<session>]`,
+# e.g. redis.info[Server,kv2] or redis.info[Stats,pubsub].
+{% for s in zabbix_agent_redis_sessions %}
+Plugins.Redis.Sessions.{{ s.name }}.Uri={{ s.uri }}
+{% if s.password is defined %}Plugins.Redis.Sessions.{{ s.name }}.Password={{ s.password }}
+{% endif %}
+{% endfor %}
+{% endif %}

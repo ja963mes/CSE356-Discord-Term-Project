@@ -21,3 +21,7 @@ zabbix_agent_log_file_size: 10
 zabbix_agent_release_deb: >-
   https://repo.zabbix.com/zabbix/{{ zabbix_agent_repo_version }}/ubuntu/pool/main/z/zabbix-release/
   zabbix-release_latest_{{ zabbix_agent_repo_version }}+ubuntu{{ ansible_distribution_version }}_all.deb
+
+# Redis plugin sessions — only the redis VM sets this (see group_vars/redis.yml).
+# Each entry: { name: <session>, uri: tcp://host:port, password: optional }.
+zabbix_agent_redis_sessions: []

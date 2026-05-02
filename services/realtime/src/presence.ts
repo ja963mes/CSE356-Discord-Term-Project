@@ -4,13 +4,27 @@ export const IDLE_THRESHOLD_MS = 60 * 1000; // 1 minute
 
 export type PresenceStatus = "online" | "idle" | "away" | "offline";
 
+// Set of userIds with at least one active presence:conns:<userId> hash. Lets
+// startup/reaper enumerate via SMEMBERS instead of SCAN MATCH presence:conns:*
+// — SCAN was a slowlog regular even though call volume was low.
+export const PRESENCE_CONNS_INDEX = "presence:conns:index";
+
 export async function registerConnection(redis: Redis, userId: string, connId: string, instanceId: string): Promise<void> {
   // Use 0 as sentinel — connect/reconnect doesn't count as activity per spec
-  await redis.hset(`presence:conns:${userId}`, `${instanceId}:${connId}`, 0);
+  await redis.multi()
+    .hset(`presence:conns:${userId}`, `${instanceId}:${connId}`, 0)
+    .sadd(PRESENCE_CONNS_INDEX, userId)
+    .exec();
 }
 
 export async function removeConnection(redis: Redis, userId: string, connId: string, instanceId: string): Promise<void> {
-  await redis.hdel(`presence:conns:${userId}`, `${instanceId}:${connId}`);
+  const key = `presence:conns:${userId}`;
+  const result = await redis.multi().hdel(key, `${instanceId}:${connId}`).hlen(key).exec();
+  const remaining = (result?.[1]?.[1] as number) ?? 0;
+  if (remaining === 0) {
+    // Hash empty → drop from index. DEL is harmless if already gone.
+    await redis.multi().del(key).srem(PRESENCE_CONNS_INDEX, userId).exec();
+  }
 }
 
 /**
