@@ -21,8 +21,23 @@ name: CI and deploy staging
 on:
   push:
     branches: [main-dev]
+    # Skip CI + deploy entirely on documentation-only changes. The negation
+    # (`!docs/nginx/**`) keeps deploys firing for nginx example files —
+    # Ansible copies those directly to /etc/nginx, so they ARE real config.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '!docs/nginx/**'
+      - '.gitignore'
+      - 'LICENSE*'
   pull_request:
     branches: [main-dev]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '!docs/nginx/**'
+      - '.gitignore'
+      - 'LICENSE*'
   workflow_dispatch:
     inputs:
       ref:
@@ -56,6 +71,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       ansible_limit: ${{ steps.limit.outputs.value }}
+      ansible_tags: ${{ steps.limit.outputs.tags }}
       skip_deploy: ${{ steps.limit.outputs.skip_deploy }}
     steps:
       - uses: actions/checkout@v4
@@ -109,10 +125,12 @@ jobs:
             shared_pubsub: 'services/shared-pubsub/**'
             storage:     ['ansible/roles/storage/**',
                           'docker-compose.yml']
+            # zabbix_agent = sidecar config only; rolls out via --tags zabbix-agent
+            # so app service plays are skipped (no application restart).
+            zabbix_agent: ['ansible/roles/zabbix-agent/**']
             # infra = changes that affect all VMs: common role, playbooks, root deps
             infra: ['ansible/roles/common/**',
                     'ansible/roles/redis/**',
-                    'ansible/roles/zabbix-agent/**',
                     'ansible/playbooks/**',
                     'ansible/ansible.cfg',
                     'ansible/inventory/group_vars/all/**',
@@ -124,18 +142,38 @@ jobs:
           # workflow_dispatch: respect manual limit input, or full deploy if blank
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             echo "value=${{ github.event.inputs.limit }}" >> $GITHUB_OUTPUT
+            echo "tags=" >> $GITHUB_OUTPUT
             echo "skip_deploy=false" >> $GITHUB_OUTPUT
             exit 0
           fi
           # infra changes = full deploy (ansible roles, root deps)
           if [[ "${{ steps.changes.outputs.infra }}" == "true" ]]; then
             echo "value=" >> $GITHUB_OUTPUT
+            echo "tags=" >> $GITHUB_OUTPUT
             echo "skip_deploy=false" >> $GITHUB_OUTPUT
             exit 0
           fi
           # shared-pubsub change = all 6 consumer VMs (not auth/frontend)
           if [[ "${{ steps.changes.outputs.shared_pubsub }}" == "true" ]]; then
             echo "value=communities,dms,messages,read_state,realtime,search" >> $GITHUB_OUTPUT
+            echo "tags=" >> $GITHUB_OUTPUT
+            echo "skip_deploy=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          # zabbix-agent only = run --tags zabbix-agent on every host. App
+          # plays are skipped, so no service restart.
+          if [[ "${{ steps.changes.outputs.zabbix_agent }}" == "true" ]] \
+             && [[ "${{ steps.changes.outputs.auth }}"        != "true" ]] \
+             && [[ "${{ steps.changes.outputs.communities }}" != "true" ]] \
+             && [[ "${{ steps.changes.outputs.dms }}"         != "true" ]] \
+             && [[ "${{ steps.changes.outputs.messages }}"    != "true" ]] \
+             && [[ "${{ steps.changes.outputs.read_state }}"  != "true" ]] \
+             && [[ "${{ steps.changes.outputs.realtime }}"    != "true" ]] \
+             && [[ "${{ steps.changes.outputs.search }}"      != "true" ]] \
+             && [[ "${{ steps.changes.outputs.frontend }}"    != "true" ]] \
+             && [[ "${{ steps.changes.outputs.storage }}"     != "true" ]]; then
+            echo "value=" >> $GITHUB_OUTPUT
+            echo "tags=zabbix-agent" >> $GITHUB_OUTPUT
             echo "skip_deploy=false" >> $GITHUB_OUTPUT
             exit 0
           fi
@@ -155,13 +193,17 @@ jobs:
           else
             JOINED=$(IFS=','; echo "${PARTS[*]}")
             echo "value=${JOINED}" >> $GITHUB_OUTPUT
+            echo "tags=" >> $GITHUB_OUTPUT
             echo "skip_deploy=false" >> $GITHUB_OUTPUT
           fi
       - name: Deploy summary
         if: steps.limit.outputs.skip_deploy != 'true'
         run: |
           LIMIT="${{ steps.limit.outputs.value }}"
-          if [ -z "$LIMIT" ]; then
+          TAGS="${{ steps.limit.outputs.tags }}"
+          if [ -n "$TAGS" ]; then
+            echo "Deploying: --tags $TAGS (no app restart)"
+          elif [ -z "$LIMIT" ]; then
             echo "Deploying: ALL services"
           else
             echo "Deploying: ${LIMIT//,/ }"
@@ -187,6 +229,7 @@ jobs:
           DEPLOY_BRANCH: ${{ secrets.DEPLOY_BRANCH }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
           ANSIBLE_LIMIT: ${{ needs.detect.outputs.ansible_limit }}
+          ANSIBLE_TAGS: ${{ needs.detect.outputs.ansible_tags }}
           DEPLOY_REF: ${{ github.event.inputs.ref }}
         run: |
           set -euo pipefail
@@ -199,6 +242,7 @@ jobs:
           BRANCH='$BRANCH'
           DEPLOY_PATH='${DEPLOY_PATH}'
           ANSIBLE_LIMIT='${ANSIBLE_LIMIT}'
+          ANSIBLE_TAGS='${ANSIBLE_TAGS}'
           if [ -z "\$DEPLOY_PATH" ]; then
             echo 'DEPLOY_PATH secret is required.'
             exit 1
@@ -211,10 +255,14 @@ jobs:
           cd ansible
           LIMIT_FLAG=""
           if [ -n "\$ANSIBLE_LIMIT" ]; then LIMIT_FLAG="--limit \$ANSIBLE_LIMIT"; fi
-          ANSIBLE_CONFIG=ansible.cfg ansible-playbook -i inventory/hosts.ini playbooks/site.yml \$LIMIT_FLAG
+          TAGS_FLAG=""
+          if [ -n "\$ANSIBLE_TAGS" ]; then TAGS_FLAG="--tags \$ANSIBLE_TAGS"; fi
+          ANSIBLE_CONFIG=ansible.cfg ansible-playbook -i inventory/hosts.ini playbooks/site.yml \$LIMIT_FLAG \$TAGS_FLAG
           EOF
 
       - name: Health check deployed services
+        # Skip when only sidecar tags ran — no app services were touched.
+        if: needs.detect.outputs.ansible_tags == ''
         env:
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
           ANSIBLE_LIMIT: ${{ needs.detect.outputs.ansible_limit }}
