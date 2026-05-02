@@ -8,7 +8,12 @@ Everything below lives in **`docs/`** except the root **[README.md](../README.md
 
 | Document | Description |
 |----------|-------------|
+| **[../README.md](../README.md)** | Top-level project README — covers the six required sections (Overview, Running, Scaling, Design, Developer Guide, Team) |
+| **[ARCHITECTURE.md](./ARCHITECTURE.md)** | Topology, service boundaries, pub-sub event shapes, failure modes |
+| **[SCALING.md](./SCALING.md)** | Bottleneck-by-bottleneck analysis with `redis-cli` evidence and fixes |
+| **[../TEAM.md](../TEAM.md)** | Team reflection, member contributions, process |
 | **[IMPLEMENTATION.md](./IMPLEMENTATION.md)** | What is implemented vs typical expectations (services, data stores, nginx, tooling) |
+| **[zabbix-redis-monitoring.md](./zabbix-redis-monitoring.md)** | Per-port Redis monitoring (agent2 + Zabbix server triggers) |
 | **[CLAUDE.md](./CLAUDE.md)** | Editor / AI guide: stack, layout, proxy map, conventions, spec backlog |
 | **[branching.md](./branching.md)** | Git: `nick` → `main-dev`, staying up to date |
 
