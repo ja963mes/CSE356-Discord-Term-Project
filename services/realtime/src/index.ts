@@ -17,6 +17,7 @@ import {
   computePresence,
   IDLE_THRESHOLD_MS,
   PresenceStatus,
+  PRESENCE_CONNS_INDEX,
 } from "./presence";
 import { broadcastPresenceChange, PRESENCE_BROADCAST_CHANNEL, PresenceBroadcastMessage } from "./broadcast";
 import {
@@ -69,29 +70,33 @@ const kvCacheRedis = new Redis(env.KV_CACHE_REDIS_URL);
 kvCacheRedis.on("connect", async () => {
   logger.info("redis (kv-cache) connected");
   // Clear only this instance's stale connection fields from previous runs.
-  // Use SCAN (not KEYS) to avoid blocking Redis during startup.
-  let cursor = "0";
+  // Enumerate via the presence:conns:index set (SMEMBERS) instead of SCAN MATCH
+  // — SCAN was a slowlog regular on the single-threaded kv-cache instance.
+  const userIds = await kvCacheRedis.smembers(PRESENCE_CONNS_INDEX);
+  if (userIds.length === 0) return;
+  const keys = userIds.map((u) => `presence:conns:${u}`);
+  const pipeline = kvCacheRedis.pipeline();
+  for (const key of keys) pipeline.hkeys(key);
+  const results = await pipeline.exec();
+  const delPipeline = kvCacheRedis.pipeline();
+  const indexCleanup: string[] = [];
   let cleared = 0;
-  do {
-    const [next, keys] = await kvCacheRedis.scan(cursor, "MATCH", "presence:conns:*", "COUNT", 200);
-    cursor = next;
-    if (keys.length === 0) continue;
-    const pipeline = kvCacheRedis.pipeline();
-    for (const key of keys) pipeline.hkeys(key);
-    const results = await pipeline.exec();
-    const delPipeline = kvCacheRedis.pipeline();
-    let hasDeletes = false;
-    results?.forEach((result, i) => {
-      const fields = (result?.[1] as string[]) ?? [];
-      const stale = fields.filter((f) => f.startsWith(`${instanceId}:`));
-      if (stale.length > 0) {
-        delPipeline.hdel(keys[i], ...stale);
-        cleared += stale.length;
-        hasDeletes = true;
-      }
-    });
-    if (hasDeletes) await delPipeline.exec();
-  } while (cursor !== "0");
+  results?.forEach((result, i) => {
+    const fields = (result?.[1] as string[]) ?? [];
+    const stale = fields.filter((f) => f.startsWith(`${instanceId}:`));
+    if (stale.length > 0) {
+      delPipeline.hdel(keys[i], ...stale);
+      cleared += stale.length;
+    }
+    // Drop empty hashes from the index too (covers crashed instances that
+    // skipped removeConnection's bookkeeping).
+    if (fields.length === 0 || fields.every((f) => f.startsWith(`${instanceId}:`))) {
+      indexCleanup.push(userIds[i]);
+      delPipeline.del(keys[i]);
+    }
+  });
+  if (indexCleanup.length > 0) delPipeline.srem(PRESENCE_CONNS_INDEX, ...indexCleanup);
+  if (cleared > 0 || indexCleanup.length > 0) await delPipeline.exec();
   if (cleared > 0) logger.info({ cleared, instanceId }, "cleared stale presence fields");
 });
 kvCacheRedis.on("error", (err) => logger.error({ err }, "redis (kv-cache) error"));
@@ -526,9 +531,45 @@ async function getPresenceSnapshotForTargets(userIds: string[]): Promise<Map<str
   return out;
 }
 
+// In-memory TTL cache for presence membership sets. Hot keys (e.g. a single
+// channel set with 1500+ members) were dominating kv-cache redis CPU via
+// per-event SMEMBERS. 2s TTL keeps fan-out near-real-time while collapsing
+// 100s of QPS per hot key into ~1 round-trip every 2s.
+const PRESENCE_SET_TTL_MS = 2000;
+type PresenceSetEntry = { members: string[]; expiresAt: number; inflight?: Promise<string[]> };
+const presenceChannelMembersCache = new Map<string, PresenceSetEntry>();
+const presenceGuildMembersCache = new Map<string, PresenceSetEntry>();
+
+async function getCachedSmembers(
+  cache: Map<string, PresenceSetEntry>,
+  key: string,
+  redisKey: string,
+): Promise<string[]> {
+  const now = Date.now();
+  const hit = cache.get(key);
+  if (hit && hit.expiresAt > now) return hit.members;
+  if (hit?.inflight) return hit.inflight;
+  const inflight = kvCacheRedis.smembers(redisKey).then((members) => {
+    cache.set(key, { members, expiresAt: Date.now() + PRESENCE_SET_TTL_MS });
+    return members;
+  }).catch((err) => {
+    cache.delete(key);
+    throw err;
+  });
+  cache.set(key, { members: hit?.members ?? [], expiresAt: hit?.expiresAt ?? 0, inflight });
+  return inflight;
+}
+
+async function getPresenceChannelMembers(channelId: string): Promise<string[]> {
+  return getCachedSmembers(presenceChannelMembersCache, channelId, `presence:channel:${channelId}`);
+}
+async function getPresenceGuildMembers(communityId: string): Promise<string[]> {
+  return getCachedSmembers(presenceGuildMembersCache, communityId, `presence:guild:${communityId}`);
+}
+
 // Fan-out helpers: 1 Redis call instead of N (one per connection)
 async function fanOutToGuild(communityId: string, payload: string): Promise<void> {
-  const raw = await kvCacheRedis.smembers(`presence:guild:${communityId}`);
+  const raw = await getPresenceGuildMembers(communityId);
   for (const uid of raw) {
     const conns = userConnections.get(normUserId(uid));
     if (!conns) continue;
@@ -539,7 +580,7 @@ async function fanOutToGuild(communityId: string, payload: string): Promise<void
   }
 }
 async function fanOutToChannel(channelId: string, payload: string): Promise<void> {
-  const raw = await kvCacheRedis.smembers(`presence:channel:${channelId}`);
+  const raw = await getPresenceChannelMembers(channelId);
   for (const uid of raw) {
     const conns = userConnections.get(normUserId(uid));
     if (!conns) continue;
@@ -737,28 +778,36 @@ async function unregisterInstance(): Promise<void> {
 // silently dropping DM fanout with no warning.
 async function reapStaleConnFields(): Promise<void> {
   await refreshLiveInstanceIds();
-  let cursor = "0";
+  // Enumerate via SMEMBERS presence:conns:index instead of SCAN MATCH.
+  // Index is maintained by registerConnection/removeConnection; reaper also
+  // self-heals empty hashes by SREMing them here.
+  const userIds = await kvCacheRedis.smembers(PRESENCE_CONNS_INDEX);
+  if (userIds.length === 0) return;
+  const keys = userIds.map((u) => `presence:conns:${u}`);
+  const pipeline = kvCacheRedis.pipeline();
+  for (const key of keys) pipeline.hkeys(key);
+  const results = await pipeline.exec();
+  const delPipeline = kvCacheRedis.pipeline();
+  const indexCleanup: string[] = [];
   let reaped = 0;
-  do {
-    const [next, keys] = await kvCacheRedis.scan(cursor, "MATCH", "presence:conns:*", "COUNT", 200);
-    cursor = next;
-    if (keys.length === 0) continue;
-    const pipeline = kvCacheRedis.pipeline();
-    for (const key of keys) pipeline.hkeys(key);
-    const results = await pipeline.exec();
-    const delPipeline = kvCacheRedis.pipeline();
-    let hasDeletes = false;
-    results?.forEach((result, i) => {
-      const fields = (result?.[1] as string[]) ?? [];
-      const stale = fields.filter((f) => !liveInstanceIds.has(f.split(":")[0]));
-      if (stale.length > 0) {
-        delPipeline.hdel(keys[i], ...stale);
-        reaped += stale.length;
-        hasDeletes = true;
-      }
-    });
-    if (hasDeletes) await delPipeline.exec();
-  } while (cursor !== "0");
+  let queued = false;
+  results?.forEach((result, i) => {
+    const fields = (result?.[1] as string[]) ?? [];
+    const stale = fields.filter((f) => !liveInstanceIds.has(f.split(":")[0]));
+    if (stale.length > 0) {
+      delPipeline.hdel(keys[i], ...stale);
+      reaped += stale.length;
+      queued = true;
+    }
+    // Hash either already empty or fully stale → drop from index.
+    if (fields.length === 0 || stale.length === fields.length) {
+      indexCleanup.push(userIds[i]);
+      delPipeline.del(keys[i]);
+      queued = true;
+    }
+  });
+  if (indexCleanup.length > 0) delPipeline.srem(PRESENCE_CONNS_INDEX, ...indexCleanup);
+  if (queued) await delPipeline.exec();
   if (reaped > 0) logger.info({ reaped, liveInstances: [...liveInstanceIds] }, "reaped stale presence:conns fields");
 }
 
@@ -1210,7 +1259,7 @@ const onPubsubMessage = (channel: string, message: string) => {
 
       void (async () => {
         const payload = JSON.stringify(event);
-        const raw = await kvCacheRedis.smembers(`presence:channel:${channelId}`);
+        const raw = await getPresenceChannelMembers(channelId);
         let sentCount = 0;
         let notConnectedCount = 0;
         for (const uid of raw) {
