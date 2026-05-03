@@ -15,6 +15,7 @@ Restart=always
 RestartSec=3
 StandardOutput=journal
 StandardError=journal
+LimitNOFILE=infinity
 
 [Install]
 WantedBy=multi-user.target
