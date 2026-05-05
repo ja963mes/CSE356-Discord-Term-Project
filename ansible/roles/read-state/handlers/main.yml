@@ -1,0 +1,6 @@
+# Handlers for the read-state play (matches messages/realtime role naming
+# so notify works the same when roles run separately.)
+- name: Restart journald
+  ansible.builtin.systemd:
+    name: systemd-journald
+    state: restarted
