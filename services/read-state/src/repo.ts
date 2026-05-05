@@ -260,9 +260,12 @@ export async function getChannelStatesForCommunity(userId: string, communityId: 
     keys.push(csKey(userId, channelId), mcKey(userId, channelId), latestChKey(channelId));
   }
 
+  // On Redis error, fall through to Cassandra for every key — same end-state
+  // as the original per-key getCachedString swallowing errors and returning
+  // null. A flapping cache will cascade to Cassandra; that risk is preexisting.
   let cached: (string | null)[];
   try {
-    cached = await kvCacheRedis.mget(...keys);
+    cached = await kvCacheRedis.mget(keys);
   } catch {
     cached = new Array(keys.length).fill(null);
   }
