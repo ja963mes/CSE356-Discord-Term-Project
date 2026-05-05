@@ -32,6 +32,7 @@ import {
   getPresenceTargets,
   subscribeAllChannelsForUserInCommunity,
   subscribeAllMembersForChannel,
+  invalidatePresenceTargetsCache,
 } from "./subscriptions";
 import { logger } from "./logger";
 import { initCassandra, listDmMessagesNewerThanTimestamp } from "./cassandra";
@@ -968,6 +969,7 @@ wss.on("connection", async (ws, req) => {
         logger.warn({ err, userId }, "offline materialized write failed on disconnect");
       }
       await unsubscribeUser(kvCacheRedis, userId);
+      invalidatePresenceTargetsCache(userId);
       // Store disconnect timestamp + close code so reconnect can replay from
       // the right window. 2-hour TTL matches pending-queue TTL.
       await kvCacheRedis.set(
@@ -985,6 +987,7 @@ wss.on("connection", async (ws, req) => {
 
   await registerConnection(kvCacheRedis, userId, connId, instanceId);
   await subscribeUser(kvCacheRedis, userId);
+  invalidatePresenceTargetsCache(userId);
 
   logger.info({ userId, connId, total: connections.size }, "client connected");
   const { status: currentStatus, awayMessage: currentAwayMessage } = await updateAndBroadcast(userId, prevStatus);
@@ -1152,6 +1155,7 @@ const onPubsubMessage = (channel: string, message: string) => {
       void (async () => {
         // Update Redis subscription sets
         await subscribeCommunity(kvCacheRedis, communityId, userId);
+        invalidatePresenceTargetsCache(userId);
         await subscribeAllChannelsForUserInCommunity(kvCacheRedis, userId, communityId);
         // Forward event to all connected members of this community
         await fanOutToGuild(communityId, JSON.stringify(event));
@@ -1204,6 +1208,7 @@ const onPubsubMessage = (channel: string, message: string) => {
       const userId = event.userId as string;
       void (async () => {
         await unsubscribeCommunity(kvCacheRedis, communityId, userId);
+        invalidatePresenceTargetsCache(userId);
         await fanOutToGuild(communityId, JSON.stringify(event));
       })();
     }
@@ -1311,6 +1316,7 @@ const onPubsubMessage = (channel: string, message: string) => {
       const conversationId = event.conversationId as string;
       void (async () => {
         await subscribeDm(kvCacheRedis, conversationId, [targetUserId]);
+        invalidatePresenceTargetsCache(targetUserId);
         // Send each other participant's current presence to this user's connections.
         // Materialized MGET — no HGETALL per participant.
         const conns = userConnections.get(normUserId(targetUserId));
@@ -1339,6 +1345,7 @@ const onPubsubMessage = (channel: string, message: string) => {
       const leavingUserId = (event as { userId?: string }).userId;
       if (leavingUserId && normUserId(leavingUserId) === normUserId(targetUserId)) {
         void unsubscribeDm(kvCacheRedis, event.conversationId as string, leavingUserId);
+        invalidatePresenceTargetsCache(leavingUserId);
       }
     }
 
@@ -1350,7 +1357,9 @@ const onPubsubMessage = (channel: string, message: string) => {
     if (event.type === "dm:message:create" && env.ENABLE_DORMANT_DM_PRUNING) {
       const conversationId = event.conversationId as string | undefined;
       if (conversationId && userConnections.has(normUserId(targetUserId))) {
-        void subscribeDm(kvCacheRedis, conversationId, [targetUserId]).catch((err) =>
+        void subscribeDm(kvCacheRedis, conversationId, [targetUserId]).then(() => {
+          invalidatePresenceTargetsCache(targetUserId);
+        }).catch((err) =>
           logger.warn({ err, conversationId, targetUserId }, "dormant-dm resubscribe failed")
         );
       }

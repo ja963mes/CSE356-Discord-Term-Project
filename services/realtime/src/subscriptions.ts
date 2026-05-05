@@ -28,6 +28,14 @@ const CONTEXTS_KEY = (userId: string) => `presence:contexts:${userId}`;
 // TTL for context sets — safety net in case disconnect cleanup is missed (e.g. crash)
 const CONTEXT_TTL_SEC = 60 * 60 * 24; // 24h
 
+const PRESENCE_TARGETS_CACHE_TTL_MS = 2000;
+type PresenceTargetsCacheEntry = { targets: string[]; expiresAt: number; inflight?: Promise<string[]> };
+const presenceTargetsCache = new Map<string, PresenceTargetsCacheEntry>();
+
+export function invalidatePresenceTargetsCache(userId: string): void {
+  presenceTargetsCache.delete(userId);
+}
+
 /**
  * Called on user connect.
  * Loads all communities + DM conversations from DB, registers the user
@@ -142,6 +150,23 @@ export async function unsubscribeCommunity(redis: Redis, communityId: string, us
  * only consumer that drops them.
  */
 export async function getPresenceTargets(redis: Redis, userId: string): Promise<string[]> {
+  const now = Date.now();
+  const hit = presenceTargetsCache.get(userId);
+  if (hit && hit.expiresAt > now) return hit.targets;
+  if (hit?.inflight) return hit.inflight;
+
+  const inflight = computePresenceTargets(redis, userId).then((targets) => {
+    presenceTargetsCache.set(userId, { targets, expiresAt: Date.now() + PRESENCE_TARGETS_CACHE_TTL_MS });
+    return targets;
+  }).catch((err) => {
+    presenceTargetsCache.delete(userId);
+    throw err;
+  });
+  presenceTargetsCache.set(userId, { targets: hit?.targets ?? [], expiresAt: hit?.expiresAt ?? 0, inflight });
+  return inflight;
+}
+
+async function computePresenceTargets(redis: Redis, userId: string): Promise<string[]> {
   const contexts = await redis.smembers(CONTEXTS_KEY(userId));
   if (contexts.length === 0) return [userId];
 
