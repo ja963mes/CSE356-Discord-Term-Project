@@ -43,10 +43,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Validate playbook + role YAML
+        working-directory: ansible
+        env:
+          ANSIBLE_CONFIG: ${{ github.workspace }}/ansible/ansible.cfg
         run: |
           set -euo pipefail
           python3 -m pip install --quiet ansible-core
-          ansible-playbook --syntax-check -i ansible/inventory/hosts.ini ansible/playbooks/site.yml --tags zabbix-agent
+          ansible-playbook --syntax-check -i inventory/hosts.ini playbooks/site.yml --tags zabbix-agent
 
   deploy:
     needs: lint
