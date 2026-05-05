@@ -17,12 +17,20 @@ const LATEST_TTL_SEC = 7 * 24 * 60 * 60;
 // + write-through invalidation. Most channels have no mark-read between polls,
 // so cache hit rate dominates Cassandra load reduction.
 const STATE_TTL_SEC = 5 * 60;
+// Per-(user, channel) channel access decision (404/403/ok). Memberships rarely
+// change relative to read-state QPS, and the worst case on stale ok is that a
+// recently-removed member sees an unread count for ~60s — acceptable for the
+// unread-badge UX. On stale 403/404 the user retries naturally. No write-
+// through invalidation: the membership tables live in Postgres and are owned
+// by other services, so we lean on the short TTL.
+const ACCESS_TTL_SEC = 60;
 
 const latestChKey = (channelId: string) => `rs:latest:ch:${channelId}`;
 const latestDmKey = (conversationId: string) => `rs:latest:dm:${conversationId}`;
 const csKey = (userId: string, channelId: string) => `rs:cs:${userId}:${channelId}`;
 const dsKey = (userId: string, conversationId: string) => `rs:ds:${userId}:${conversationId}`;
 const mcKey = (userId: string, channelId: string) => `rs:mc:${userId}:${channelId}`;
+const accessKey = (userId: string, channelId: string) => `rs:access:${userId}:${channelId}`;
 
 type CachedChannelState = { lastReadMessageId: string | null; lastReadTimeuuid: string | null };
 type CachedDmState = { lastReadMessageId: string | null; lastReadTimeuuid: string | null };
@@ -72,13 +80,28 @@ function compareTimeuuids(a: string, b: string): number {
   return toTimeUuid(a).getBuffer().compare(toTimeUuid(b).getBuffer());
 }
 
-export async function assertChannelAccess(
-  userId: string,
-  channelId: string
-): Promise<
+type AccessResult =
   | { ok: true; channel: { id: string; community_id: string } }
-  | { ok: false; status: 404 | 403 }
-> {
+  | { ok: false; status: 404 | 403 };
+
+// Cache encoding: "ok:<community_uuid>" | "404" | "403". Compact so MGET-style
+// reuse stays cheap if we ever batch this lookup.
+function decodeCachedAccess(channelId: string, raw: string): AccessResult | null {
+  if (raw === "404") return { ok: false, status: 404 };
+  if (raw === "403") return { ok: false, status: 403 };
+  if (raw.startsWith("ok:")) {
+    const community_id = raw.slice(3);
+    if (community_id) return { ok: true, channel: { id: channelId, community_id } };
+  }
+  return null;
+}
+
+function encodeAccess(result: AccessResult): string {
+  if (result.ok) return `ok:${result.channel.community_id}`;
+  return String(result.status);
+}
+
+async function computeChannelAccess(userId: string, channelId: string): Promise<AccessResult> {
   const [channel] = await db
     .select({ id: channels.id, community_id: channels.community_id })
     .from(channels)
@@ -104,6 +127,21 @@ export async function assertChannelAccess(
   if (!channelMembership) return { ok: false, status: 403 };
 
   return { ok: true, channel };
+}
+
+export async function assertChannelAccess(
+  userId: string,
+  channelId: string
+): Promise<AccessResult> {
+  const cached = await getCachedString(accessKey(userId, channelId));
+  if (cached) {
+    const decoded = decodeCachedAccess(channelId, cached);
+    if (decoded) return decoded;
+  }
+
+  const result = await computeChannelAccess(userId, channelId);
+  void setCachedString(accessKey(userId, channelId), encodeAccess(result), ACCESS_TTL_SEC);
+  return result;
 }
 
 export async function listAccessibleChannelIds(userId: string, communityId: string): Promise<string[]> {
