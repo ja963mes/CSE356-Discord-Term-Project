@@ -1,0 +1,110 @@
+# Deploy zabbix-agent role only.
+#
+# Independent of the app-service deploy pipeline so monitoring changes can ship
+# without touching application services. No `npm ci`, no frontend build, no
+# /health checks against app ports — those would all be wasted work for a
+# sidecar-only change.
+#
+# Reuses the same secrets as deploy-staging.yml:
+#   BACKEND_SSH_HOST, DEPLOY_SSH_USER, BACKEND_SSH_PRIVATE_KEY, DEPLOY_PATH
+# Optional:
+#   SSH_KNOWN_HOSTS, DEPLOY_BRANCH (defaults to main-dev)
+name: Deploy zabbix-agent
+
+on:
+  push:
+    branches: [main-dev]
+    paths:
+      - 'ansible/roles/zabbix-agent/**'
+      - '.github/workflows/deploy-zabbix-agent.yml'
+  pull_request:
+    branches: [main-dev]
+    paths:
+      - 'ansible/roles/zabbix-agent/**'
+      - '.github/workflows/deploy-zabbix-agent.yml'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to deploy (branch, tag, or commit SHA). Defaults to main-dev.'
+        required: false
+        default: ''
+      limit:
+        description: 'Ansible host limit (e.g. redis,realtime). Leave blank for all hosts.'
+        required: false
+        default: ''
+
+concurrency:
+  group: deploy-zabbix-agent-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate playbook + role YAML
+        working-directory: ansible
+        env:
+          ANSIBLE_CONFIG: ${{ github.workspace }}/ansible/ansible.cfg
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet ansible-core
+          ansible-galaxy collection install -r requirements.yml
+          ansible-playbook --syntax-check -i inventory/hosts.ini playbooks/site.yml --tags zabbix-agent
+
+  deploy:
+    needs: lint
+    # PRs only lint; deploy fires on push to main-dev or manual dispatch.
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main-dev')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH key (control node)
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${{ secrets.BACKEND_SSH_PRIVATE_KEY }}" > ~/.ssh/id_backend
+          chmod 600 ~/.ssh/id_backend
+          if [ -n "${{ secrets.SSH_KNOWN_HOSTS }}" ]; then
+            echo "${{ secrets.SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
+          fi
+
+      - name: Run Ansible (zabbix-agent tag only)
+        env:
+          DEPLOY_BRANCH: ${{ secrets.DEPLOY_BRANCH }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          ANSIBLE_LIMIT: ${{ github.event.inputs.limit }}
+          DEPLOY_REF: ${{ github.event.inputs.ref }}
+        run: |
+          set -euo pipefail
+          BRANCH="${DEPLOY_REF:-}"
+          if [ -z "$BRANCH" ]; then BRANCH="${DEPLOY_BRANCH:-main-dev}"; fi
+
+          ssh -i ~/.ssh/id_backend -o StrictHostKeyChecking=no "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.BACKEND_SSH_HOST }}" "bash -s" <<EOF
+          set -euo pipefail
+          BRANCH='$BRANCH'
+          DEPLOY_PATH='${DEPLOY_PATH}'
+          ANSIBLE_LIMIT='${ANSIBLE_LIMIT}'
+          if [ -z "\$DEPLOY_PATH" ]; then
+            echo 'DEPLOY_PATH secret is required.'
+            exit 1
+          fi
+          cd "\$DEPLOY_PATH"
+          git fetch origin
+          git checkout "\$BRANCH"
+          git symbolic-ref HEAD &>/dev/null && git pull --ff-only origin "\$BRANCH" || true
+          cd ansible
+          LIMIT_FLAG=""
+          if [ -n "\$ANSIBLE_LIMIT" ]; then LIMIT_FLAG="--limit \$ANSIBLE_LIMIT"; fi
+          ANSIBLE_CONFIG=ansible.cfg ansible-playbook -i inventory/hosts.ini playbooks/site.yml --tags zabbix-agent \$LIMIT_FLAG
+          EOF
+
+      - name: Verify agents are reporting
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_backend -o StrictHostKeyChecking=no "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.BACKEND_SSH_HOST }}" "bash -s" <<EOF
+          set -euo pipefail
+          cd "${{ secrets.DEPLOY_PATH }}/ansible"
+          # Service liveness: every host should have zabbix-agent2 active.
+          ANSIBLE_CONFIG=ansible.cfg ansible all -i inventory/hosts.ini \
+            --become -m ansible.builtin.systemd -a "name=zabbix-agent2 state=started" --one-line
+          EOF
