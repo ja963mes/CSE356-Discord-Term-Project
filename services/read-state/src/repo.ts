@@ -250,7 +250,74 @@ export async function getChannelState(userId: string, channelId: string): Promis
 
 export async function getChannelStatesForCommunity(userId: string, communityId: string): Promise<ChannelStateRow[]> {
   const channelIds = await listAccessibleChannelIds(userId, communityId);
-  return Promise.all(channelIds.map((channelId) => getChannelState(userId, channelId)));
+  if (channelIds.length === 0) return [];
+
+  // Batch all per-channel Redis GETs into a single MGET to cut N×3 round-trips
+  // (cs/mc/latest per channel) down to one. Cassandra fallbacks for any
+  // remaining misses still fan out, but cache hit dominates by design.
+  const keys: string[] = [];
+  for (const channelId of channelIds) {
+    keys.push(csKey(userId, channelId), mcKey(userId, channelId), latestChKey(channelId));
+  }
+
+  // On Redis error, fall through to Cassandra for every key — same end-state
+  // as the original per-key getCachedString swallowing errors and returning
+  // null. A flapping cache will cascade to Cassandra; that risk is preexisting.
+  let cached: (string | null)[];
+  try {
+    cached = await kvCacheRedis.mget(keys);
+  } catch {
+    cached = new Array(keys.length).fill(null);
+  }
+
+  return Promise.all(
+    channelIds.map(async (channelId, i) => {
+      const cachedState = cached[i * 3];
+      const cachedMc = cached[i * 3 + 1];
+      const cachedLatest = cached[i * 3 + 2];
+
+      const fallbacks: Promise<unknown>[] = [];
+      let state: CachedChannelState;
+      if (cachedState) {
+        try { state = JSON.parse(cachedState) as CachedChannelState; }
+        catch { state = await fetchAndCacheChannelState(userId, channelId); }
+      } else {
+        fallbacks.push(fetchAndCacheChannelState(userId, channelId));
+        state = { lastReadMessageId: null, lastReadTimeuuid: null };
+      }
+
+      let mentionCount: number;
+      if (cachedMc != null) {
+        mentionCount = Number(cachedMc) || 0;
+      } else {
+        fallbacks.push(fetchAndCacheMentionCount(userId, channelId));
+        mentionCount = 0;
+      }
+
+      let latestTimeuuid = cachedLatest;
+      if (latestTimeuuid == null) {
+        fallbacks.push(fetchAndCacheLatestChannelTimeuuid(channelId));
+      }
+
+      if (fallbacks.length > 0) {
+        const settled = await Promise.all(fallbacks);
+        let idx = 0;
+        if (!cachedState) state = settled[idx++] as CachedChannelState;
+        if (cachedMc == null) mentionCount = settled[idx++] as number;
+        if (latestTimeuuid == null) latestTimeuuid = settled[idx++] as string | null;
+      }
+
+      return {
+        channelId,
+        lastReadMessageId: state.lastReadMessageId,
+        lastReadTimeuuid: state.lastReadTimeuuid,
+        mentionCount,
+        hasUnread:
+          latestTimeuuid != null &&
+          (!state.lastReadTimeuuid || compareTimeuuids(latestTimeuuid, state.lastReadTimeuuid) > 0),
+      };
+    })
+  );
 }
 
 export async function ensureMessageExists(channelId: string, messageId: string, timeuuid: string): Promise<boolean> {

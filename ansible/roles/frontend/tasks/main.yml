@@ -71,6 +71,53 @@
       ansible.builtin.command: nginx -t
       changed_when: false
 
+- name: Ensure journald config dir exists
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Cap journald size
+  ansible.builtin.copy:
+    dest: /etc/systemd/journald.conf.d/discord.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Journal]
+      SystemMaxUse=300M
+  notify: Restart journald
+
+- name: Tighten nginx logrotate (cap access/error log growth)
+  ansible.builtin.copy:
+    dest: /etc/logrotate.d/nginx
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      /var/log/nginx/*.log {
+              daily
+              rotate 7
+              maxsize 200M
+              missingok
+              notifempty
+              compress
+              delaycompress
+              sharedscripts
+              postrotate
+                      if [ -f /var/run/nginx.pid ]; then
+                              kill -USR1 `cat /var/run/nginx.pid`
+                      fi
+              endscript
+      }
+
+- name: Prune npm cache to reclaim disk after build
+  ansible.builtin.command: npm cache clean --force
+  become_user: "{{ deploy_user }}"
+  changed_when: false
+
 - name: Reload nginx
   ansible.builtin.systemd:
     name: nginx
