@@ -21,4 +21,6 @@ jobs:
         run: pip install ansible
       - name: Ansible syntax check
         working-directory: ansible
+        env:
+          ANSIBLE_CONFIG: ${{ github.workspace }}/ansible/ansible.cfg
         run: ansible-playbook --syntax-check -i inventory/hosts.ini playbooks/site.yml
