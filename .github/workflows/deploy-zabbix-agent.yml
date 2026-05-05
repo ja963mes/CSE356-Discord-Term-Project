@@ -49,6 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m pip install --quiet ansible-core
+          ansible-galaxy collection install -r requirements.yml
           ansible-playbook --syntax-check -i inventory/hosts.ini playbooks/site.yml --tags zabbix-agent
 
   deploy:
