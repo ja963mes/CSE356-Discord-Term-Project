@@ -165,15 +165,20 @@ app.post("/messages", requireAuth, async (req: Request, res: Response) => {
   }
 
   const userId = req.user!.internal_id;
-  logger.info({ userId, channelId, receivedAt: new Date().toISOString() }, "channel message POST received");
+  // Per-stage timing: nanosecond hrtime deltas to a single structured log so
+  // we can pinpoint which phase dominates p95. Replaces the previous trio of
+  // received/stored/published ISO-timestamp logs.
+  const tStart = process.hrtime.bigint();
   const access = await assertChannelAccess(userId, channelId);
   if (!access.ok) {
     res.status(access.status).json({ error: access.status === 404 ? "Channel not found" : "Forbidden" });
     return;
   }
+  const tAccess = process.hrtime.bigint();
 
   const [author] = await db.select({ username: users.username }).from(users).where(eq(users.internal_id, userId)).limit(1);
   const authorUsername = author?.username ?? "unknown";
+  const tAuthor = process.hrtime.bigint();
 
   const { messageId, createdAt } = await insertChannelMessage({
     channelId,
@@ -183,8 +188,7 @@ app.post("/messages", requireAuth, async (req: Request, res: Response) => {
     content,
     attachmentKeys,
   });
-
-  logger.info({ userId, channelId, messageId, timeuuid: createdAt.toString(), storedAt: new Date().toISOString() }, "channel message stored");
+  const tInsert = process.hrtime.bigint();
 
   const message = {
     id: messageId,
@@ -206,10 +210,28 @@ app.post("/messages", requireAuth, async (req: Request, res: Response) => {
     communityId: access.channel.community_id,
     message,
   });
-
-  logger.info({ userId, channelId, messageId, timeuuid: createdAt.toString(), publishedAt: new Date().toISOString(), type: "channel:message:create" }, "channel event published");
+  const tPublish = process.hrtime.bigint();
 
   res.status(201).json({ message });
+
+  const ms = (a: bigint, b: bigint): number => Number(a - b) / 1e6;
+  logger.info(
+    {
+      userId,
+      channelId,
+      messageId,
+      timeuuid: createdAt.toString(),
+      access_ms: ms(tAccess, tStart),
+      author_ms: ms(tAuthor, tAccess),
+      insert_ms: ms(tInsert, tAuthor),
+      publish_ms: ms(tPublish, tInsert),
+      total_ms: ms(tPublish, tStart),
+      // Wall-clock so realtime fanout logs can be correlated. The Cassandra
+      // createdAt timeuuid is the authoritative pivot if log clocks drift.
+      publishedAt: new Date().toISOString(),
+    },
+    "POST /messages timing"
+  );
 });
 
 app.patch("/messages/:channelId/:timeuuid", requireAuth, async (req: Request, res: Response) => {
