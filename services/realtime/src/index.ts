@@ -1282,7 +1282,7 @@ const onPubsubMessage = (channel: string, message: string) => {
             }
           }
         }
-        const tFanout = process.hrtime.bigint();
+        const tEnqueue = process.hrtime.bigint();
         const ms = (a: bigint, b: bigint): number => Number(a - b) / 1e6;
         logger.info({
           channelId,
@@ -1294,12 +1294,17 @@ const onPubsubMessage = (channel: string, message: string) => {
           totalSubscribed: raw.length,
           payload_ms: ms(tPayload, tRecv),
           presence_ms: ms(tPresence, tPayload),
-          fanout_ms: ms(tFanout, tPresence),
-          local_ms: ms(tFanout, tRecv),
+          // enqueue_ms is the time to *queue* every send via enqueueSend, not the
+          // time bytes hit the wire. Actual ws.send happens later in flushQueue,
+          // so this is dispatch cost only.
+          enqueue_ms: ms(tEnqueue, tPresence),
+          local_ms: ms(tEnqueue, tRecv),
           // Approximate publish→recv cross-VM hop; only meaningful if NTP-aligned.
           hop_ms: Number.isFinite(publishedAtMs) ? recvWall - publishedAtMs : null,
         }, "channel:message:create fanout timing");
-      })();
+      })().catch((err) => {
+        logger.error({ err, channelId, messageId: chMsg?.messageId }, "channel:message:create fanout failed");
+      });
     } else {
       logger.info({
         eventType: event.type,
