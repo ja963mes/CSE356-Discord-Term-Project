@@ -1253,18 +1253,19 @@ const onPubsubMessage = (channel: string, message: string) => {
     const chMsg = event.message as { messageId?: string; authorId?: string; timeuuid?: string; createdAt?: string } | undefined;
 
     if (event.type === "channel:message:create") {
-      logger.info({
-        channelId,
-        messageId: chMsg?.messageId,
-        authorId: chMsg?.authorId,
-        timeuuid: chMsg?.timeuuid,
-        createdAt: chMsg?.createdAt,
-        receivedAt: new Date().toISOString(),
-      }, "channel:message:create received from redis");
-
+      // Per-stage timing on the fanout path. tRecv is the moment Redis pubsub
+      // delivered the message to this realtime instance; subtracting the
+      // publisher-side createdAt ISO string gives a rough cross-VM hop. The
+      // remaining deltas (presence lookup, fanout loop) are local hrtime so
+      // they are immune to clock skew between messages-vm and realtime-vm.
+      const tRecv = process.hrtime.bigint();
+      const recvWall = Date.now();
+      const publishedAtMs = chMsg?.createdAt ? Date.parse(chMsg.createdAt) : NaN;
       void (async () => {
         const payload = JSON.stringify(event);
+        const tPayload = process.hrtime.bigint();
         const raw = await getPresenceChannelMembers(channelId);
+        const tPresence = process.hrtime.bigint();
         let sentCount = 0;
         let notConnectedCount = 0;
         for (const uid of raw) {
@@ -1281,15 +1282,29 @@ const onPubsubMessage = (channel: string, message: string) => {
             }
           }
         }
+        const tEnqueue = process.hrtime.bigint();
+        const ms = (a: bigint, b: bigint): number => Number(a - b) / 1e6;
         logger.info({
           channelId,
           messageId: chMsg?.messageId,
           authorId: chMsg?.authorId,
+          timeuuid: chMsg?.timeuuid,
           sentCount,
           notConnectedCount,
           totalSubscribed: raw.length,
-        }, "channel:message:create fanout complete");
-      })();
+          payload_ms: ms(tPayload, tRecv),
+          presence_ms: ms(tPresence, tPayload),
+          // enqueue_ms is the time to *queue* every send via enqueueSend, not the
+          // time bytes hit the wire. Actual ws.send happens later in flushQueue,
+          // so this is dispatch cost only.
+          enqueue_ms: ms(tEnqueue, tPresence),
+          local_ms: ms(tEnqueue, tRecv),
+          // Approximate publish→recv cross-VM hop; only meaningful if NTP-aligned.
+          hop_ms: Number.isFinite(publishedAtMs) ? recvWall - publishedAtMs : null,
+        }, "channel:message:create fanout timing");
+      })().catch((err) => {
+        logger.error({ err, channelId, messageId: chMsg?.messageId }, "channel:message:create fanout failed");
+      });
     } else {
       logger.info({
         eventType: event.type,

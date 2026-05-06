@@ -18,7 +18,14 @@ import { logger } from "./logger";
 // Defensive cap on SUNION result size. A single user in many large communities
 // could otherwise produce a huge target array per presence transition. Log and
 // truncate instead of spending CPU on a pathological fan-out.
-const PRESENCE_TARGETS_MAX = 2000;
+//
+// Raised from 2000 → 10000 after observing real users with ~3300 targets being
+// silently truncated, dropping presence events for ~1300 peers and surfacing
+// as test/UX delivery failures. 10000 leaves room for legitimate large-
+// community membership while still catching truly pathological cases (likely
+// a runaway zombie-entry bug in presence:guild:* sets, since those sets have
+// no TTL — separate follow-up).
+const PRESENCE_TARGETS_MAX = 10000;
 
 const GUILD_KEY = (id: string) => `presence:guild:${id}`;
 const DM_KEY = (id: string) => `presence:dm:${id}`;
