@@ -49,8 +49,14 @@ export async function updateActivity(redis: Redis, userId: string, connId: strin
   await redis.hset(`presence:conns:${userId}`, `${instanceId}:${connId}`, Date.now());
 }
 
+// 7d matches PRESENCE_LAST_TTL_SEC. Without a TTL the key persisted forever
+// when a user set themselves away and then disconnected without sending
+// "back" (crash, force-close, etc.), accumulating one stale key per such
+// event. Refreshed on every setAway call, so a user who stays manually away
+// across reconnects keeps the message alive.
+const PRESENCE_AWAY_TTL_SEC = 7 * 24 * 60 * 60;
 export async function setAway(redis: Redis, userId: string, message: string): Promise<void> {
-  await redis.set(`presence:away:${userId}`, message);
+  await redis.set(`presence:away:${userId}`, message, "EX", PRESENCE_AWAY_TTL_SEC);
 }
 
 export async function clearAway(redis: Redis, userId: string): Promise<void> {
