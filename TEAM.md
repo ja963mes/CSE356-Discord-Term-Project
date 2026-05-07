@@ -22,11 +22,18 @@ CSE 356, Stony Brook University. Group 6 — Discord-style messaging system.
 
 ### James Barrera (`ja963mes` / `james.barrera@stonybrook.edu`)
 
-- **Main responsibilities:** _[fill in — typical: communities/channels service, frontend, local dev tooling]_
+- **Main responsibilities:** 
+  - Main responsibilities: Auth service, DM service, Message service, Real-time infrastructure (VMs 1–4), Cassandra cluster, Performance engineering, Scaling
 - **Major contributions:**
-  - Local dev tooling: `npm run dev:*:staging` scripts, `sshuttle` hybrid mode, runtime log-level commands.
-  - _[fill in additional contributions]_
-- **Leadership / coordination:** _[fill in]_
+  - wrote the initial auth service (local + OAuth login, session middleware, Drizzle ORM schema) and the DM Postgres schema  (direct_conversations, dm_participants, dm_messages)
+  - Built and scaled the real-time layer — identified and fixed the primary O(n) WebSocket fanout bug where every Redis pub/sub event scanned all ~9,000 accumulated connections.
+  - Refactored presence to O(1) pipelined MGET reads, added a 2s in-process cache with inflight deduplication on getPresenceTargets, and removed an idle sweep loop — each step measured and confirmed against production.
+  - Spun up and configured real-time VM 2, added them to the nginx upstream, and tuned worker_connections per VM — enabling horizontal load splitting as traffic grew.
+  - Operated and maintained the Cassandra cluster — tracked down the Cassandra split-brain issue, fixed DM message drops by adding a Cassandra catch-up path in the realtime service.
+
+- **Leadership / coordination:** 
+  - Identified, investigated, and documented major production bottlenecks presented findings to the team before implementing fixes. Monitored production during load tests and outages.
+
 
 ### Robert Wong (`robw0ng` / `robwong15@gmail.com`)
 
