@@ -358,6 +358,76 @@ export async function getChannelStatesForCommunity(userId: string, communityId: 
   );
 }
 
+export async function getAllChannelStatesForUser(userId: string): Promise<ChannelStateRow[]> {
+  const rows = await db
+    .select({ id: channels.id })
+    .from(channelMembers)
+    .innerJoin(channels, eq(channels.id, channelMembers.channel_id))
+    .where(eq(channelMembers.user_id, userId));
+  const channelIds = rows.map((r) => r.id);
+  if (channelIds.length === 0) return [];
+
+  const keys: string[] = [];
+  for (const channelId of channelIds) {
+    keys.push(csKey(userId, channelId), mcKey(userId, channelId), latestChKey(channelId));
+  }
+  let cached: (string | null)[];
+  try {
+    cached = await kvCacheRedis.mget(keys);
+  } catch {
+    cached = new Array(keys.length).fill(null);
+  }
+
+  return Promise.all(
+    channelIds.map(async (channelId, i) => {
+      const cachedState = cached[i * 3];
+      const cachedMc = cached[i * 3 + 1];
+      const cachedLatest = cached[i * 3 + 2];
+
+      const fallbacks: Promise<unknown>[] = [];
+      let state: CachedChannelState;
+      if (cachedState) {
+        try { state = JSON.parse(cachedState) as CachedChannelState; }
+        catch { state = await fetchAndCacheChannelState(userId, channelId); }
+      } else {
+        fallbacks.push(fetchAndCacheChannelState(userId, channelId));
+        state = { lastReadMessageId: null, lastReadTimeuuid: null };
+      }
+
+      let mentionCount: number;
+      if (cachedMc != null) {
+        mentionCount = Number(cachedMc) || 0;
+      } else {
+        fallbacks.push(fetchAndCacheMentionCount(userId, channelId));
+        mentionCount = 0;
+      }
+
+      let latestTimeuuid = cachedLatest;
+      if (latestTimeuuid == null) {
+        fallbacks.push(fetchAndCacheLatestChannelTimeuuid(channelId));
+      }
+
+      if (fallbacks.length > 0) {
+        const settled = await Promise.all(fallbacks);
+        let idx = 0;
+        if (!cachedState) state = settled[idx++] as CachedChannelState;
+        if (cachedMc == null) mentionCount = settled[idx++] as number;
+        if (latestTimeuuid == null) latestTimeuuid = settled[idx++] as string | null;
+      }
+
+      return {
+        channelId,
+        lastReadMessageId: state.lastReadMessageId,
+        lastReadTimeuuid: state.lastReadTimeuuid,
+        mentionCount,
+        hasUnread:
+          latestTimeuuid != null &&
+          (!state.lastReadTimeuuid || compareTimeuuids(latestTimeuuid, state.lastReadTimeuuid) > 0),
+      };
+    })
+  );
+}
+
 export async function ensureMessageExists(channelId: string, messageId: string, timeuuid: string): Promise<boolean> {
   const result = await messagesCassandra.execute(
     `SELECT message_id FROM ${messagesKs}.messages_by_channel WHERE channel_id = ? AND created_at = ?`,
