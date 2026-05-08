@@ -43,9 +43,20 @@ services:
       AUTH_TYPE: scram-sha-256
       POOL_MODE: transaction
       MAX_CLIENT_CONN: "${PGBOUNCER_MAX_CLIENT_CONN:-1000}"
-      DEFAULT_POOL_SIZE: "${PGBOUNCER_DEFAULT_POOL_SIZE:-20}"
-      MIN_POOL_SIZE: "${PGBOUNCER_MIN_POOL_SIZE:-5}"
-      RESERVE_POOL_SIZE: "${PGBOUNCER_RESERVE_POOL_SIZE:-5}"
+      # Bumped pool defaults 20 -> 60 after 2026-05-08 outage where every
+      # service VM (auth, search, read-state, realtime x8 workers, dms,
+      # communities) starved on a 20-connection pool, producing waves of
+      # query_wait_timeout (age=120s) and FATAL subscription failures.
+      DEFAULT_POOL_SIZE: "${PGBOUNCER_DEFAULT_POOL_SIZE:-60}"
+      MIN_POOL_SIZE: "${PGBOUNCER_MIN_POOL_SIZE:-10}"
+      RESERVE_POOL_SIZE: "${PGBOUNCER_RESERVE_POOL_SIZE:-20}"
+      # Cap total server-side connections so we don't exceed Postgres
+      # max_connections (default 100). 60 + 20 reserve + headroom = 80.
+      MAX_DB_CONNECTIONS: "${PGBOUNCER_MAX_DB_CONNECTIONS:-80}"
+      # Drop wait timeout from default 120s to 5s so clients fail fast
+      # and can retry instead of holding the realtime event loop hostage.
+      RESERVE_POOL_TIMEOUT: "${PGBOUNCER_RESERVE_POOL_TIMEOUT:-3}"
+      QUERY_WAIT_TIMEOUT: "${PGBOUNCER_QUERY_WAIT_TIMEOUT:-5}"
     ports:
       - "${PGBOUNCER_PORT:-6432}:5432"
 
