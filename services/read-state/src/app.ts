@@ -9,6 +9,7 @@ import {
   getDmMessageIdForTimeuuid,
   getChannelState,
   getChannelStatesForCommunity,
+  getAllChannelStatesForUser,
   getDmParticipantReadStates,
   getDmStatesForUser,
   listDmParticipantIdsForEvent,
@@ -117,10 +118,17 @@ app.post("/read-state/channels/:channelId/read", requireAuth, ah(async (req, res
   res.status(204).send();
 }));
 
-app.get("/read-state/dms", requireAuth, ah(async (req, res) => {
-  const conversations = await getDmStatesForUser(req.user!.internal_id);
-  res.json({ conversations });
-}));
+app.get("/read-state/dms", requireAuth, async (req, res) => {
+  const [dmStates, channelStates] = await Promise.all([
+    getDmStatesForUser(req.user!.internal_id),
+    getAllChannelStatesForUser(req.user!.internal_id),
+  ]);
+  const unread = [
+    ...dmStates.map((d) => ({ conversationId: d.conversationId, count: d.hasUnread ? 1 : 0, hasUnread: d.hasUnread })),
+    ...channelStates.map((c) => ({ channelId: c.channelId, count: c.mentionCount, hasUnread: c.hasUnread })),
+  ];
+  res.json({ unread });
+});
 
 app.get("/read-state/dms/:conversationId", requireAuth, ah(async (req, res) => {
   const parsed = conversationIdSchema.safeParse(req.params.conversationId);

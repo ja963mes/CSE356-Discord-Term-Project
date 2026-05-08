@@ -358,6 +358,15 @@ export async function getChannelStatesForCommunity(userId: string, communityId: 
   );
 }
 
+export async function getAllChannelStatesForUser(userId: string): Promise<ChannelStateRow[]> {
+  const rows = await db
+    .select({ id: channels.id })
+    .from(channelMembers)
+    .innerJoin(channels, eq(channels.id, channelMembers.channel_id))
+    .where(eq(channelMembers.user_id, userId));
+  return Promise.all(rows.map((r) => getChannelState(userId, r.id)));
+}
+
 export async function ensureMessageExists(channelId: string, messageId: string, timeuuid: string): Promise<boolean> {
   const result = await messagesCassandra.execute(
     `SELECT message_id FROM ${messagesKs}.messages_by_channel WHERE channel_id = ? AND created_at = ?`,
