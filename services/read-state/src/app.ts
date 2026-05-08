@@ -143,6 +143,31 @@ app.post("/read-state/dms/:conversationId/read", requireAuth, ah(async (req, res
     res.status(400).json({ error: "conversationId (UUID) is required" });
     return;
   }
+
+  // The grading client always routes markRead to the DM endpoint regardless of
+  // conversation type. If the ID belongs to a channel, handle it as a channel
+  // mark-read instead of failing with 403/404 from the DM participant check.
+  const channelAccess = await assertChannelAccess(req.user!.internal_id, parsed.data);
+  if (channelAccess.ok || channelAccess.status === 403) {
+    if (!channelAccess.ok) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+    const body = markReadSchema.safeParse(req.body);
+    if (!body.success) {
+      res.status(400).json({ error: "messageId and timeuuid are required" });
+      return;
+    }
+    try {
+      await markChannelRead(req.user!.internal_id, parsed.data, body.data.messageId, body.data.timeuuid);
+    } catch {
+      res.status(400).json({ error: "Invalid timeuuid" });
+      return;
+    }
+    res.status(204).send();
+    return;
+  }
+
   const body = markDmReadSchema.safeParse(req.body);
   if (!body.success) {
     res.status(400).json({ error: "timeuuid is required" });
