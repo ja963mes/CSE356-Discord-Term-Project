@@ -4,6 +4,11 @@ declare global {
     interface User {
       internal_id: string;
     }
+
+    interface Request {
+      /** Request id set by `pino-http` (`genReqId`). */
+      id?: string;
+    }
   }
 }
 

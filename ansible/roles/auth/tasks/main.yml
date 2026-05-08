@@ -1,0 +1,101 @@
+- name: Ensure auth repo is checked out
+  ansible.builtin.git:
+    repo: "{{ repo_url }}"
+    dest: "{{ deploy_path }}"
+    version: "{{ deploy_branch }}"
+    update: true
+    force: true
+  become_user: "{{ deploy_user }}"
+
+- name: Install auth workspace dependencies
+  ansible.builtin.command: npm ci
+  args:
+    chdir: "{{ deploy_path }}"
+  become_user: "{{ deploy_user }}"
+
+- name: Build auth workspace
+  ansible.builtin.command: "{{ item }}"
+  args:
+    chdir: "{{ deploy_path }}"
+  become_user: "{{ deploy_user }}"
+  loop: "{{ auth_workspace_build_commands }}"
+
+- name: Manage auth systemd service files (optional)
+  when: manage_systemd_services | default(false)
+  block:
+    - name: Install auth systemd service files
+      ansible.builtin.template:
+        src: "{{ item }}.service.j2"
+        dest: "/etc/systemd/system/{{ item }}.service"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ auth_systemd_services }}"
+      register: auth_systemd_files_changed
+
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: auth_systemd_files_changed.changed
+
+    - name: Enable auth services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+      loop: "{{ auth_systemd_services }}"
+
+- name: Install discord.env
+  ansible.builtin.template:
+    src: discord.env.j2
+    dest: /etc/discord.env
+    owner: root
+    group: root
+    mode: "0640"
+
+- name: Manage auth nginx config files (optional)
+  when: manage_nginx_config | default(false)
+  block:
+    - name: Install auth nginx config
+      ansible.builtin.copy:
+        src: "{{ auth_nginx_conf_src }}"
+        dest: /etc/nginx/sites-available/discord-auth
+        owner: root
+        group: root
+        mode: "0644"
+        remote_src: true
+
+    - name: Enable auth nginx site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/discord-auth
+        dest: /etc/nginx/sites-enabled/discord-auth
+        state: link
+        force: true
+
+    - name: Disable default nginx site if present
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Validate nginx configuration
+      ansible.builtin.command: nginx -t
+      changed_when: false
+
+    - name: Reload nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: reloaded
+
+- name: Restart auth services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: restarted
+  loop: "{{ auth_systemd_services }}"
+
+- name: Check auth services are active
+  ansible.builtin.command: "systemctl is-active {{ item }}"
+  changed_when: false
+  register: auth_active_check
+  until: auth_active_check.rc == 0
+  retries: 10
+  delay: 3
+  loop: "{{ auth_systemd_services }}"

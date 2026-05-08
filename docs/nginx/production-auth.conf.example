@@ -1,0 +1,40 @@
+# Nginx — production auth VM (auth-service only)
+#
+# Use this on the dedicated auth VM that runs the auth Node service locally.
+# Frontend VM proxies /auth traffic directly here (private IP 10.0.3.158:3001).
+# Note: frontend nginx points to port 3001 directly (no nginx on auth VM was
+# previously configured). This config adds a proper nginx ingress so the auth
+# VM matches the same pattern as dms/read-state/messages VMs.
+#
+# Service on localhost (this VM):
+#   3001 auth
+
+upstream auth_backend {
+    server 127.0.0.1:3001;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    server_name 10.0.3.158;
+
+    client_max_body_size 5m;
+
+    location ^~ /auth {
+        proxy_pass http://auth_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    # API-only host in split production
+    location / {
+        return 404;
+    }
+}

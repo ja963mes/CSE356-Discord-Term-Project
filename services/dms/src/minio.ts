@@ -1,4 +1,4 @@
-import { S3Client, CreateBucketCommand, HeadBucketCommand, PutBucketPolicyCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, CreateBucketCommand, HeadBucketCommand, PutBucketPolicyCommand, PutBucketCorsCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { env } from "./env";
 
@@ -10,6 +10,9 @@ export const s3 = new S3Client({
     secretAccessKey: env.MINIO_SECRET_KEY,
   },
   forcePathStyle: true, // Required for MinIO — uses path-style URLs (host/bucket/key)
+  // MinIO returns 501 for checksum headers added by default in SDK v3.x; only send when required
+  requestChecksumCalculation: "WHEN_REQUIRED",
+  responseChecksumValidation: "WHEN_REQUIRED",
 });
 
 export async function initializeBucket(): Promise<void> {
@@ -35,6 +38,28 @@ export async function initializeBucket(): Promise<void> {
       })
     );
     console.log(`[minio] bucket "${env.MINIO_BUCKET}" created with public read policy`);
+  }
+
+  try {
+    await s3.send(
+      new PutBucketCorsCommand({
+        Bucket: env.MINIO_BUCKET,
+        CORSConfiguration: {
+          CORSRules: [
+            {
+              AllowedOrigins: ["*"],
+              AllowedMethods: ["GET", "PUT", "HEAD", "DELETE"],
+              AllowedHeaders: ["*"],
+              ExposeHeaders: ["ETag"],
+              MaxAgeSeconds: 3600,
+            },
+          ],
+        },
+      })
+    );
+    console.log(`[minio] CORS configured for bucket "${env.MINIO_BUCKET}"`);
+  } catch (err) {
+    console.warn(`[minio] CORS setup skipped (MinIO may not support this operation):`, (err as Error).message);
   }
 }
 

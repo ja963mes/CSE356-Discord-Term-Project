@@ -1,0 +1,79 @@
+- name: Setup NodeSource repository for Node.js 22
+  ansible.builtin.shell: curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  args:
+    creates: /etc/apt/sources.list.d/nodesource.list
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name:
+      - git
+      - rsync
+      - curl
+      - ca-certificates
+      - nodejs
+      - nginx
+    state: present
+    update_cache: true
+  register: apt_status
+  until: apt_status is success
+  retries: 30
+  delay: 10
+
+- name: Ensure deploy user exists
+  ansible.builtin.user:
+    name: "{{ deploy_user }}"
+    shell: /bin/bash
+    create_home: true
+    groups: sudo
+    append: true
+
+- name: Ensure deploy .ssh directory exists
+  ansible.builtin.file:
+    path: "/home/{{ deploy_user }}/.ssh"
+    state: directory
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0700"
+
+- name: Optionally install deploy public key
+  ansible.posix.authorized_key:
+    user: "{{ deploy_user }}"
+    state: present
+    key: "{{ deploy_public_key }}"
+  when: deploy_public_key is defined and deploy_public_key | length > 0
+
+- name: Ensure deploy path parent exists
+  ansible.builtin.file:
+    path: "{{ deploy_path | dirname }}"
+    state: directory
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0755"
+
+# Force nginx workers to run as www-data (Debian default) instead of `nobody`.
+# Mismatched user vs. /var/lib/nginx ownership causes "open() ... Permission
+# denied while reading upstream" → ERR_INCOMPLETE_CHUNKED_ENCODING on responses
+# large enough that nginx buffers them to disk (e.g. /communities/.../members).
+- name: Increase sshd MaxStartups to prevent connection drops under parallel ansible
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?MaxStartups'
+    line: 'MaxStartups 50:30:200'
+    state: present
+  notify: Reload sshd
+
+- name: Set nginx worker user to www-data
+  ansible.builtin.lineinfile:
+    path: /etc/nginx/nginx.conf
+    regexp: '^\s*user\s+\S+;'
+    line: 'user www-data;'
+    state: present
+  notify: Restart nginx
+
+- name: Ensure /var/lib/nginx is owned by www-data
+  ansible.builtin.file:
+    path: /var/lib/nginx
+    state: directory
+    owner: www-data
+    group: www-data
+    recurse: true

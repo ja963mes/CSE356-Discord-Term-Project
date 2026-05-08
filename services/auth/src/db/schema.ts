@@ -45,6 +45,7 @@ export const communityMembers = pgTable(
   },
   (table) => ({
     pk: primaryKey({ columns: [table.community_id, table.user_id] }),
+    user_idx: index("community_members_user_id_idx").on(table.user_id),
   })
 );
 
@@ -58,7 +59,9 @@ export const channels = pgTable("channels", {
   position: integer("position").notNull().default(0),
   is_private: boolean("is_private").notNull().default(false),
   created_at: timestamp("created_at").notNull().defaultNow(),
-});
+}, (table) => ({
+  community_idx: index("channels_community_id_idx").on(table.community_id),
+}));
 
 /** Per-channel membership: required to read/post history (public channels still use join). */
 export const channelMembers = pgTable(
@@ -74,6 +77,7 @@ export const channelMembers = pgTable(
   },
   (table) => ({
     pk: primaryKey({ columns: [table.channel_id, table.user_id] }),
+    user_idx: index("channel_members_user_id_idx").on(table.user_id),
   })
 );
 

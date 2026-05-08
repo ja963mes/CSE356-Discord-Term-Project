@@ -1,15 +1,14 @@
 import { Pool } from "pg";
-import { Client as CassandraClient } from "cassandra-driver";
 import { env } from "./env";
 
-export const pg = new Pool({ connectionString: env.DATABASE_URL });
-
-export const cassandra = new CassandraClient({
-  contactPoints: env.CASSANDRA_CONTACT_POINTS.split(",").map((s) => s.trim()),
-  localDataCenter: env.CASSANDRA_LOCAL_DATACENTER,
-  protocolOptions: { port: env.CASSANDRA_PORT },
+// Use PgBouncer (DATABASE_URL) — realtime only runs occasional catch-up queries
+// on reconnect, so a small pool is sufficient. Never use DATABASE_URL_DIRECT
+// here; 4 instances × uncapped pool exhausts Postgres's connection limit.
+export const pg = new Pool({
+  connectionString: env.DATABASE_URL,
+  max: 2,
 });
 
 export const initDb = async (): Promise<void> => {
-  await cassandra.connect();
+  await pg.query("SELECT 1");
 };

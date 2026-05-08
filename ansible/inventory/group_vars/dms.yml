@@ -1,0 +1,46 @@
+## DMs VM (dms-service only). Hosts must be in [dms] inventory group.
+dms_systemd_services:
+  - discord-dms
+
+dms_workspace_build_commands:
+  - npm run build --workspace @discord/pubsub
+  - npm run build --workspace dms-service
+
+dms_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-dms.conf.example"
+
+## /etc/discord.env values for dms-service
+dms_log_level: info
+dms_log_pretty: "true"
+dms_port: "3007"
+
+## REQUIRED: set these to reachable endpoints (likely private IPs)
+dms_database_url: "postgresql://postgres:123456789@10.0.2.247:6432/auth_db"
+dms_redis_url: "redis://10.0.3.49:6379"
+# kv (port 6380) — sessions, realtime:instances registry.
+dms_kv_redis_url: "redis://10.0.3.49:6380"
+# kv2 (port 6382) — dm:pending:* lists (LPUSH/LTRIM/EXPIRE).
+dms_kv_cache_redis_url: "redis://10.0.3.49:6382"
+dms_redis_command_timeout_ms: "5000"
+
+## Cassandra cluster (DM history)
+dms_cassandra_contact_points: "10.0.2.111,10.0.0.225,10.0.1.200"
+dms_cassandra_port: "9042"
+dms_cassandra_local_datacenter: "datacenter1"
+dms_cassandra_keyspace: "dms"
+
+## Optional: auth to Cassandra if enabled
+# dms_cassandra_username: ""
+# dms_cassandra_password: ""
+
+## Replication/consistency (match services/dms/src/env.ts)
+dms_cassandra_topology: "simple"
+dms_cassandra_replication_factor: "3"
+dms_cassandra_read_consistency: "localQuorum"
+dms_cassandra_write_consistency: "localQuorum"
+
+## MinIO / attachments (dms service issues presign URLs)
+dms_minio_endpoint: "https://group-6.cse356.compas.cs.stonybrook.edu"
+dms_minio_access_key: "minioadmin"
+dms_minio_secret_key: "minioadmin"
+dms_minio_bucket: "discord-attachments"
+dms_attachment_base_url: "https://group-6.cse356.compas.cs.stonybrook.edu/discord-attachments"

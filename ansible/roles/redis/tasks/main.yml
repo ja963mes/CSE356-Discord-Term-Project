@@ -1,0 +1,108 @@
+---
+- name: Install prerequisites
+  ansible.builtin.apt:
+    name:
+      - curl
+      - gnupg
+      - lsb-release
+    state: present
+    update_cache: true
+
+- name: Add Redis GPG key
+  ansible.builtin.shell: |
+    curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
+  args:
+    creates: /usr/share/keyrings/redis-archive-keyring.gpg
+
+- name: Add Redis apt repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb {{ ansible_distribution_release }} main"
+    filename: redis
+    state: present
+
+- name: Pin Redis version
+  ansible.builtin.copy:
+    dest: /etc/apt/preferences.d/redis
+    content: |
+      Package: redis-server redis-tools
+      Pin: version {{ redis_version }}
+      Pin-Priority: 1001
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install Redis {{ redis_version }}
+  ansible.builtin.apt:
+    name: "redis-server={{ redis_version }}"
+    state: present
+    update_cache: true
+
+# Default redis-server unit binds :6379 too — we run our own per-instance
+# units instead. Stop + disable + mask so a future apt upgrade can't
+# silently re-enable it and collide with redis-pubsub on :6379.
+- name: Stop and mask default redis-server unit
+  ansible.builtin.systemd:
+    name: redis-server
+    state: stopped
+    enabled: false
+    masked: true
+  failed_when: false
+
+- name: Enable vm.overcommit_memory for Redis background saves
+  ansible.posix.sysctl:
+    name: vm.overcommit_memory
+    value: "1"
+    state: present
+    reload: true
+
+- name: Ensure per-instance data directories exist
+  ansible.builtin.file:
+    path: "/var/lib/redis/{{ item.name }}"
+    state: directory
+    owner: redis
+    group: redis
+    mode: "0750"
+  loop: "{{ redis_instances }}"
+
+- name: Render per-instance redis.conf files
+  ansible.builtin.template:
+    src: redis-instance.conf.j2
+    dest: "/etc/redis/{{ instance.name }}.conf"
+    owner: redis
+    group: redis
+    mode: "0640"
+  loop: "{{ redis_instances }}"
+  loop_control:
+    loop_var: instance
+  notify: Restart Redis instances
+
+- name: Render per-instance systemd unit files
+  ansible.builtin.template:
+    src: redis-instance.service.j2
+    dest: "/etc/systemd/system/redis-{{ instance.name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ redis_instances }}"
+  loop_control:
+    loop_var: instance
+  register: redis_unit_files
+
+- name: Reload systemd if unit files changed
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: redis_unit_files.changed
+
+- name: Enable and start per-instance Redis services
+  ansible.builtin.systemd:
+    name: "redis-{{ item.name }}"
+    enabled: true
+    state: started
+  loop: "{{ redis_instances }}"
+
+- name: Verify each Redis instance is reachable
+  ansible.builtin.command: "redis-cli -h 127.0.0.1 -p {{ item.port }} ping"
+  changed_when: false
+  register: redis_pings
+  failed_when: redis_pings.stdout != "PONG"
+  loop: "{{ redis_instances }}"

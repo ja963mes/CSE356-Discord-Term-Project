@@ -1,0 +1,78 @@
+# Nginx — production communities VM (communities-service)
+#
+# Use this on the dedicated communities VM. Backend VM nginx proxies
+# /communities, /channels, /search-communities, and /create-community traffic
+# here via private IP (10.0.1.148:80). All four paths land on the same Node
+# service.
+#
+# Services on localhost (this VM):
+#   3002 communities (handles POST /create-community)
+
+upstream communities_backend {
+    server 127.0.0.1:3002;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    server_name 10.0.1.148;
+
+    client_max_body_size 25m;
+
+    location ^~ /communities {
+        proxy_pass http://communities_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    location ^~ /channels {
+        proxy_pass http://communities_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    location ^~ /search-communities {
+        proxy_pass http://communities_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    location ^~ /create-community {
+        proxy_pass http://communities_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    # API-only host in split production
+    location / {
+        return 404;
+    }
+}

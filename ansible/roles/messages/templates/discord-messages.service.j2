@@ -1,0 +1,23 @@
+[Unit]
+Description=Discord messages service
+After=network.target
+
+[Service]
+Type=simple
+User={{ deploy_user }}
+WorkingDirectory={{ deploy_path }}
+EnvironmentFile=/etc/discord.env
+{% if messages_node_options | default('') | length > 0 %}
+Environment=NODE_OPTIONS={{ messages_node_options }}
+{% endif %}
+# 8GB+ messages VM: give the Node heap headroom under load (one process per cluster worker).
+ExecStart=/usr/bin/node {{ deploy_path }}/services/messages/dist/cluster.js
+Restart=always
+RestartSec=3
+LimitNOFILE={{ messages_service_limit_nofile | default('65536') }}
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+

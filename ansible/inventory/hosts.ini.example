@@ -1,0 +1,26 @@
+[frontend]
+frontend-vm ansible_host=130.245.136.115
+
+[backend]
+backend-vm ansible_host=130.245.136.45
+
+[communities]
+communities-vm ansible_host=10.0.1.148
+
+[auth]
+auth-vm ansible_host=10.0.3.158
+
+[search]
+search-vm ansible_host=130.245.136.135
+
+[messages]
+messages-vm ansible_host=10.0.3.199
+
+[dms]
+dms-vm ansible_host=10.0.3.52
+
+[read_state]
+read-state-vm ansible_host=10.0.1.189
+
+[all:vars]
+ansible_user=deploy

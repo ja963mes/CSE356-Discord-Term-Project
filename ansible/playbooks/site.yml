@@ -1,0 +1,80 @@
+- name: Configure Redis pubsub VM
+  hosts: redis
+  become: true
+  roles:
+    - redis
+
+- name: Configure common deploy prerequisites
+  hosts: all:!redis
+  become: true
+  roles:
+    - common
+
+- name: Configure Zabbix agent on managed VMs
+  hosts: all
+  become: true
+  roles:
+    - zabbix-agent
+  tags:
+    - zabbix-agent
+    - monitoring
+
+- name: Configure and deploy realtime VM
+  hosts: realtime
+  become: true
+  roles:
+    - realtime
+
+- name: Configure and deploy messages VM
+  hosts: messages
+  become: true
+  roles:
+    - messages
+
+- name: Configure and deploy dms VM
+  hosts: dms
+  become: true
+  roles:
+    - dms
+
+- name: Configure and deploy read-state VM
+  hosts: read_state
+  become: true
+  roles:
+    - read-state
+
+- name: Configure and deploy auth VM
+  hosts: auth
+  become: true
+  roles:
+    - auth
+    
+- name: Configure and deploy backend VM
+  hosts: backend
+  become: true
+  roles:
+    - backend
+
+- name: Configure and deploy communities VM
+  hosts: communities
+  become: true
+  roles:
+    - communities
+
+- name: Configure and deploy frontend VM
+  hosts: frontend
+  become: true
+  roles:
+    - frontend
+
+- name: Configure and deploy search VM
+  hosts: search
+  become: true
+  roles:
+    - search
+
+- name: Configure storage VM (MinIO)
+  hosts: storage
+  become: true
+  roles:
+    - storage

@@ -1,0 +1,259 @@
+# Deploy to split frontend/backend VMs with Ansible.
+#
+# Required repo secrets:
+#   BACKEND_SSH_HOST          -> backend VM acting as Ansible control node
+#   DEPLOY_SSH_USER
+#   BACKEND_SSH_PRIVATE_KEY
+#   DEPLOY_PATH               -> repo path on control node
+# Recommended:
+#   SSH_KNOWN_HOSTS  → output of: ssh-keyscan -H YOUR_IP (both hosts)
+# Optional:
+#   DEPLOY_BRANCH    → defaults to main-dev if unset (set secret to override)
+#
+# The `deploy` user on each server needs: git pull in DEPLOY_PATH, npm, and
+# passwordless sudo for systemctl restart/reload (see docs/STAGING-ROLLOUT.md).
+#
+# Backend includes `discord-search` (Elasticsearch: message search + community directory
+# reindex on startup). Elasticsearch must be running before search (e.g. docker compose).
+# `discord-communities` proxies GET /search-communities to search — restart search with backend.
+name: CI and deploy staging
+
+on:
+  push:
+    branches: [main-dev]
+    # Skip CI + deploy entirely on documentation-only changes. The negation
+    # (`!docs/nginx/**`) keeps deploys firing for nginx example files —
+    # Ansible copies those directly to /etc/nginx, so they ARE real config.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '!docs/nginx/**'
+      - '.gitignore'
+      - 'LICENSE*'
+  pull_request:
+    branches: [main-dev]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '!docs/nginx/**'
+      - '.gitignore'
+      - 'LICENSE*'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to deploy (branch, tag, or commit SHA). Defaults to main-dev.'
+        required: false
+        default: ''
+      limit:
+        description: 'Ansible limit (e.g. read_state,dms). Leave blank for full deploy.'
+        required: false
+        default: ''
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - run: npm ci
+      - run: npm run build --workspace frontend
+
+  detect:
+    needs: ci
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main-dev')
+    runs-on: ubuntu-latest
+    outputs:
+      ansible_limit: ${{ steps.limit.outputs.value }}
+      skip_deploy: ${{ steps.limit.outputs.skip_deploy }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        id: changes
+        if: github.event_name == 'push'
+        with:
+          filters: |
+            # Each service filter covers:
+            #   1. service source code
+            #   2. nginx config (docs/nginx/production-<service>.conf.example — Ansible copies
+            #      this directly to /etc/nginx/sites-available/ on the VM, it is the real config)
+            #   3. Ansible role (templates, tasks, handlers for that service)
+            #   4. group_vars for that service (env vars, ports, feature flags)
+            # Note: search role has no nginx block in Ansible tasks yet — nginx conf change
+            # triggers deploy but Ansible won't apply it until the role is updated.
+            # backend has no Node services (just DB containers) — use workflow_dispatch.
+            auth:        ['services/auth/**',
+                          'docs/nginx/production-auth.conf.example',
+                          'ansible/roles/auth/**',
+                          'ansible/inventory/group_vars/auth/**']
+            communities: ['services/communities/**',
+                          'docs/nginx/production-communities.conf.example',
+                          'ansible/roles/communities/**',
+                          'ansible/inventory/group_vars/communities.yml']
+            dms:         ['services/dms/**',
+                          'docs/nginx/production-dms.conf.example',
+                          'ansible/roles/dms/**',
+                          'ansible/inventory/group_vars/dms.yml']
+            messages:    ['services/messages/**',
+                          'docs/nginx/production-messages.conf.example',
+                          'ansible/roles/messages/**',
+                          'ansible/inventory/group_vars/messages.yml']
+            read_state:  ['services/read-state/**',
+                          'docs/nginx/production-read-state.conf.example',
+                          'ansible/roles/read-state/**',
+                          'ansible/inventory/group_vars/read_state.yml']
+            realtime:    ['services/realtime/**',
+                          'docs/nginx/production-realtime.conf.example',
+                          'ansible/roles/realtime/**',
+                          'ansible/inventory/group_vars/realtime.yml']
+            search:      ['services/search/**',
+                          'docs/nginx/production-search.conf.example',
+                          'ansible/roles/search/**',
+                          'ansible/inventory/group_vars/search.yml']
+            frontend:    ['frontend/**',
+                          'docs/nginx/production-frontend.conf.example',
+                          'ansible/roles/frontend/**']
+            shared_pubsub: 'services/shared-pubsub/**'
+            storage:     ['ansible/roles/storage/**',
+                          'docker-compose.yml']
+            # NOTE: ansible/roles/zabbix-agent/** is intentionally NOT in any
+            # filter here. It has a dedicated workflow (deploy-zabbix-agent.yml)
+            # that runs --tags zabbix-agent without touching app services.
+            # infra = changes that affect all VMs: common role, playbooks, root deps
+            infra: ['ansible/roles/common/**',
+                    'ansible/roles/redis/**',
+                    'ansible/playbooks/**',
+                    'ansible/ansible.cfg',
+                    'ansible/inventory/group_vars/all/**',
+                    'package.json',
+                    'package-lock.json']
+      - id: limit
+        run: |
+          set -euo pipefail
+          # workflow_dispatch: respect manual limit input, or full deploy if blank
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "value=${{ github.event.inputs.limit }}" >> $GITHUB_OUTPUT
+            echo "skip_deploy=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          # infra changes = full deploy (ansible roles, root deps)
+          if [[ "${{ steps.changes.outputs.infra }}" == "true" ]]; then
+            echo "value=" >> $GITHUB_OUTPUT
+            echo "skip_deploy=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          # shared-pubsub change = all 6 consumer VMs (not auth/frontend)
+          if [[ "${{ steps.changes.outputs.shared_pubsub }}" == "true" ]]; then
+            echo "value=communities,dms,messages,read_state,realtime,search" >> $GITHUB_OUTPUT
+            echo "skip_deploy=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          # build limit from individual service changes
+          PARTS=()
+          [[ "${{ steps.changes.outputs.auth }}"        == "true" ]] && PARTS+=(auth)
+          [[ "${{ steps.changes.outputs.communities }}"  == "true" ]] && PARTS+=(communities)
+          [[ "${{ steps.changes.outputs.dms }}"          == "true" ]] && PARTS+=(dms)
+          [[ "${{ steps.changes.outputs.messages }}"     == "true" ]] && PARTS+=(messages)
+          [[ "${{ steps.changes.outputs.read_state }}"   == "true" ]] && PARTS+=(read_state)
+          [[ "${{ steps.changes.outputs.realtime }}"     == "true" ]] && PARTS+=(realtime)
+          [[ "${{ steps.changes.outputs.search }}"       == "true" ]] && PARTS+=(search)
+          [[ "${{ steps.changes.outputs.frontend }}"     == "true" ]] && PARTS+=(frontend)
+          [[ "${{ steps.changes.outputs.storage }}"      == "true" ]] && PARTS+=(storage)
+          if [[ ${#PARTS[@]} -eq 0 ]]; then
+            echo "skip_deploy=true" >> $GITHUB_OUTPUT
+          else
+            JOINED=$(IFS=','; echo "${PARTS[*]}")
+            echo "value=${JOINED}" >> $GITHUB_OUTPUT
+            echo "skip_deploy=false" >> $GITHUB_OUTPUT
+          fi
+      - name: Deploy summary
+        if: steps.limit.outputs.skip_deploy != 'true'
+        run: |
+          LIMIT="${{ steps.limit.outputs.value }}"
+          if [ -z "$LIMIT" ]; then
+            echo "Deploying: ALL services"
+          else
+            echo "Deploying: ${LIMIT//,/ }"
+          fi
+
+  deploy_from_control_node:
+    needs: [ci, detect]
+    if: needs.detect.outputs.skip_deploy != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH key (control node)
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${{ secrets.BACKEND_SSH_PRIVATE_KEY }}" > ~/.ssh/id_backend
+          chmod 600 ~/.ssh/id_backend
+          if [ -n "${{ secrets.SSH_KNOWN_HOSTS }}" ]; then
+            echo "${{ secrets.SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
+          fi
+
+      - name: Run Ansible from backend control node
+        env:
+          DEPLOY_BRANCH: ${{ secrets.DEPLOY_BRANCH }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          ANSIBLE_LIMIT: ${{ needs.detect.outputs.ansible_limit }}
+          DEPLOY_REF: ${{ github.event.inputs.ref }}
+        run: |
+          set -euo pipefail
+          # ref input overrides branch (enables rollback to any commit/tag)
+          BRANCH="${DEPLOY_REF:-}"
+          if [ -z "$BRANCH" ]; then BRANCH="${DEPLOY_BRANCH:-main-dev}"; fi
+
+          ssh -i ~/.ssh/id_backend -o StrictHostKeyChecking=no "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.BACKEND_SSH_HOST }}" "bash -s" <<EOF
+          set -euo pipefail
+          BRANCH='$BRANCH'
+          DEPLOY_PATH='${DEPLOY_PATH}'
+          ANSIBLE_LIMIT='${ANSIBLE_LIMIT}'
+          if [ -z "\$DEPLOY_PATH" ]; then
+            echo 'DEPLOY_PATH secret is required.'
+            exit 1
+          fi
+          cd "\$DEPLOY_PATH"
+          git fetch origin
+          git checkout "\$BRANCH"
+          # only pull if on a branch (tags/SHAs are detached HEAD, pull would fail)
+          git symbolic-ref HEAD &>/dev/null && git pull --ff-only origin "\$BRANCH" || true
+          cd ansible
+          LIMIT_FLAG=""
+          if [ -n "\$ANSIBLE_LIMIT" ]; then LIMIT_FLAG="--limit \$ANSIBLE_LIMIT"; fi
+          ANSIBLE_CONFIG=ansible.cfg ansible-playbook -i inventory/hosts.ini playbooks/site.yml \$LIMIT_FLAG
+          EOF
+
+      - name: Health check deployed services
+        env:
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          ANSIBLE_LIMIT: ${{ needs.detect.outputs.ansible_limit }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_backend -o StrictHostKeyChecking=no "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.BACKEND_SSH_HOST }}" "bash -s" <<EOF
+          set -euo pipefail
+          declare -A HEALTH_PORTS=([auth]=3001 [communities]=3002 [messages]=3003 [search]=3004 [realtime]=3005 [dms]=3007 [read_state]=3008)
+          cd "${DEPLOY_PATH}/ansible"
+          TARGETS="${ANSIBLE_LIMIT:-auth,communities,messages,search,realtime,dms,read_state}"
+          FAILED=()
+          for svc in \${TARGETS//,/ }; do
+            port="\${HEALTH_PORTS[\$svc]:-}"
+            [ -z "\$port" ] && continue
+            echo "Checking \$svc :\$port ..."
+            ANSIBLE_CONFIG=ansible.cfg ansible "\$svc" -i inventory/hosts.ini -m uri \
+              -a "url=http://localhost:\${port}/health status_code=200" \
+              --one-line 2>&1 || FAILED+=("\$svc")
+          done
+          if [ \${#FAILED[@]} -gt 0 ]; then
+            echo "Health check FAILED for: \${FAILED[*]}"
+            exit 1
+          fi
+          echo "All health checks passed."
+          EOF

@@ -1,0 +1,19 @@
+{
+  "name": "@discord/pubsub",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "peerDependencies": {
+    "ioredis": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "ioredis": "^5.10.0",
+    "typescript": "^5.9.3"
+  }
+}

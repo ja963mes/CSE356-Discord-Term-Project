@@ -1,6 +1,6 @@
 # Sharding and replication
 
-This document describes **how we partition data today** (Cassandra channel messages) and **design intent** for future PostgreSQL sharding when communities are spread across instances.
+Companion to **[IMPLEMENTATION.md](./IMPLEMENTATION.md)** (what exists today). This doc covers **how channel messages are partitioned in Cassandra** now and **design intent** for future PostgreSQL sharding when communities span multiple database instances.
 
 ## Channel messages (Cassandra) — implemented
 
@@ -62,7 +62,7 @@ Typical patterns:
 - **Stable keys**: `community_id` / `channel_id` on all relevant rows; avoid implicit cross-community joins in core flows.
 - **No cross-community transactions** in business logic.
 - **Idempotent** mutations where possible.
-- **Directory search** (`/search-communities`): may evolve into a **global index** (Elasticsearch, or a small indexed table) fed by events, not a full scan of all shards.
+- **Directory search** (`/search-communities` on communities, proxied to **search-service**): backed by **Elasticsearch** (index fed from Postgres on startup + Redis events), not live SQL over shards.
 - **Events** (outbox / queue): community lifecycle events can feed a future **shard router** or **search indexer** without ad hoc DB scans.
 
 ## Routing layer (later)
@@ -82,23 +82,12 @@ Direct messages are **not** community-sharded; they use a **separate** partition
 
 **What exists now**
 
-- **`search-service` (port 3004)** exposes `GET /search` as a **stub** (hardcoded placeholder results). The wireframe UI calls it via `search()` in `frontend/src/api/discord.ts` and **falls back** to sample text if the service is down.
-- **Public guild directory search** is **not** implemented in `search-service`. It lives on the **communities** microservice as **`GET /search-communities`** (PostgreSQL-backed), separate from the global `/search` route.
-- **Elasticsearch** appears in `docker-compose.yml` for a future indexing path; it is **not** wired into the Node search stub in this repo yet.
+- **`search-service` (port 3004)** uses **Elasticsearch** for **`GET /search/messages`** (session-scoped) and **`GET /directory/communities`** (public directory; also reindexed from Postgres on startup). The SPA still calls **`GET /search-communities`** on **communities (3002)**, which **proxies** to search + optional Redis cache.
+- **Postgres** remains the **source of truth** for community rows; ES holds a **projection** for directory wildcard search, not a second live query of Postgres per request.
 
-**Direction if we need real search**
+**Direction if we need more scale**
 
-Do **not** assume a single monolithic search service forever. At scale, retrieval is likely **splintered by domain** so each microservice that owns data also owns (or co-locates) **how that data is searched**:
-
-| Domain (examples) | Natural owner for search/read APIs |
-|-------------------|-------------------------------------|
-| Guild channel message bodies | Messages service (+ Cassandra / future index) |
-| DM message bodies | DMs service (+ Cassandra / future index) |
-| Public community directory | Communities (already separate path) or a small global index fed by events |
-
-That keeps **ACL, partitioning, and indexes** aligned with the same service boundary (e.g. DM search stays with DMs). If the product still wants **one unified search bar**, a thin **aggregator or BFF** can fan out to those domain endpoints—or the UX can offer **context-specific search** (search inside a guild, inside DMs, etc.) without a central search monolith.
-
-This complements the earlier note that **`/search-communities`** may evolve into a **global index** fed by events rather than scanning shards.
+Retrieval can stay **splintered by domain** so each service boundary owns ACLs and storage; a thin **BFF** can fan out if the product wants one unified search bar.
 
 ## Summary
 

@@ -1,6 +1,6 @@
-import { redis } from "./redis";
-
-const CHANNEL = "community:events";
+import { publishCommunityEvent as sharedPublishCommunityEvent } from "@discord/pubsub";
+import { metaRedis } from "./redis";
+import { logger } from "./logger";
 
 export type CommunityEvent =
   | {
@@ -53,12 +53,22 @@ export type CommunityEvent =
       channelId: string;
       /** User who lost channel access. */
       userId: string;
+    }
+  | {
+      type: "community:directory:upsert";
+      communityId: string;
+      name: string;
+      created_at: string;
+    }
+  | {
+      type: "community:directory:delete";
+      communityId: string;
     };
 
 export async function publishCommunityEvent(event: CommunityEvent): Promise<void> {
   try {
-    await redis.publish(CHANNEL, JSON.stringify(event));
+    await sharedPublishCommunityEvent(metaRedis, JSON.stringify(event));
   } catch (err) {
-    console.error("[communities] failed to publish event", event.type, err);
+    logger.error({ err, eventType: event.type }, "community event publish failed");
   }
 }

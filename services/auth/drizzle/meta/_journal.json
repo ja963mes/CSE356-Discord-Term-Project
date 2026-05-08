@@ -71,6 +71,34 @@
       "when": 1774847291442,
       "tag": "0009_serious_doorman",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1774847292000,
+      "tag": "0010_communities_name_trgm",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1774900000000,
+      "tag": "0011_drop_communities_name_trgm_idx",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1776544105225,
+      "tag": "0012_yummy_thor",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1745193600000,
+      "tag": "0013_communities_scaling_indexes",
+      "breakpoints": true
     }
   ]
 }

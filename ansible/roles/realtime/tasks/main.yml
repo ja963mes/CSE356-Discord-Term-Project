@@ -1,0 +1,167 @@
+- name: Ensure app repo is checked out
+  ansible.builtin.git:
+    repo: "{{ repo_url }}"
+    dest: "{{ deploy_path }}"
+    version: "{{ deploy_branch }}"
+    update: true
+    force: true
+  become_user: "{{ deploy_user }}"
+
+- name: Install workspace dependencies
+  ansible.builtin.command: npm ci
+  args:
+    chdir: "{{ deploy_path }}"
+  become_user: "{{ deploy_user }}"
+
+- name: Build realtime workspace(s)
+  ansible.builtin.command: "{{ item }}"
+  args:
+    chdir: "{{ deploy_path }}"
+  become_user: "{{ deploy_user }}"
+  loop: "{{ realtime_workspace_build_commands }}"
+
+- name: Manage realtime systemd service files (optional)
+  when: manage_systemd_services | default(false)
+  block:
+    - name: Install realtime systemd unit files
+      ansible.builtin.template:
+        src: "{{ item }}.service.j2"
+        dest: "/etc/systemd/system/{{ item }}.service"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ realtime_systemd_services }}"
+      register: realtime_systemd_files_changed
+
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: realtime_systemd_files_changed.changed
+
+    - name: Enable realtime services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+      loop: "{{ realtime_systemd_services }}"
+
+- name: Set nginx worker_connections to 8192
+  ansible.builtin.lineinfile:
+    path: /etc/nginx/nginx.conf
+    regexp: '^\s*worker_connections\s+'
+    line: "\tworker_connections 8192;"
+    backrefs: false
+
+- name: Manage nginx config (optional)
+  when: manage_nginx_config
+  block:
+    - name: Install realtime nginx config
+      ansible.builtin.copy:
+        src: "{{ realtime_nginx_conf_src }}"
+        dest: /etc/nginx/sites-available/discord-realtime
+        owner: root
+        group: root
+        mode: "0644"
+        remote_src: true
+
+    - name: Enable realtime nginx site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/discord-realtime
+        dest: /etc/nginx/sites-enabled/discord-realtime
+        state: link
+        force: true
+
+    - name: Disable default nginx site if present
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Remove legacy backend nginx site symlink if present
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/discord-backend
+        state: absent
+
+    - name: Validate nginx configuration
+      ansible.builtin.command: nginx -t
+      changed_when: false
+
+- name: Install discord.env
+  ansible.builtin.template:
+    src: discord.env.j2
+    dest: /etc/discord.env
+    owner: root
+    group: root
+    mode: "0640"
+
+- name: Install tighter logrotate config for syslog
+  ansible.builtin.copy:
+    dest: /etc/logrotate.d/rsyslog
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      /var/log/syslog
+      /var/log/mail.info
+      /var/log/mail.warn
+      /var/log/mail.err
+      /var/log/mail.log
+      /var/log/daemon.log
+      /var/log/kern.log
+      /var/log/auth.log
+      /var/log/user.log
+      /var/log/lpr.log
+      /var/log/cron.log
+      /var/log/debug
+      /var/log/messages
+      {
+              rotate 3
+              daily
+              maxsize 200M
+              missingok
+              notifempty
+              compress
+              delaycompress
+              sharedscripts
+              postrotate
+                      /usr/lib/rsyslog/rsyslog-rotate
+              endscript
+      }
+
+- name: Ensure journald config dir exists
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Cap journald size
+  ansible.builtin.copy:
+    dest: /etc/systemd/journald.conf.d/discord.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Journal]
+      SystemMaxUse=300M
+  notify: Restart journald
+
+
+- name: Restart realtime services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: restarted
+  loop: "{{ realtime_systemd_services }}"
+
+- name: Reload nginx
+  ansible.builtin.systemd:
+    name: nginx
+    state: reloaded
+
+- name: Check realtime services are active
+  ansible.builtin.command: "systemctl is-active {{ item }}"
+  changed_when: false
+  register: realtime_active_check
+  until: realtime_active_check.rc == 0
+  retries: 10
+  delay: 3
+  loop: "{{ realtime_systemd_services }}"

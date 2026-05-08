@@ -1,5 +1,7 @@
 # Join service (placeholder)
 
+> **Join-by-id today:** `POST /communities/:communityId/join` on the **communities** service (`services/communities`). This folder is reserved for future invite / deep-link flows.
+
 Future home for **joining** communities by invite code, directory, or deep link.
 
 - **Communities you create** are capped at **100** per user (enforced in the communities service).

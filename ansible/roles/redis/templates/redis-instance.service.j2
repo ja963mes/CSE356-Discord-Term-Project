@@ -1,0 +1,19 @@
+[Unit]
+Description=Redis ({{ instance.name }} instance, port {{ instance.port }})
+After=network.target
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/redis-server /etc/redis/{{ instance.name }}.conf --supervised systemd
+ExecStop=/usr/bin/redis-cli -p {{ instance.port }} shutdown
+User=redis
+Group=redis
+RuntimeDirectory=redis
+RuntimeDirectoryMode=0755
+PIDFile=/var/run/redis/{{ instance.name }}.pid
+TimeoutStopSec=20
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

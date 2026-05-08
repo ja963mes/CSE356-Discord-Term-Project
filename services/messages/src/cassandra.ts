@@ -40,6 +40,12 @@ export const cassandra = new Client({
   keyspace: env.MESSAGES_CASSANDRA_KEYSPACE,
   protocolOptions: { port: env.CASSANDRA_PORT },
   authProvider: credentials,
+  pooling: {
+    coreConnectionsPerHost: {
+      [types.distance.local]: env.CASSANDRA_LOCAL_CORE_CONNECTIONS,
+    },
+    maxRequestsPerConnection: env.CASSANDRA_MAX_REQUESTS_PER_CONNECTION,
+  },
 });
 
 function buildKeyspaceCql(): string {

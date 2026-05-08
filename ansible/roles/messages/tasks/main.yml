@@ -1,0 +1,190 @@
+- name: Ensure messages repo is checked out
+  ansible.builtin.git:
+    repo: "{{ repo_url }}"
+    dest: "{{ deploy_path }}"
+    version: "{{ deploy_branch }}"
+    update: true
+    force: true
+  become_user: "{{ deploy_user }}"
+
+- name: Install workspace dependencies
+  ansible.builtin.command: npm ci
+  args:
+    chdir: "{{ deploy_path }}"
+  become_user: "{{ deploy_user }}"
+
+- name: Build messages workspace
+  ansible.builtin.command: "{{ item }}"
+  args:
+    chdir: "{{ deploy_path }}"
+  become_user: "{{ deploy_user }}"
+  loop: "{{ messages_workspace_build_commands }}"
+
+- name: Manage messages systemd service files (optional)
+  when: manage_systemd_services | default(false)
+  block:
+    - name: Install messages systemd unit files
+      ansible.builtin.template:
+        src: "{{ item }}.service.j2"
+        dest: "/etc/systemd/system/{{ item }}.service"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ messages_systemd_services }}"
+      register: messages_systemd_files_changed
+
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: messages_systemd_files_changed.changed
+
+    - name: Enable messages services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+      loop: "{{ messages_systemd_services }}"
+
+- name: Install discord.env
+  ansible.builtin.template:
+    src: discord.env.j2
+    dest: /etc/discord.env
+    owner: root
+    group: root
+    mode: "0640"
+
+- name: Install tighter logrotate config for syslog
+  ansible.builtin.copy:
+    dest: /etc/logrotate.d/rsyslog
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      /var/log/syslog
+      /var/log/mail.info
+      /var/log/mail.warn
+      /var/log/mail.err
+      /var/log/mail.log
+      /var/log/daemon.log
+      /var/log/kern.log
+      /var/log/auth.log
+      /var/log/user.log
+      /var/log/lpr.log
+      /var/log/cron.log
+      /var/log/debug
+      /var/log/messages
+      {
+              rotate 3
+              daily
+              maxsize 200M
+              missingok
+              notifempty
+              compress
+              delaycompress
+              sharedscripts
+              postrotate
+                      /usr/lib/rsyslog/rsyslog-rotate
+              endscript
+      }
+
+- name: Ensure journald config dir exists
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Cap journald size
+  ansible.builtin.copy:
+    dest: /etc/systemd/journald.conf.d/discord.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Journal]
+      SystemMaxUse=300M
+  notify: Restart journald
+
+# Default Ubuntu nginx uses worker_connections 768, which is too low for this ingress.
+# Match realtime role; see docs/nginx/production-frontend.conf.example and production-messages header.
+- name: Set nginx worker_rlimit_nofile (main context)
+  ansible.builtin.lineinfile:
+    path: /etc/nginx/nginx.conf
+    regexp: "^\n?\\s*worker_rlimit_nofile\\s+"
+    line: "worker_rlimit_nofile 65536;"
+    insertafter: "^[[:space:]]*worker_processes"
+    firstmatch: true
+  notify: Restart nginx
+
+# 4 vCPU: nginx worker_processes auto => 4 workers; 16384 slots each handles heavier fan-in than 8192.
+- name: Set nginx worker_connections to 16384
+  ansible.builtin.lineinfile:
+    path: /etc/nginx/nginx.conf
+    regexp: "^\n?\\s*worker_connections\\s+"
+    line: "\tworker_connections 16384;"
+  notify: Restart nginx
+
+# systemd default LimitNOFILE can cap nginx below worker_connections; raise for workers.
+- name: Ensure nginx.service.d directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/nginx.service.d
+    state: directory
+    mode: "0755"
+
+- name: Ensure high LimitNOFILE for nginx via systemd drop-in
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/nginx.service.d/override.conf
+    content: |
+      [Service]
+      LimitNOFILE=65536
+    mode: "0644"
+  notify: Reload systemd and restart nginx
+
+- name: Manage messages nginx config files (optional)
+  when: manage_nginx_config | default(false)
+  block:
+    - name: Install messages nginx config
+      ansible.builtin.copy:
+        src: "{{ messages_nginx_conf_src }}"
+        dest: /etc/nginx/sites-available/discord-messages
+        owner: root
+        group: root
+        mode: "0644"
+        remote_src: true
+
+    - name: Enable messages nginx site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/discord-messages
+        dest: /etc/nginx/sites-enabled/discord-messages
+        state: link
+        force: true
+
+    - name: Disable default nginx site if present
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Validate nginx configuration
+      ansible.builtin.command: nginx -t
+      changed_when: false
+
+    - name: Reload nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: reloaded
+
+- name: Restart messages services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: restarted
+  loop: "{{ messages_systemd_services }}"
+
+- name: Check messages services are active
+  ansible.builtin.command: "systemctl is-active {{ item }}"
+  changed_when: false
+  register: messages_active_check
+  until: messages_active_check.rc == 0
+  retries: 10
+  delay: 3
+  loop: "{{ messages_systemd_services }}"
+

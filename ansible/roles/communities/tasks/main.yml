@@ -1,0 +1,123 @@
+- name: Ensure communities repo is checked out
+  ansible.builtin.git:
+    repo: "{{ repo_url }}"
+    dest: "{{ deploy_path }}"
+    version: "{{ deploy_branch }}"
+    update: true
+    force: true
+  become_user: "{{ deploy_user }}"
+
+- name: Install workspace dependencies
+  ansible.builtin.command: npm ci
+  args:
+    chdir: "{{ deploy_path }}"
+  become_user: "{{ deploy_user }}"
+
+- name: Build communities workspaces
+  ansible.builtin.command: "{{ item }}"
+  args:
+    chdir: "{{ deploy_path }}"
+  become_user: "{{ deploy_user }}"
+  loop: "{{ communities_workspace_build_commands }}"
+
+# Deprecated discord-create-community service: the route was folded back into
+# communities-service. Stop, disable, and remove the unit if it exists so old
+# hosts don't keep a stale process running on port 3006.
+- name: Stop deprecated discord-create-community service
+  ansible.builtin.systemd:
+    name: discord-create-community
+    state: stopped
+    enabled: false
+  failed_when: false
+  register: deprecated_create_community_stopped
+
+- name: Remove deprecated discord-create-community unit file
+  ansible.builtin.file:
+    path: /etc/systemd/system/discord-create-community.service
+    state: absent
+  register: deprecated_create_community_unit_removed
+
+- name: Reload systemd daemon after removing deprecated unit
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: deprecated_create_community_unit_removed.changed
+
+- name: Manage communities systemd service files (optional)
+  when: manage_systemd_services | default(false)
+  block:
+    - name: Install communities systemd unit files
+      ansible.builtin.template:
+        src: "{{ item }}.service.j2"
+        dest: "/etc/systemd/system/{{ item }}.service"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ communities_systemd_services }}"
+      register: communities_systemd_files_changed
+
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: communities_systemd_files_changed.changed
+
+    - name: Enable communities services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+      loop: "{{ communities_systemd_services }}"
+
+- name: Install discord.env
+  ansible.builtin.template:
+    src: discord.env.j2
+    dest: /etc/discord.env
+    owner: root
+    group: root
+    mode: "0640"
+
+- name: Manage communities nginx config files (optional)
+  when: manage_nginx_config | default(false)
+  block:
+    - name: Install communities nginx config
+      ansible.builtin.copy:
+        src: "{{ communities_nginx_conf_src }}"
+        dest: /etc/nginx/sites-available/discord-communities
+        owner: root
+        group: root
+        mode: "0644"
+        remote_src: true
+
+    - name: Enable communities nginx site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/discord-communities
+        dest: /etc/nginx/sites-enabled/discord-communities
+        state: link
+        force: true
+
+    - name: Disable default nginx site if present
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Validate nginx configuration
+      ansible.builtin.command: nginx -t
+      changed_when: false
+
+    - name: Reload nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: reloaded
+
+- name: Restart communities services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: restarted
+  loop: "{{ communities_systemd_services }}"
+
+- name: Check communities services are active
+  ansible.builtin.command: "systemctl is-active {{ item }}"
+  changed_when: false
+  register: communities_active_check
+  until: communities_active_check.rc == 0
+  retries: 10
+  delay: 3
+  loop: "{{ communities_systemd_services }}"

@@ -12,7 +12,8 @@ import {
   inviteParticipant,
   leaveConversation,
 } from "../api/dms";
-import { DmUser, getDmUsers } from "../api/auth";
+import { presignAttachments, uploadToMinIO } from "../api/discord";
+import { DmUser, displayNameForDmUser, getDmUsers } from "../api/auth";
 import SearchPanel from "./SearchPanel";
 
 import { IncomingMessage } from "../hooks/useWebSocket";
@@ -27,9 +28,17 @@ interface Props {
   onReadStateUpdated?: (conversationId: string, messageId: string, timeuuid: string) => void;
 }
 
-function authorLabel(authorId: string, displayNameByUserId: Record<string, string>): string {
-  return displayNameByUserId[authorId] ?? `${authorId.slice(0, 8)}…`;
+function authorLabel(authorId: string | undefined | null, displayNameByUserId: Record<string, string>): string {
+  if (authorId == null || authorId === "") return "Unknown";
+  const fromMap = displayNameByUserId[authorId];
+  if (typeof fromMap === "string" && fromMap.trim() !== "") return fromMap;
+  return `${authorId.slice(0, 8)}…`;
 }
+
+const MAX_ATTACHMENTS = 4;
+const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+
+type LocalMessage = DmMessage & { pending?: boolean; uploadFailed?: boolean };
 
 export default function DmChatView({
   conversation,
@@ -39,7 +48,7 @@ export default function DmChatView({
   onLeave,
   onReadStateUpdated,
 }: Props) {
-  const [messages, setMessages] = useState<DmMessage[]>([]);
+  const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [composerText, setComposerText] = useState("");
@@ -54,14 +63,23 @@ export default function DmChatView({
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [readStateByUserId, setReadStateByUserId] = useState<Record<string, string | null>>({});
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
   const lastMarkedRef = useRef<string | null>(null);
+  const hintRefreshInFlightRef = useRef(false);
+  const hintRefreshPendingRef = useRef(false);
 
   const conversationId = conversation.conversationId;
-  const label = conversation.name ?? (conversation.conversationType === "one_to_one" ? "Direct Message" : "Group DM");
+  const otherId = conversation.conversationType === "one_to_one"
+    ? conversation.participantIds.find((id) => id !== currentUserId)
+    : undefined;
+  const label = otherId
+    ? (displayNameByUserId[otherId] ?? "Direct Message")
+    : (conversation.name ?? (conversation.conversationType === "one_to_one" ? "Direct Message" : "Group DM"));
   const participantSet = new Set(conversation.participantIds);
 
   const isTimeuuidAfter = useCallback((a: string | null | undefined, b: string | null | undefined): boolean => {
@@ -79,16 +97,50 @@ export default function DmChatView({
   }, []);
 
   const markLatestRead = useCallback(async (message: DmMessage | null | undefined) => {
-    if (!message?.messageId || !message.timeuuid || lastMarkedRef.current === message.messageId) return;
+    if (!message?.timeuuid || lastMarkedRef.current === message.timeuuid) return;
     try {
-      await markConversationRead(conversationId, message.messageId, message.timeuuid);
-      lastMarkedRef.current = message.messageId;
+      await markConversationRead(conversationId, message.timeuuid, message.messageId);
+      lastMarkedRef.current = message.timeuuid;
       setReadStateByUserId((prev) => ({ ...prev, [currentUserId]: message.timeuuid }));
       onReadStateUpdated?.(conversationId, message.messageId, message.timeuuid);
     } catch {
       // ignore
     }
   }, [conversationId, currentUserId, onReadStateUpdated]);
+
+  const refreshFromHint = useCallback(async (hintAuthorId?: string) => {
+    if (hintRefreshInFlightRef.current) {
+      hintRefreshPendingRef.current = true;
+      return;
+    }
+
+    hintRefreshInFlightRef.current = true;
+    try {
+      do {
+        hintRefreshPendingRef.current = false;
+        const data = await listMessages(conversationId);
+        setMessages((prev) => {
+          if (data.messages.length === 0) return prev;
+          const merged = new Map<string, DmMessage>();
+          for (const m of prev) merged.set(m.messageId, m);
+          for (const m of data.messages) merged.set(m.messageId, m);
+          return Array.from(merged.values()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        });
+        setNextCursor((prev) => prev ?? data.nextCursor);
+        const newest = data.messages[0] ?? null;
+        if (newest && (atBottomRef.current || newest.authorId === currentUserId || hintAuthorId === currentUserId)) {
+          void markLatestRead(newest);
+        }
+        if (atBottomRef.current) {
+          setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+        }
+      } while (hintRefreshPendingRef.current);
+    } catch {
+      // ignore
+    } finally {
+      hintRefreshInFlightRef.current = false;
+    }
+  }, [conversationId, currentUserId, markLatestRead]);
 
   // Load available users when invite panel opens
   useEffect(() => {
@@ -146,22 +198,71 @@ export default function DmChatView({
     }
   }, [loadOlder]);
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []).filter((f) => ALLOWED_TYPES.has(f.type));
+    setPendingFiles((prev) => [...prev, ...files].slice(0, MAX_ATTACHMENTS));
+    e.target.value = "";
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const files = Array.from(e.dataTransfer.files).filter((f) => ALLOWED_TYPES.has(f.type));
+    if (files.length > 0) setPendingFiles((prev) => [...prev, ...files].slice(0, MAX_ATTACHMENTS));
+  };
+
   // Send a new message
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     const text = composerText.trim();
-    if (!text || sending) return;
+    const filesToUpload = [...pendingFiles];
+    if ((!text && filesToUpload.length === 0) || sending) return;
     setSending(true);
+
+    const tempId = `pending-${Date.now()}`;
+    const blobUrls = filesToUpload.map((f) => URL.createObjectURL(f));
+
+    const optimistic: LocalMessage = {
+      messageId: tempId,
+      conversationId,
+      authorId: currentUserId,
+      content: text || "​",
+      attachmentKeys: [],
+      attachmentUrls: blobUrls,
+      createdAt: new Date().toISOString(),
+      timeuuid: "",
+      updatedAt: null,
+      deleted: false,
+      pending: true,
+    };
+
+    setMessages((prev) => [optimistic, ...prev]);
+    setComposerText("");
+    setPendingFiles([]);
+    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+
     try {
-      const msg = await sendMessage(conversationId, text);
-      setMessages((prev) =>
-        prev.some((m) => m.messageId === msg.messageId) ? prev : [msg, ...prev]
-      );
-      setComposerText("");
+      let attachmentKeys: string[] = [];
+      if (filesToUpload.length > 0) {
+        const presigned = await presignAttachments(
+          filesToUpload.map((f) => ({ filename: f.name, contentType: f.type }))
+        );
+        await Promise.all(presigned.map((p, i) => uploadToMinIO(p.uploadUrl, filesToUpload[i])));
+        attachmentKeys = presigned.map((p) => p.key);
+      }
+
+      const msg = await sendMessage(conversationId, text || "​", attachmentKeys);
+      setMessages((prev) => {
+        const without = prev.filter((m) => m.messageId !== tempId);
+        if (without.some((m) => m.messageId === msg.messageId)) return without;
+        return [msg, ...without];
+      });
+      blobUrls.forEach((url) => URL.revokeObjectURL(url));
       void markLatestRead(msg);
-      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
     } catch {
-      // ignore
+      setMessages((prev) =>
+        prev.map((m) => m.messageId === tempId ? { ...m, pending: false, uploadFailed: true } : m)
+      );
+      blobUrls.forEach((url) => URL.revokeObjectURL(url));
     } finally {
       setSending(false);
     }
@@ -174,7 +275,7 @@ export default function DmChatView({
     const msg = messages.find((m) => m.messageId === messageId);
     if (!msg?.timeuuid) return;
     try {
-      const updated = await editMessage(conversationId, messageId, text, msg.timeuuid);
+      const updated = await editMessage(conversationId, text, msg.timeuuid);
       setMessages((prev) => prev.map((m) => (m.messageId === updated.messageId ? updated : m)));
       setEditingId(null);
       setEditText("");
@@ -186,7 +287,7 @@ export default function DmChatView({
   const handleDelete = async (msg: DmMessage) => {
     if (!msg.timeuuid) return;
     try {
-      await deleteMessage(conversationId, msg.messageId, msg.timeuuid);
+      await deleteMessage(conversationId, msg.timeuuid);
       setMessages((prev) =>
         prev.map((m) =>
           m.messageId === msg.messageId ? { ...m, deleted: true, content: "", attachmentKeys: [], attachmentUrls: [] } : m
@@ -203,7 +304,10 @@ export default function DmChatView({
     const e = wsEvent as Record<string, unknown>;
     if (e.conversationId !== conversationId) return;
 
-    if (e.type === "dm:message:create") {
+    if (e.type === "dm:new_message") {
+      const hintAuthorId = typeof e.authorId === "string" ? e.authorId : undefined;
+      void refreshFromHint(hintAuthorId);
+    } else if (e.type === "dm:message:create") {
       const raw = e.message as Record<string, unknown>;
       const msg: DmMessage = {
         messageId: String(raw.messageId),
@@ -211,14 +315,22 @@ export default function DmChatView({
         authorId: String(raw.authorId),
         content: String(raw.content ?? ""),
         attachmentKeys: Array.isArray(raw.attachmentKeys) ? (raw.attachmentKeys as string[]) : [],
-        attachmentUrls: Array.isArray(raw.attachmentUrls) ? (raw.attachmentUrls as string[]) : [],
+        // backend publishes URLs as "attachments"; fall back to "attachmentUrls" for forward compat
+        attachmentUrls: Array.isArray(raw.attachmentUrls) ? (raw.attachmentUrls as string[]) :
+                        Array.isArray(raw.attachments) ? (raw.attachments as string[]) : [],
         createdAt: String(raw.createdAt ?? ""),
         timeuuid: String(raw.timeuuid ?? ""),
         updatedAt: null,
         deleted: false,
       };
       setMessages((prev) => {
-        if (prev.some((m) => m.messageId === msg.messageId)) return prev;
+        const existing = prev.find((m) => m.messageId === msg.messageId);
+        if (existing) {
+          // API response may have arrived first with empty attachmentUrls (race); patch it
+          if (existing.attachmentUrls.length === 0 && msg.attachmentUrls.length > 0)
+            return prev.map((m) => m.messageId === msg.messageId ? { ...m, attachmentUrls: msg.attachmentUrls } : m);
+          return prev;
+        }
         return [msg, ...prev];
       });
       if (atBottomRef.current || raw.authorId === currentUserId) {
@@ -243,7 +355,8 @@ export default function DmChatView({
         )
       );
     } else if (e.type === "dm:message:delete") {
-      const deletedId = String(e.messageId ?? "");
+      const raw = e.message as Record<string, unknown> | undefined;
+      const deletedId = String(raw?.id ?? raw?.messageId ?? e.id ?? e.messageId ?? "");
       setMessages((prev) =>
         prev.map((m) =>
           m.messageId === deletedId ? { ...m, deleted: true, content: "", attachmentKeys: [], attachmentUrls: [] } : m
@@ -256,7 +369,7 @@ export default function DmChatView({
         setReadStateByUserId((prev) => ({ ...prev, [userId]: timeuuid }));
       }
     }
-  }, [wsEvent, conversationId, currentUserId, markLatestRead]);
+  }, [wsEvent, conversationId, currentUserId, markLatestRead, refreshFromHint]);
 
   const handleInvite = async (userId: string) => {
     setInviting(true);
@@ -299,7 +412,7 @@ export default function DmChatView({
   }
 
   return (
-    <section className="flex-1 flex min-w-0">
+    <section className="flex-1 flex min-w-0" onDragOver={(e) => e.preventDefault()} onDrop={handleDrop}>
       <div className="flex-1 bg-surface-container flex flex-col relative min-w-0">
       {/* Header */}
       <header className="h-16 flex items-center justify-between px-6 w-full bg-[#171a1f]/60 backdrop-blur-xl shadow-sm z-10">
@@ -397,9 +510,14 @@ export default function DmChatView({
               .filter((u) => {
                 if (!inviteSearch.trim()) return true;
                 const q = inviteSearch.toLowerCase();
-                return u.username.toLowerCase().includes(q) || u.profile.displayName.toLowerCase().includes(q);
+                const label = displayNameForDmUser(u);
+                return (
+                  u.username.toLowerCase().includes(q) || label.toLowerCase().includes(q)
+                );
               })
-              .map((u) => (
+              .map((u) => {
+                const inviteLabel = displayNameForDmUser(u);
+                return (
                 <button
                   key={u.internal_id}
                   type="button"
@@ -408,15 +526,16 @@ export default function DmChatView({
                   className="flex items-center gap-3 w-full px-3 py-2 text-on-surface hover:bg-surface-variant/50 transition-colors disabled:opacity-50"
                 >
                   <div className="w-7 h-7 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant text-xs flex-shrink-0">
-                    {u.profile.displayName.slice(0, 2).toUpperCase()}
+                    {inviteLabel.slice(0, 2).toUpperCase()}
                   </div>
                   <div className="flex flex-col items-start min-w-0">
-                    <span className="text-sm truncate">{u.profile.displayName}</span>
+                    <span className="text-sm truncate">{inviteLabel}</span>
                     <span className="text-[10px] text-on-surface-variant truncate">{u.username}</span>
                   </div>
                   <span className="material-symbols-outlined text-[18px] text-on-surface-variant ml-auto">person_add</span>
                 </button>
-              ))}
+                );
+              })}
             {inviteUsers.filter((u) => !participantSet.has(u.internal_id)).length === 0 && (
               <p className="px-3 py-3 text-sm text-on-surface-variant text-center">No users available to invite.</p>
             )}
@@ -574,15 +693,33 @@ export default function DmChatView({
                     {m.attachmentUrls && m.attachmentUrls.length > 0 && (
                       <div className="flex flex-wrap gap-2 mt-2">
                         {m.attachmentUrls.map((url, i) => (
-                          <a key={i} href={url} target="_blank" rel="noopener noreferrer">
+                          m.pending ? (
                             <img
+                              key={i}
                               src={url}
                               alt={`attachment ${i + 1}`}
-                              className="max-h-48 max-w-xs rounded-lg object-cover cursor-pointer hover:opacity-90"
+                              className="max-h-48 max-w-xs rounded-lg object-cover opacity-60"
                             />
-                          </a>
+                          ) : (
+                            <a key={i} href={url} target="_blank" rel="noopener noreferrer">
+                              <img
+                                src={url}
+                                alt={`attachment ${i + 1}`}
+                                className="max-h-48 max-w-xs rounded-lg object-cover cursor-pointer hover:opacity-90"
+                              />
+                            </a>
+                          )
                         ))}
                       </div>
+                    )}
+                    {m.pending && (
+                      <p className="text-[10px] text-on-surface-variant italic mt-1">Sending…</p>
+                    )}
+                    {m.uploadFailed && (
+                      <p className="text-[10px] text-error mt-1 flex items-center gap-1">
+                        <span className="material-symbols-outlined text-sm">error</span>
+                        Failed to send
+                      </p>
                     )}
                   </>
                 )}
@@ -596,8 +733,45 @@ export default function DmChatView({
       </div>
 
       {/* Composer */}
-      <div className="p-4 border-t border-outline-variant/20">
-        <form onSubmit={handleSend} className="flex items-center gap-3">
+      <div className="border-t border-outline-variant/20" onDragOver={(e) => e.preventDefault()} onDrop={handleDrop}>
+        {pendingFiles.length > 0 && (
+          <div className="px-4 pt-2 flex gap-2 flex-wrap">
+            {pendingFiles.map((f, i) => (
+              <div key={i} className="relative">
+                <img
+                  src={URL.createObjectURL(f)}
+                  alt={f.name}
+                  className="h-16 w-16 rounded object-cover"
+                />
+                <button
+                  type="button"
+                  onClick={() => setPendingFiles((prev) => prev.filter((_, idx) => idx !== i))}
+                  className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full text-white text-[10px] flex items-center justify-center"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <form onSubmit={handleSend} className="p-4 flex items-center gap-3">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/gif,image/webp"
+            multiple
+            className="hidden"
+            onChange={handleFileChange}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={pendingFiles.length >= MAX_ATTACHMENTS}
+            className="material-symbols-outlined text-on-surface-variant hover:text-on-surface disabled:opacity-30 flex-shrink-0"
+            title="Attach image"
+          >
+            attach_file
+          </button>
           <input
             className="flex-1 bg-surface-container-lowest border-none rounded-lg px-4 py-2 text-sm text-on-surface placeholder:text-on-surface-variant focus:ring-1 focus:ring-primary"
             placeholder={`Message ${label}`}
@@ -607,7 +781,7 @@ export default function DmChatView({
           />
           <button
             type="submit"
-            disabled={sending || !composerText.trim()}
+            disabled={sending || (!composerText.trim() && pendingFiles.length === 0)}
             className="material-symbols-outlined text-on-surface-variant hover:text-on-surface cursor-pointer disabled:opacity-50"
           >
             send

@@ -1,4 +1,4 @@
-import { DmUser } from "../api/auth";
+import { DmUser, displayNameForDmUser } from "../api/auth";
 import { Conversation } from "../api/dms";
 import { PresenceState } from "../hooks/usePresence";
 import UserPresence from "./UserPresence";
@@ -59,11 +59,11 @@ export default function DmList({
           : undefined;
         const otherUser = otherId ? userMap.get(otherId) : undefined;
 
-        const displayName = otherUser?.profile.displayName
-          ?? otherUser?.username
-          ?? (c.name ?? (c.conversationType === "one_to_one" ? "Direct Message" : "Group DM"));
+        const displayName = otherUser
+          ? displayNameForDmUser(otherUser)
+          : (c.name ?? (c.conversationType === "one_to_one" ? "Direct Message" : "Group DM"));
 
-        const avatarUrl = otherUser?.profile.avatar ?? undefined;
+        const avatarUrl = otherUser?.profile?.avatar ?? undefined;
         const presence = otherId ? getPresence(otherId) : { status: "offline" as const };
 
         return (

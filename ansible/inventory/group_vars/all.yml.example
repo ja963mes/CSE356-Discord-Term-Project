@@ -1,0 +1,29 @@
+repo_url: "https://github.com/ja963mes/CSE356-Discord-Term-Project.git"
+deploy_branch: "main-dev"
+deploy_user: "deploy"
+deploy_path: "/home/deploy/CSE356-Discord-Term-Project"
+
+# Set this only if you want Ansible to manage deploy SSH keys.
+# deploy_public_key: "ssh-ed25519 AAAA... your-key-comment"
+
+frontend_web_root: "/var/www/discord-frontend"
+# Keep nginx config files stable on routine deploys; set true for bootstrap/config rollout.
+manage_nginx_config: false
+
+# Path is relative to repo root when running ansible-playbook from ./ansible.
+frontend_nginx_conf_src: "../docs/nginx/production-frontend.conf.example"
+backend_nginx_conf_src: "../docs/nginx/production-backend.conf.example"
+
+# Backend vs realtime: group_vars/backend.yml + roles/backend; realtime group_vars/realtime.yml + roles/realtime.
+
+# Search VM service(s) and workspace build list.
+search_systemd_services:
+  - discord-search
+search_workspace_build_commands:
+  - npm run build --workspace search-service
+
+# Optional: deploy Zabbix agent 2 to all managed VMs.
+# Flip on after you have a reachable Zabbix server.
+# manage_zabbix_agent: true
+# zabbix_agent_server: "10.0.3.180"
+# zabbix_agent_server_active: "{{ zabbix_agent_server }}"

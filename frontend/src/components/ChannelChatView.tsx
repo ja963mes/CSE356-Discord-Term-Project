@@ -56,16 +56,23 @@ export default function ChannelChatView({
   const atBottomRef = useRef(true);
   const lastMarkedRef = useRef<string | null>(null);
 
+  /** Parent often passes a new callback when unread maps change; keep stable deps so we do not re-fetch in a loop. */
+  const onReadStateUpdatedRef = useRef(onReadStateUpdated);
+  useEffect(() => {
+    onReadStateUpdatedRef.current = onReadStateUpdated;
+  }, [onReadStateUpdated]);
+
   const markLatestRead = useCallback(async (message: Message | null | undefined) => {
     if (!message?.id || !message.timeuuid || lastMarkedRef.current === message.id) return;
     const ok = await markChannelRead(channelId, message.id, message.timeuuid);
     if (!ok) return;
     lastMarkedRef.current = message.id;
-    onReadStateUpdated?.(channelId, message.id, message.timeuuid);
-  }, [channelId, onReadStateUpdated]);
+    onReadStateUpdatedRef.current?.(channelId, message.id, message.timeuuid);
+  }, [channelId]);
 
-  // Load initial messages when channel changes
+  // Load initial messages when channel changes (deps: channelId only — avoid refetch storms when parent callbacks change)
   useEffect(() => {
+    let cancelled = false;
     setMessages([]);
     setOldestTimeuuid(null);
     setHasMore(true);
@@ -76,14 +83,27 @@ export default function ChannelChatView({
 
     getMessages(channelId)
       .then((msgs) => {
+        if (cancelled) return;
         setMessages(msgs);
         if (msgs.length > 0) setOldestTimeuuid(msgs[0].timeuuid);
         if (msgs.length < 50) setHasMore(false);
-        void markLatestRead(msgs[msgs.length - 1] ?? null);
+        const last = msgs[msgs.length - 1] ?? null;
+        if (last?.id && last?.timeuuid) {
+          void markChannelRead(channelId, last.id, last.timeuuid).then((ok) => {
+            if (!ok || cancelled) return;
+            lastMarkedRef.current = last.id;
+            onReadStateUpdatedRef.current?.(channelId, last.id, last.timeuuid);
+          });
+        }
         setTimeout(() => bottomRef.current?.scrollIntoView(), 50);
       })
-      .catch(() => setMessages([]));
-  }, [channelId, markLatestRead]);
+      .catch(() => {
+        if (!cancelled) setMessages([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [channelId]);
 
   // Infinite scroll — load older messages
   const loadOlder = useCallback(async () => {
@@ -154,8 +174,13 @@ export default function ChannelChatView({
         )
       );
     } else if (e.type === "channel:message:delete") {
-      const messageId = String(e.messageId ?? "");
-      setMessages((prev) => prev.filter((m) => m.id !== messageId));
+      const raw = e.message as Record<string, unknown> | undefined;
+      const messageId = String(raw?.id ?? raw?.messageId ?? e.id ?? e.messageId ?? "");
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === messageId ? { ...m, deleted: true, content: "", attachmentKeys: [], attachmentUrls: [] } : m
+        )
+      );
     }
   }, [wsEvent, channelId, markLatestRead]);
 
@@ -213,7 +238,13 @@ export default function ChannelChatView({
   // Delete message
   const handleDelete = async (msg: Message) => {
     const ok = await deleteChannelMessage(channelId, msg.timeuuid);
-    if (ok) setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+    if (ok) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === msg.id ? { ...m, deleted: true, content: "", attachmentKeys: [], attachmentUrls: [] } : m
+        )
+      );
+    }
   };
 
   // File picker
@@ -225,8 +256,18 @@ export default function ChannelChatView({
     e.target.value = "";
   };
 
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const files = Array.from(e.dataTransfer.files).filter((f) => ALLOWED_TYPES.has(f.type));
+    if (files.length > 0) setPendingFiles((prev) => [...prev, ...files].slice(0, MAX_ATTACHMENTS));
+  };
+
   return (
-    <section className="flex-1 bg-surface-container flex flex-col relative min-w-0">
+    <section
+      className="flex-1 bg-surface-container flex flex-col relative min-w-0"
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={handleDrop}
+    >
       {/* Header */}
       <header className="h-16 flex items-center px-6 w-full bg-[#171a1f]/60 backdrop-blur-xl shadow-sm z-10 gap-3">
         <span className="material-symbols-outlined text-on-surface-variant shrink-0">
@@ -324,7 +365,7 @@ export default function ChannelChatView({
                   <span className="text-[10px] text-on-surface-variant">
                     {new Date(m.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                   </span>
-                  {isOwn && !isEditing && (
+                  {isOwn && !isEditing && !m.deleted && (
                     <div className="hidden group-hover:flex items-center gap-1 ml-auto">
                       <button
                         type="button"
@@ -346,7 +387,9 @@ export default function ChannelChatView({
                   )}
                 </div>
 
-                {isEditing ? (
+                {m.deleted ? (
+                  <p className="text-sm italic text-on-surface-variant mt-1">{m.author} has deleted this message</p>
+                ) : isEditing ? (
                   <div className="flex gap-2 mt-1 items-center">
                     <input
                       className="flex-1 bg-surface-container-lowest border-none rounded-lg px-3 py-1.5 text-sm text-on-surface focus:ring-1 focus:ring-primary"

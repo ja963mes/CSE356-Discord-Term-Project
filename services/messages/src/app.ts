@@ -1,6 +1,7 @@
 /// <reference path="./types/express.d.ts" />
-import express, { Request, Response } from "express";
+import express, { Request, Response, NextFunction } from "express";
 import cookieParser from "cookie-parser";
+import { httpLogger, logRouteError, logger } from "./logger";
 import { eq, and } from "drizzle-orm";
 import { db } from "./db";
 import { requireAuth } from "./middleware/session";
@@ -21,6 +22,7 @@ import { types } from "cassandra-driver";
 export const app = express();
 app.use(express.json());
 app.use(cookieParser());
+app.use(httpLogger);
 
 const MAX_CONTENT = 4000;
 const DEFAULT_LIMIT = 50;
@@ -67,12 +69,12 @@ async function assertChannelAccess(
   return { ok: true, channel: { id: ch.id, community_id: ch.community_id } };
 }
 
-app.get("/health", async (_req, res) => {
+app.get("/health", async (req, res) => {
   try {
     await cassandra.execute("SELECT release_version FROM system.local");
     res.json({ status: "ok", service: "messages-service", storage: "cassandra" });
   } catch (e) {
-    console.error(e);
+    logRouteError("GET /health cassandra ping failed", e, { reqId: req.id });
     res.status(503).json({ status: "degraded", service: "messages-service", storage: "cassandra_unreachable" });
   }
 });
@@ -163,14 +165,20 @@ app.post("/messages", requireAuth, async (req: Request, res: Response) => {
   }
 
   const userId = req.user!.internal_id;
+  // Per-stage timing: nanosecond hrtime deltas to a single structured log so
+  // we can pinpoint which phase dominates p95. Replaces the previous trio of
+  // received/stored/published ISO-timestamp logs.
+  const tStart = process.hrtime.bigint();
   const access = await assertChannelAccess(userId, channelId);
   if (!access.ok) {
     res.status(access.status).json({ error: access.status === 404 ? "Channel not found" : "Forbidden" });
     return;
   }
+  const tAccess = process.hrtime.bigint();
 
   const [author] = await db.select({ username: users.username }).from(users).where(eq(users.internal_id, userId)).limit(1);
   const authorUsername = author?.username ?? "unknown";
+  const tAuthor = process.hrtime.bigint();
 
   const { messageId, createdAt } = await insertChannelMessage({
     channelId,
@@ -180,6 +188,7 @@ app.post("/messages", requireAuth, async (req: Request, res: Response) => {
     content,
     attachmentKeys,
   });
+  const tInsert = process.hrtime.bigint();
 
   const message = {
     id: messageId,
@@ -201,8 +210,28 @@ app.post("/messages", requireAuth, async (req: Request, res: Response) => {
     communityId: access.channel.community_id,
     message,
   });
+  const tPublish = process.hrtime.bigint();
 
   res.status(201).json({ message });
+
+  const ms = (a: bigint, b: bigint): number => Number(a - b) / 1e6;
+  logger.info(
+    {
+      userId,
+      channelId,
+      messageId,
+      timeuuid: createdAt.toString(),
+      access_ms: ms(tAccess, tStart),
+      author_ms: ms(tAuthor, tAccess),
+      insert_ms: ms(tInsert, tAuthor),
+      publish_ms: ms(tPublish, tInsert),
+      total_ms: ms(tPublish, tStart),
+      // Wall-clock so realtime fanout logs can be correlated. The Cassandra
+      // createdAt timeuuid is the authoritative pivot if log clocks drift.
+      publishedAt: new Date().toISOString(),
+    },
+    "POST /messages timing"
+  );
 });
 
 app.patch("/messages/:channelId/:timeuuid", requireAuth, async (req: Request, res: Response) => {
@@ -309,9 +338,40 @@ app.delete("/messages/:channelId/:timeuuid", requireAuth, async (req: Request, r
     channelId,
     communityId: access.channel.community_id,
     messageId: existing.messageId,
+    id: existing.messageId,
     timeuuid: timeuuidParam,
     authorId: userId,
+    message: {
+      id: existing.messageId,
+      messageId: existing.messageId,
+      timeuuid: timeuuidParam,
+      authorId: userId,
+    },
   });
 
   res.status(204).send();
+});
+
+app.post("/internal/log-level", (req: Request, res: Response) => {
+  const { level } = req.body as { level?: string };
+  const valid = ["trace", "debug", "info", "warn", "error", "fatal"];
+  if (!level || !valid.includes(level)) {
+    res.status(400).json({ error: `level must be one of: ${valid.join(", ")}` });
+    return;
+  }
+  logger.level = level;
+  res.json({ level: logger.level });
+});
+
+app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+  if (res.headersSent) {
+    next(err);
+    return;
+  }
+  logRouteError("Unhandled route error", err, {
+    reqId: req.id,
+    method: req.method,
+    path: req.path,
+  });
+  res.status(500).json({ error: "Internal server error" });
 });

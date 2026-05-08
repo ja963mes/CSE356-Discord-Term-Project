@@ -1,14 +1,35 @@
 import Redis from "ioredis";
+import { CHANNEL_EVENTS, COMMUNITY_EVENTS, DM_EVENTS, subscribeChannelEvents } from "@discord/pubsub";
 import { env } from "./env";
+import { kvCacheRedis } from "./redis";
 import { indexMessage, updateContent, markDeleted, deleteByScope } from "./elasticsearch";
+import { deleteCommunityDirectory, indexCommunityDirectory } from "./communitiesIndex";
+import { logger } from "./logger";
+
+/** Must match `services/communities/src/readCache.ts` — invalidates GET /search-communities Redis cache. */
+const COMMUNITIES_DIRECTORY_EPOCH_KEY = "comm:e:dir";
+
+async function bumpCommunitiesDirectorySearchEpoch(): Promise<void> {
+  try {
+    await kvCacheRedis.incr(COMMUNITIES_DIRECTORY_EPOCH_KEY);
+  } catch (e) {
+    logger.warn({ err: e }, "bump directory search epoch failed");
+  }
+}
 import { db } from "./db";
 import { users, channels } from "./db/schema";
 import { eq } from "drizzle-orm";
 
-const sub = new Redis(env.REDIS_URL);
+// msgSub: pubsub shard 0 — even-hashed channel:events + dm:events.
+// metaSub: pubsub shard 1 — odd-hashed channel:events + community:events.
+const msgSub = new Redis(env.REDIS_URL, { enableReadyCheck: false });
+const metaSub = new Redis(env.META_REDIS_URL, { enableReadyCheck: false });
 
-sub.on("connect", () => console.log("[search] Redis subscriber connected"));
-sub.on("error", (err) => console.error("[search] Redis subscriber error:", err));
+for (const [name, client] of [["msg-sub", msgSub], ["meta-sub", metaSub]] as const) {
+  client.on("connect", () => logger.info({ sub: name }, "redis subscriber connected"));
+  client.on("reconnecting", () => logger.warn({ sub: name }, "redis subscriber reconnecting"));
+  client.on("error", (err) => logger.error({ err, sub: name }, "redis subscriber error"));
+}
 
 // Simple in-memory cache for username lookups
 const usernameCache = new Map<string, { username: string; ts: number }>();
@@ -127,8 +148,24 @@ async function handleDmEvent(data: any): Promise<void> {
 }
 
 async function handleCommunityEvent(data: any): Promise<void> {
-  if (data.type === "community:channel:delete") {
-    await deleteByScope(data.channelId);
+  switch (data.type) {
+    case "community:channel:delete":
+      await deleteByScope(data.channelId);
+      break;
+    case "community:directory:upsert":
+      await indexCommunityDirectory({
+        community_id: data.communityId,
+        name: data.name,
+        created_at: data.created_at,
+      });
+      await bumpCommunitiesDirectorySearchEpoch();
+      break;
+    case "community:directory:delete":
+      await deleteCommunityDirectory(data.communityId);
+      await bumpCommunitiesDirectorySearchEpoch();
+      break;
+    default:
+      break;
   }
 }
 
@@ -137,7 +174,7 @@ function onMessage(channel: string, message: string): void {
   try {
     data = JSON.parse(message);
   } catch {
-    console.error("[search] Failed to parse event from", channel);
+    logger.warn({ channel }, "failed to parse pubsub event");
     return;
   }
 
@@ -157,12 +194,20 @@ function onMessage(channel: string, message: string): void {
   }
 
   promise.catch((err) => {
-    console.error("[search] Error handling event", data?.type, err);
+    logger.error({ err, channel, eventType: data?.type }, "error handling pubsub event");
   });
 }
 
 export async function startSubscriber(): Promise<void> {
-  await sub.subscribe("channel:events", "dm:events", "community:events");
-  sub.on("message", onMessage);
-  console.log("[search] Subscribed to channel:events, dm:events, community:events");
+  // channel:events shard fan-out is owned by @discord/pubsub. Subscribe shard 0
+  // (msgSub) and shard 1 (metaSub) — adding shards = bump constant in shared module.
+  await subscribeChannelEvents([msgSub, metaSub]);
+  await msgSub.subscribe(DM_EVENTS);
+  await metaSub.subscribe(COMMUNITY_EVENTS);
+  msgSub.on("message", onMessage);
+  metaSub.on("message", onMessage);
+  logger.info(
+    { msg: [CHANNEL_EVENTS, DM_EVENTS], meta: [CHANNEL_EVENTS, COMMUNITY_EVENTS] },
+    "subscribed to pubsub channels"
+  );
 }

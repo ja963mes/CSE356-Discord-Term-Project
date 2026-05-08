@@ -33,7 +33,12 @@ export async function ensureIndex(): Promise<void> {
     await esClient.indices.create({ index: INDEX, ...INDEX_SETTINGS });
     console.log(`[search] Created ES index "${INDEX}"`);
   } else {
-    console.log(`[search] ES index "${INDEX}" already exists`);
+    // Always update mapping so new/changed fields are applied
+    await esClient.indices.putMapping({
+      index: INDEX,
+      ...INDEX_SETTINGS.mappings,
+    });
+    console.log(`[search] ES index "${INDEX}" already exists — mapping updated`);
   }
 }
 
@@ -56,6 +61,7 @@ export async function indexMessage(doc: MessageDoc): Promise<void> {
     index: INDEX,
     id: doc.message_id,
     document: doc,
+    refresh: false,
   });
 }
 
@@ -65,6 +71,7 @@ export async function updateContent(messageId: string, content: string, editedAt
       index: INDEX,
       id: messageId,
       doc: { content, updated_at: editedAt },
+      refresh: false,
     });
   } catch (err: any) {
     if (err?.meta?.statusCode === 404) return;
@@ -78,6 +85,7 @@ export async function markDeleted(messageId: string): Promise<void> {
       index: INDEX,
       id: messageId,
       doc: { is_deleted: true, content: "" },
+      refresh: false,
     });
   } catch (err: any) {
     if (err?.meta?.statusCode === 404) return;
@@ -122,7 +130,22 @@ export async function searchMessages(params: SearchParams): Promise<{ total: num
     return { total: 0, results: [] };
   }
 
-  const must: object[] = [{ match: { content: { query: params.query, fuzziness: "AUTO" } } }];
+  // operator:"and" — every query term must match. Default OR returned docs
+  // matching any single word, e.g. "akko lavender purple" hit a doc with only
+  // "purple". prefix_length pins the first character so fuzziness:1 doesn't
+  // drift the leading letter.
+  const must: object[] = [
+    {
+      match: {
+        content: {
+          query: params.query,
+          operator: "and",
+          fuzziness: 1,
+          prefix_length: 1,
+        },
+      },
+    },
+  ];
 
   const filter: object[] = [
     { terms: { scope_id: params.scopeIds } },

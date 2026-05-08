@@ -1,0 +1,17 @@
+# Handlers for the messages play (this play does not always include the common role;
+# same names as common/realtime so notify works the same when roles run separately.)
+- name: Restart journald
+  ansible.builtin.systemd:
+    name: systemd-journald
+    state: restarted
+
+- name: Restart nginx
+  ansible.builtin.systemd:
+    name: nginx
+    state: restarted
+
+- name: Reload systemd and restart nginx
+  ansible.builtin.systemd:
+    name: nginx
+    state: restarted
+    daemon_reload: true

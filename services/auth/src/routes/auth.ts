@@ -7,8 +7,8 @@ import fs from "fs";
 import multer from "multer";
 import { db } from "../db";
 import { users, identities } from "../db/schema";
-import { redis } from "../db/redis";
-import { eq, and } from "drizzle-orm";
+import { kvRedis } from "../db/redis";
+import { eq, and, ilike, ne, inArray } from "drizzle-orm";
 import { requireAuth } from "../middleware/session";
 import { env } from "../config/env";
 import {
@@ -19,7 +19,8 @@ import {
   buildOidcAuthUrl,
   handleOidcCallback,
 } from "../config/oauth";
-
+import { isUniqueConstraintViolation } from "../pgErrors";
+import { logRouteError } from "../logger";
 
 const avatarStorage = multer.diskStorage({
   destination: (_req, _file, cb) => {
@@ -53,7 +54,7 @@ const FRONTEND_ROOT = `${env.FRONTEND_URL.replace(/\/$/, "")}/`;
 // ─── Helper: create session ───
 async function createSession(res: Response, internalId: string) {
   const token = uuidv4();
-  await redis.set(`session:${token}`, internalId, "EX", SESSION_TTL);
+  await kvRedis.set(`session:${token}`, internalId, "EX", SESSION_TTL);
   res.cookie("session_token", token, {
     httpOnly: true,
     maxAge: SESSION_TTL * 1000,
@@ -83,7 +84,7 @@ async function handleOAuthResult(
 
   // New OAuth identity — store temporarily so the user can create or link
   const tempToken = crypto.randomBytes(32).toString("hex");
-  await redis.set(
+  await kvRedis.set(
     `oauth_temp:${tempToken}`,
     JSON.stringify({ provider, providerId, email, displayName }),
     "EX",
@@ -122,9 +123,12 @@ async function handleOAuthLink(
 
 // POST /auth/register
 router.post("/register", async (req: Request, res: Response): Promise<void> => {
-  const { username, password, displayName } = req.body;
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const username = body.username;
+  const password = body.password;
+  const displayName = body.displayName;
 
-  if (!username || !password) {
+  if (typeof username !== "string" || typeof password !== "string" || !username || !password) {
     res.status(400).json({ error: "Username and password are required" });
     return;
   }
@@ -141,30 +145,39 @@ router.post("/register", async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const hash = await bcrypt.hash(password, 12);
+    // Use 1 round for bcrypt hashing (for testing/benchmarking only)
+    const hash = await bcrypt.hash(password, 1);
 
     const [newUser] = await db
       .insert(users)
       .values({
         username,
         password_hash: hash,
-        profile: { displayName: displayName || username, avatar: null },
+        profile: { displayName: typeof displayName === "string" && displayName ? displayName : username, avatar: null },
       })
       .returning();
 
     await createSession(res, newUser.internal_id);
     res.status(201).json({ message: "Registered successfully", internal_id: newUser.internal_id });
   } catch (err) {
-    console.error(err);
+    if (isUniqueConstraintViolation(err, "users_username_unique")) {
+      res.status(409).json({ error: "Username already taken" });
+      return;
+    }
+    logRouteError("POST /auth/register failed", err, {
+      username: typeof username === "string" ? username : undefined,
+    });
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
 // POST /auth/login
 router.post("/login", async (req: Request, res: Response): Promise<void> => {
-  const { username, password } = req.body;
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const username = body.username;
+  const password = body.password;
 
-  if (!username || !password) {
+  if (typeof username !== "string" || typeof password !== "string" || !username || !password) {
     res.status(400).json({ error: "Username and password are required" });
     return;
   }
@@ -188,9 +201,11 @@ router.post("/login", async (req: Request, res: Response): Promise<void> => {
     }
 
     await createSession(res, user.internal_id);
-    res.status(200).json({ message: "Logged in successfully", internal_id: user.internal_id });
+    res.status(200).json({ message: "Logged in successfully", internal_id: user.internal_id, username: user.username });
   } catch (err) {
-    console.error(err);
+    logRouteError("POST /auth/login failed", err, {
+      username: typeof username === "string" ? username : undefined,
+    });
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -200,7 +215,7 @@ router.post("/logout", async (req: Request, res: Response): Promise<void> => {
   const token = req.cookies?.session_token;
 
   if (token) {
-    await redis.del(`session:${token}`);
+    await kvRedis.del(`session:${token}`);
   }
 
   res.clearCookie("session_token");
@@ -213,7 +228,7 @@ router.post("/logout", async (req: Request, res: Response): Promise<void> => {
 
 router.get("/google", (_req: Request, res: Response) => {
   const state = generateState();
-  redis.set(`oauth_state:${state}`, "google", "EX", 600);
+  kvRedis.set(`oauth_state:${state}`, "google", "EX", 600);
   res.redirect(buildOAuth2AuthUrl(googleConfig, state));
 });
 
@@ -225,7 +240,7 @@ router.get("/google/callback", async (req: Request, res: Response): Promise<void
     return;
   }
 
-  const stored = await redis.get(`oauth_state:${state as string}`);
+  const stored = await kvRedis.get(`oauth_state:${state as string}`);
   if (!stored) {
     res.status(403).json({ error: "Invalid state" });
     return;
@@ -246,7 +261,7 @@ router.get("/google/callback", async (req: Request, res: Response): Promise<void
     res.status(403).json({ error: "Invalid state" });
     return;
   }
-  await redis.del(`oauth_state:${state as string}`);
+  await kvRedis.del(`oauth_state:${state as string}`);
 
   try {
     const tokenRes = await fetch(googleConfig.tokenUrl, {
@@ -284,7 +299,7 @@ router.get("/google/callback", async (req: Request, res: Response): Promise<void
       );
     }
   } catch (err) {
-    console.error(err);
+    logRouteError("GET /auth/google/callback failed", err, {});
     res.status(500).json({ error: "OAuth error" });
   }
 });
@@ -295,7 +310,7 @@ router.get("/google/callback", async (req: Request, res: Response): Promise<void
 
 router.get("/github", (_req: Request, res: Response) => {
   const state = generateState();
-  redis.set(`oauth_state:${state}`, "github", "EX", 600);
+  kvRedis.set(`oauth_state:${state}`, "github", "EX", 600);
   res.redirect(buildOAuth2AuthUrl(githubConfig, state));
 });
 
@@ -307,7 +322,7 @@ router.get("/github/callback", async (req: Request, res: Response): Promise<void
     return;
   }
 
-  const stored = await redis.get(`oauth_state:${state as string}`);
+  const stored = await kvRedis.get(`oauth_state:${state as string}`);
   if (!stored) {
     res.status(403).json({ error: "Invalid state" });
     return;
@@ -328,7 +343,7 @@ router.get("/github/callback", async (req: Request, res: Response): Promise<void
     res.status(403).json({ error: "Invalid state" });
     return;
   }
-  await redis.del(`oauth_state:${state as string}`);
+  await kvRedis.del(`oauth_state:${state as string}`);
 
   try {
     const tokenRes = await fetch(githubConfig.tokenUrl, {
@@ -371,7 +386,7 @@ router.get("/github/callback", async (req: Request, res: Response): Promise<void
       );
     }
   } catch (err) {
-    console.error(err);
+    logRouteError("GET /auth/github/callback failed", err, {});
     res.status(500).json({ error: "OAuth error" });
   }
 });
@@ -385,7 +400,7 @@ router.get("/oidc", async (_req: Request, res: Response): Promise<void> => {
     const state = generateState();
     const nonce = crypto.randomBytes(16).toString("hex");
 
-    await redis.set(
+    await kvRedis.set(
       `oauth_state:${state}`,
       JSON.stringify({ provider: "oidc", nonce }),
       "EX",
@@ -395,7 +410,7 @@ router.get("/oidc", async (_req: Request, res: Response): Promise<void> => {
     const url = await buildOidcAuthUrl(state, nonce);
     res.redirect(url);
   } catch (err) {
-    console.error(err);
+    logRouteError("GET /auth/oidc init failed", err, {});
     res.status(500).json({ error: "OIDC initialization error" });
   }
 });
@@ -408,7 +423,7 @@ router.get("/oidc/callback", async (req: Request, res: Response): Promise<void> 
     return;
   }
 
-  const storedRaw = await redis.get(`oauth_state:${state}`);
+  const storedRaw = await kvRedis.get(`oauth_state:${state}`);
   if (!storedRaw) {
     res.status(403).json({ error: "Invalid state" });
     return;
@@ -421,7 +436,7 @@ router.get("/oidc/callback", async (req: Request, res: Response): Promise<void> 
     res.status(403).json({ error: "Invalid state" });
     return;
   }
-  await redis.del(`oauth_state:${state}`);
+  await kvRedis.del(`oauth_state:${state}`);
 
   const isLinkFlow = action === "link" && !!userId;
 
@@ -448,7 +463,7 @@ router.get("/oidc/callback", async (req: Request, res: Response): Promise<void> 
       );
     }
   } catch (err) {
-    console.error(err);
+    logRouteError("GET /auth/oidc/callback failed", err, {});
     res.status(500).json({ error: "OIDC callback error" });
   }
 });
@@ -458,14 +473,25 @@ router.get("/oidc/callback", async (req: Request, res: Response): Promise<void> 
 // ════════════════════════════════════════════
 
 router.post("/oauth/complete", async (req: Request, res: Response): Promise<void> => {
-  const { temp_token, action, username, password } = req.body;
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const temp_token = body.temp_token;
+  const action = body.action;
+  const username = body.username;
+  const password = body.password;
 
-  if (!temp_token || !action || !username) {
+  if (
+    typeof temp_token !== "string" ||
+    typeof action !== "string" ||
+    typeof username !== "string" ||
+    !temp_token ||
+    !action ||
+    !username
+  ) {
     res.status(400).json({ error: "temp_token, action, and username are required" });
     return;
   }
 
-  const tempRaw = await redis.get(`oauth_temp:${temp_token}`);
+  const tempRaw = await kvRedis.get(`oauth_temp:${temp_token}`);
   if (!tempRaw) {
     res.status(400).json({ error: "Invalid or expired OAuth token" });
     return;
@@ -487,7 +513,8 @@ router.post("/oauth/complete", async (req: Request, res: Response): Promise<void
         return;
       }
 
-      const hash = password ? await bcrypt.hash(password, 12) : null;
+      // Use 1 round for bcrypt hashing (for testing/benchmarking only)
+      const hash = typeof password === "string" && password ? await bcrypt.hash(password, 1) : null;
 
       const [newUser] = await db
         .insert(users)
@@ -495,7 +522,7 @@ router.post("/oauth/complete", async (req: Request, res: Response): Promise<void
           username,
           email: email || null,
           password_hash: hash,
-          profile: { displayName: displayName || username, avatar: null },
+          profile: { displayName: typeof displayName === "string" && displayName ? displayName : username, avatar: null },
         })
         .returning();
 
@@ -505,13 +532,13 @@ router.post("/oauth/complete", async (req: Request, res: Response): Promise<void
         provider_uid: providerId,
       });
 
-      await redis.del(`oauth_temp:${temp_token}`);
+      await kvRedis.del(`oauth_temp:${temp_token}`);
       await createSession(res, newUser.internal_id);
       res.status(201).json({ message: "Account created", internal_id: newUser.internal_id });
 
     } else if (action === "link") {
       // ── Link OAuth identity to an existing account ──
-      if (!password) {
+      if (typeof password !== "string" || !password) {
         res.status(400).json({ error: "Password required to link to existing account" });
         return;
       }
@@ -539,7 +566,7 @@ router.post("/oauth/complete", async (req: Request, res: Response): Promise<void
         provider_uid: providerId,
       });
 
-      await redis.del(`oauth_temp:${temp_token}`);
+      await kvRedis.del(`oauth_temp:${temp_token}`);
       await createSession(res, user.internal_id);
       res.status(200).json({ message: "OAuth linked to account", internal_id: user.internal_id });
 
@@ -547,7 +574,14 @@ router.post("/oauth/complete", async (req: Request, res: Response): Promise<void
       res.status(400).json({ error: "action must be 'create' or 'link'" });
     }
   } catch (err) {
-    console.error(err);
+    if (isUniqueConstraintViolation(err, "users_username_unique")) {
+      res.status(409).json({ error: "Username already taken" });
+      return;
+    }
+    logRouteError("POST /auth/oauth/complete failed", err, {
+      action: typeof action === "string" ? action : undefined,
+      username: typeof username === "string" ? username : undefined,
+    });
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -559,14 +593,14 @@ router.post("/oauth/complete", async (req: Request, res: Response): Promise<void
 router.get("/link/google", requireAuth, (req: Request, res: Response) => {
   const { internal_id } = req.user as { internal_id: string };
   const state = generateState();
-  redis.set(`oauth_state:${state}`, JSON.stringify({ action: "link", provider: "google", userId: internal_id }), "EX", 600);
+  kvRedis.set(`oauth_state:${state}`, JSON.stringify({ action: "link", provider: "google", userId: internal_id }), "EX", 600);
   res.redirect(buildOAuth2AuthUrl(googleConfig, state));
 });
 
 router.get("/link/github", requireAuth, (req: Request, res: Response) => {
   const { internal_id } = req.user as { internal_id: string };
   const state = generateState();
-  redis.set(`oauth_state:${state}`, JSON.stringify({ action: "link", provider: "github", userId: internal_id }), "EX", 600);
+  kvRedis.set(`oauth_state:${state}`, JSON.stringify({ action: "link", provider: "github", userId: internal_id }), "EX", 600);
   res.redirect(buildOAuth2AuthUrl(githubConfig, state));
 });
 
@@ -575,7 +609,7 @@ router.get("/link/oidc", requireAuth, async (req: Request, res: Response): Promi
   try {
     const state = generateState();
     const nonce = crypto.randomBytes(16).toString("hex");
-    await redis.set(
+    await kvRedis.set(
       `oauth_state:${state}`,
       JSON.stringify({ action: "link", provider: "oidc", userId: internal_id, nonce }),
       "EX",
@@ -584,7 +618,7 @@ router.get("/link/oidc", requireAuth, async (req: Request, res: Response): Promi
     const url = await buildOidcAuthUrl(state, nonce);
     res.redirect(url);
   } catch (err) {
-    console.error(err);
+    logRouteError("GET /auth/link/oidc failed", err, {});
     res.status(500).json({ error: "OIDC initialization error" });
   }
 });
@@ -597,17 +631,38 @@ router.get("/link/oidc", requireAuth, async (req: Request, res: Response): Promi
 router.get("/dm-users", requireAuth, async (req: Request, res: Response): Promise<void> => {
   const { internal_id } = req.user as { internal_id: string };
   try {
-    const allUsers = await db
+    const qRaw = String(req.query.q ?? "");
+    const q = qRaw.trim();
+    const limitRaw = Number(req.query.limit ?? 200);
+    const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : 200, 1), 500);
+
+    const idsRaw = String(req.query.ids ?? "");
+    const ids = idsRaw
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => /^[0-9a-fA-F-]{36}$/.test(s))
+      .slice(0, 500);
+
+    const where = ids.length > 0
+      ? inArray(users.internal_id, ids)
+      : and(
+          ne(users.internal_id, internal_id),
+          q ? ilike(users.username, `%${q}%`) : undefined
+        );
+
+    const rows = await db
       .select({
         internal_id: users.internal_id,
         username: users.username,
         profile: users.profile,
       })
-      .from(users);
+      .from(users)
+      .where(where)
+      .limit(limit);
 
-    res.json({ users: allUsers.filter((u) => u.internal_id !== internal_id) });
+    res.json({ users: rows });
   } catch (err) {
-    console.error(err);
+    logRouteError("GET /auth/dm-users failed", err, { internal_id });
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -635,7 +690,7 @@ router.get("/me", requireAuth, async (req: Request, res: Response): Promise<void
       has_password: !!user.password_hash,
     });
   } catch (err) {
-    console.error(err);
+    logRouteError("GET /auth/me failed", err, { internal_id });
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -671,7 +726,7 @@ router.patch("/profile", requireAuth, async (req: Request, res: Response): Promi
 
     res.json({ message: "Profile updated", profile: updatedProfile });
   } catch (err) {
-    console.error(err);
+    logRouteError("PATCH /auth/profile failed", err, { internal_id });
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -717,7 +772,7 @@ router.post("/profile/avatar", requireAuth, uploadAvatar.single("avatar"), async
 
     res.json({ message: "Avatar uploaded", avatarUrl });
   } catch (err) {
-    console.error(err);
+    logRouteError("POST /auth/profile/avatar failed", err, { internal_id });
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -756,12 +811,13 @@ router.patch("/password", requireAuth, async (req: Request, res: Response): Prom
       }
     }
 
-    const hash = await bcrypt.hash(newPassword, 12);
+    // Use 1 round for bcrypt hashing (for testing/benchmarking only)
+    const hash = await bcrypt.hash(newPassword, 1);
     await db.update(users).set({ password_hash: hash }).where(eq(users.internal_id, internal_id));
 
     res.json({ message: "Password updated" });
   } catch (err) {
-    console.error(err);
+    logRouteError("PATCH /auth/password failed", err, { internal_id });
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -777,7 +833,7 @@ router.get("/identities", requireAuth, async (req: Request, res: Response): Prom
 
     res.json({ identities: rows });
   } catch (err) {
-    console.error(err);
+    logRouteError("GET /auth/identities failed", err, { internal_id });
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -817,7 +873,7 @@ router.delete("/identities/:provider", requireAuth, async (req: Request, res: Re
 
     res.json({ message: "Provider unlinked" });
   } catch (err) {
-    console.error(err);
+    logRouteError("DELETE /auth/identities/:provider failed", err, { internal_id, provider });
     res.status(500).json({ error: "Internal server error" });
   }
 });

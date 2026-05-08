@@ -1,0 +1,9 @@
+- name: Restart nginx
+  ansible.builtin.systemd:
+    name: nginx
+    state: restarted
+
+- name: Reload sshd
+  ansible.builtin.systemd:
+    name: sshd
+    state: reloaded

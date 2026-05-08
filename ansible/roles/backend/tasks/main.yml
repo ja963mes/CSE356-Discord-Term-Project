@@ -1,0 +1,135 @@
+- name: Ensure backend repo is checked out
+  ansible.builtin.git:
+    repo: "{{ repo_url }}"
+    dest: "{{ deploy_path }}"
+    version: "{{ deploy_branch }}"
+    update: true
+    force: true
+  become_user: "{{ deploy_user }}"
+
+- name: Install backend workspace dependencies
+  ansible.builtin.command: npm ci
+  args:
+    chdir: "{{ deploy_path }}"
+  become_user: "{{ deploy_user }}"
+
+- name: Build backend workspaces
+  ansible.builtin.command: "{{ item }}"
+  args:
+    chdir: "{{ deploy_path }}"
+  become_user: "{{ deploy_user }}"
+  loop: "{{ backend_workspace_build_commands }}"
+
+# Deprecated discord-create-community service: the route was folded back into
+# communities-service. Defensive cleanup in case the backend VM ever ran it.
+- name: Stop deprecated discord-create-community service
+  ansible.builtin.systemd:
+    name: discord-create-community
+    state: stopped
+    enabled: false
+  failed_when: false
+
+- name: Remove deprecated discord-create-community unit file
+  ansible.builtin.file:
+    path: /etc/systemd/system/discord-create-community.service
+    state: absent
+  register: backend_deprecated_create_community_unit_removed
+
+- name: Reload systemd daemon after removing deprecated unit
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: backend_deprecated_create_community_unit_removed.changed
+
+- name: Run database migrations (first backend host only)
+  when: inventory_hostname == groups['backend'][0]
+  block:
+    - name: Execute Drizzle migrations
+      ansible.builtin.command: npm run db:migrate
+      args:
+        chdir: "{{ deploy_path }}"
+      become_user: "{{ deploy_user }}"
+      register: migration_output
+
+    - name: Display migration output
+      ansible.builtin.debug:
+        var: migration_output.stdout_lines
+      when: migration_output.stdout_lines is defined and migration_output.stdout_lines | length > 0
+
+- name: Manage systemd service files (optional, fixes path mismatches)
+  when: manage_systemd_services | default(false)
+  block:
+    - name: Install backend systemd service files
+      ansible.builtin.template:
+        src: "{{ item }}.service.j2"
+        dest: "/etc/systemd/system/{{ item }}.service"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ backend_systemd_services }}"
+      register: systemd_files_changed
+
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: systemd_files_changed.changed
+
+    - name: Enable backend services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+      loop: "{{ backend_systemd_services }}"
+
+- name: Manage backend nginx config files (optional)
+  when: manage_nginx_config
+  block:
+    - name: Install backend nginx config
+      ansible.builtin.copy:
+        src: "{{ backend_nginx_conf_src }}"
+        dest: /etc/nginx/sites-available/discord-backend
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Enable backend nginx site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/discord-backend
+        dest: /etc/nginx/sites-enabled/discord-backend
+        state: link
+        force: true
+
+    - name: Remove legacy combined nginx site symlink if present
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/discord-production
+        state: absent
+
+    - name: Validate nginx configuration
+      ansible.builtin.command: nginx -t
+      changed_when: false
+
+- name: Install discord.env
+  ansible.builtin.template:
+    src: discord.env.j2
+    dest: /etc/discord.env
+    owner: root
+    group: root
+    mode: "0640"
+
+- name: Restart backend services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: restarted
+  loop: "{{ backend_systemd_services }}"
+
+- name: Reload nginx
+  ansible.builtin.systemd:
+    name: nginx
+    state: reloaded
+
+- name: Check backend services are active
+  ansible.builtin.command: "systemctl is-active {{ item }}"
+  changed_when: false
+  register: backend_active_check
+  until: backend_active_check.rc == 0
+  retries: 10
+  delay: 3
+  loop: "{{ backend_systemd_services }}"

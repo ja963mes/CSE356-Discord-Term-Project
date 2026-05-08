@@ -1,0 +1,44 @@
+session_secret: "changeme-set-a-real-secret-in-production"
+
+ansible_ssh_retries: 5
+
+repo_url: "https://github.com/ja963mes/CSE356-Discord-Term-Project.git"
+deploy_branch: "main-dev"
+deploy_user: "deploy"
+deploy_path: "/home/deploy/CSE356-Discord-Term-Project"
+
+# Set this only if you want Ansible to manage deploy SSH keys.
+# deploy_public_key: "ssh-ed25519 AAAA... your-key-comment"
+
+frontend_web_root: "/var/www/discord-frontend"
+# Nginx configs are source of truth (docs/nginx/*.example) — ansible installs them every deploy.
+# Flip to false only if hand-editing on a host.
+manage_nginx_config: true
+# Set true to update systemd service files (fixes path mismatches, adds new services).
+manage_systemd_services: true
+
+frontend_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-frontend.conf.example"
+backend_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-backend.conf.example"
+# Isolated service VM nginx configs (used by their respective roles when manage_nginx_config=true)
+communities_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-communities.conf.example"
+messages_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-messages.conf.example"
+dms_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-dms.conf.example"
+read_state_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-read-state.conf.example"
+auth_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-auth.conf.example"
+realtime_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-realtime.conf.example"
+
+# Backend vs realtime: group_vars/backend.yml + roles/backend; realtime group_vars/realtime.yml + roles/realtime.
+
+# Search VM service(s) and workspace build list.
+search_systemd_services:
+  - discord-search
+search_workspace_build_commands:
+  - npm run build --workspace @discord/pubsub
+  - npm run build --workspace search-service
+
+# Optional: deploy Zabbix agent 2 to all managed VMs via the zabbix-agent role.
+# Keep real Zabbix server IPs in inventory/group_vars/all/local.yml, which is gitignored.
+manage_zabbix_agent: false
+zabbix_agent_server: ""
+# Optional override if active checks should point elsewhere.
+# zabbix_agent_server_active: "{{ zabbix_agent_server }}"

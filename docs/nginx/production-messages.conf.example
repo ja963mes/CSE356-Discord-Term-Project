@@ -1,0 +1,63 @@
+# Nginx — production messages VM (messages-service only)
+#
+# Use this on the dedicated messages VM that runs the messages Node service locally.
+# Frontend VM proxies /messages and /attachments traffic to the backend VM nginx,
+# which in turn proxies here via private IP (10.0.3.199:80).
+#
+# Service on localhost (this VM):
+#   3003 messages
+#
+# REQUIRED — in /etc/nginx/nginx.conf (main context + events) before this site
+# is safe under real load. Default worker_connections 768 is too low: nginx will
+# log "worker_connections are not enough" and clients see 502 / empty responses.
+# Match production-frontend / PROD-SPLIT-NGINX guidance:
+#   worker_rlimit_nofile 65536;
+#   events {
+#       worker_connections 16384;   # 4 vCPU messages VM: match ansible/roles/messages; raise LimitNOFILE if needed
+#       multi_accept on;
+#   }
+# The `ansible/roles/messages` playbook also applies worker_connections 16384 on deploy.
+
+upstream messages_backend {
+    server 127.0.0.1:3003;
+    # Match higher proxy concurrency to Node cluster (4 workers on 4 vCPU).
+    keepalive 128;
+}
+
+server {
+    listen 80;
+    server_name 10.0.3.199;
+
+    client_max_body_size 25m;
+
+    location ^~ /messages {
+        proxy_pass http://messages_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    location ^~ /attachments {
+        proxy_pass http://messages_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    # API-only host in split production
+    location / {
+        return 404;
+    }
+}

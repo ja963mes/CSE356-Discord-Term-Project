@@ -18,7 +18,7 @@ import {
   listCommunities,
   removeChannelMember,
 } from "../api/discord";
-import { getMe, getDmUsers, logout, Me, DmUser } from "../api/auth";
+import { getMe, getDmUsers, getDmUsersByIds, logout, Me, DmUser, displayNameForDmUser } from "../api/auth";
 import { getDmReadState, listConversations } from "../api/dms";
 import { IncomingMessage, useWebSocket } from "../hooks/useWebSocket";
 import { useActivityDetection } from "../hooks/useActivityDetection";
@@ -123,6 +123,26 @@ export default function ChatPage() {
   } = useDmEvents(me);
   const { members, setMembers, channels, setChannels, handleCommunityMessage } = useCommunityEvents();
 
+  /** Refs for stable read in callbacks — avoids effect loops when unread maps update (see handleChannelReadStateUpdated). */
+  const channelsRef = useRef(channels);
+  const channelUnreadByIdRef = useRef(channelUnreadById);
+  const channelMentionCountByIdRef = useRef(channelMentionCountById);
+  const channelLastReadByIdRef = useRef(channelLastReadById);
+  useEffect(() => {
+    channelsRef.current = channels;
+    channelUnreadByIdRef.current = channelUnreadById;
+    channelMentionCountByIdRef.current = channelMentionCountById;
+    channelLastReadByIdRef.current = channelLastReadById;
+  });
+
+  const channelReadRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (channelReadRefreshTimerRef.current) clearTimeout(channelReadRefreshTimerRef.current);
+    },
+    []
+  );
+
   const [latestChannelEvent, setLatestChannelEvent] = useState<IncomingMessage | null>(null);
 
   const handleMessage = useCallback((msg: IncomingMessage) => {
@@ -168,6 +188,36 @@ export default function ChatPage() {
       })
       .catch(() => setMe(null));
   }, []);
+
+  // Backfill dmUsers with any conversation participants not in the /auth/dm-users slice
+  // (e.g. when the total user count exceeds the 200-row cap).
+  useEffect(() => {
+    if (!me) return;
+    const known = new Set(dmUsers.map((u) => u.internal_id));
+    known.add(me.internal_id);
+    const missing: string[] = [];
+    for (const c of dmConversations) {
+      for (const pid of c.participantIds ?? []) {
+        if (!known.has(pid)) {
+          known.add(pid);
+          missing.push(pid);
+        }
+      }
+    }
+    if (missing.length === 0) return;
+    let cancelled = false;
+    getDmUsersByIds(missing)
+      .then((extra) => {
+        if (cancelled || extra.length === 0) return;
+        setDmUsers((prev) => {
+          const byId = new Map(prev.map((u) => [u.internal_id, u]));
+          for (const u of extra) byId.set(u.internal_id, u);
+          return Array.from(byId.values());
+        });
+      })
+      .catch((err) => console.error("[ChatPage] getDmUsersByIds failed:", err));
+    return () => { cancelled = true; };
+  }, [dmConversations, dmUsers, me]);
 
   const { send } = useWebSocket(handleMessage);
   useActivityDetection(send);
@@ -216,7 +266,7 @@ export default function ChatPage() {
     }
   }, [applyCommunityReadState]);
 
-  const refreshCommunities = useCallback(async (opts?: { preferSelectId?: string }) => {
+  const refreshCommunities = useCallback(async (opts?: { preferSelectId?: string; mergeCommunity?: Community }) => {
     const list = await listCommunities();
     if (list === null) {
       setUsingLiveCommunities(false);
@@ -232,16 +282,19 @@ export default function ChatPage() {
       return;
     }
     setUsingLiveCommunities(true);
-    setCommunities(list);
-    void refreshAllCommunityReadState(list);
+    const merge = opts?.mergeCommunity;
+    const nextList =
+      merge?.id && !list.some((c) => c.id === merge.id) ? [merge, ...list] : list;
+    setCommunities(nextList);
+    void refreshAllCommunityReadState(nextList);
     const prefer = opts?.preferSelectId;
-    if (prefer && list.some((c) => c.id === prefer)) {
-      const c = list.find((x) => x.id === prefer)!;
+    if (prefer && nextList.some((c) => c.id === prefer)) {
+      const c = nextList.find((x) => x.id === prefer)!;
       setSelectedCommunityId(c.id);
       setGuildName(c.name);
-    } else if (list.length > 0) {
-      setSelectedCommunityId(list[0].id);
-      setGuildName(list[0].name);
+    } else if (nextList.length > 0) {
+      setSelectedCommunityId(nextList[0].id);
+      setGuildName(nextList[0].name);
     } else {
       setSelectedCommunityId(null);
       setGuildName("No community yet");
@@ -288,6 +341,13 @@ export default function ChatPage() {
     setSelectedChannelId(firstText.id);
   }, [channels, selectedChannelId, selectedCommunityId, viewMode]);
 
+  /** Ensure realtime Redis has `channel:<id>` for WS fan-out (fixes join-after-connect and edge cases). */
+  useEffect(() => {
+    if (!usingLiveCommunities || viewMode !== "channel" || !selectedChannelId) return;
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(selectedChannelId)) return;
+    send({ type: "subscribe_channel", channelId: selectedChannelId });
+  }, [usingLiveCommunities, viewMode, selectedChannelId, send]);
+
   useEffect(() => {
     if (viewMode === "dm" && selectedDmId) {
       setDmUnreadById((prev) => {
@@ -319,14 +379,17 @@ export default function ChatPage() {
   }, [activePanel, channelMentionCountById, channelUnreadById, channels, selectedChannelId, selectedCommunityId, viewMode]);
 
   useEffect(() => {
-    if (!latestDmEvent || !me || latestDmEvent.type !== "dm:message:create") return;
+    if (!latestDmEvent || !me || (latestDmEvent.type !== "dm:message:create" && latestDmEvent.type !== "dm:new_message")) return;
     const convId = typeof latestDmEvent.conversationId === "string" ? latestDmEvent.conversationId : null;
     const raw =
-      latestDmEvent.message && typeof latestDmEvent.message === "object" && latestDmEvent.message !== null
+      latestDmEvent.type === "dm:message:create" &&
+      latestDmEvent.message &&
+      typeof latestDmEvent.message === "object" &&
+      latestDmEvent.message !== null
         ? latestDmEvent.message as Record<string, unknown>
         : null;
-    const authorId = raw ? String(raw.authorId ?? "") : "";
-    const timeuuid = raw ? String(raw.timeuuid ?? "") : "";
+    const authorId = raw ? String(raw.authorId ?? "") : String(latestDmEvent.authorId ?? "");
+    const timeuuid = raw ? String(raw.timeuuid ?? "") : String(latestDmEvent.timeuuid ?? "");
     if (!convId || authorId === me.internal_id) return;
 
     const lastRead = dmLastReadById[convId] ?? null;
@@ -353,7 +416,7 @@ export default function ChatPage() {
     if (!channelId || !communityId || authorId === me.internal_id) return;
 
     const isOpen = activePanel === "server" && viewMode === "channel" && selectedChannelId === channelId;
-    const lastRead = channelLastReadById[channelId] ?? null;
+    const lastRead = channelLastReadByIdRef.current[channelId] ?? null;
     const isUnread = !isOpen && (!lastRead || lastRead !== timeuuid);
 
     if (isUnread) {
@@ -369,9 +432,13 @@ export default function ChatPage() {
     }
 
     if (communityId === selectedCommunityId) {
-      void refreshCommunityReadState(communityId);
+      if (channelReadRefreshTimerRef.current) clearTimeout(channelReadRefreshTimerRef.current);
+      channelReadRefreshTimerRef.current = setTimeout(() => {
+        channelReadRefreshTimerRef.current = null;
+        void refreshCommunityReadState(communityId);
+      }, 400);
     }
-  }, [activePanel, channelLastReadById, me, latestChannelEvent, refreshCommunityReadState, selectedChannelId, selectedCommunityId, viewMode]);
+  }, [activePanel, me, latestChannelEvent, refreshCommunityReadState, selectedChannelId, selectedCommunityId, viewMode]);
 
   const handleChannelReadStateUpdated = useCallback((channelId: string, _messageId: string, timeuuid: string) => {
     setChannelUnreadById((prev) => {
@@ -388,14 +455,18 @@ export default function ChatPage() {
     });
     if (selectedCommunityId) {
       setCommunityUnreadById((prev) => {
-        const nextValue = channels.some((channel) =>
-          channel.id !== channelId && ((channelUnreadById[channel.id] ?? false) || (channelMentionCountById[channel.id] ?? 0) > 0)
+        const chans = channelsRef.current;
+        const unread = channelUnreadByIdRef.current;
+        const mention = channelMentionCountByIdRef.current;
+        const nextValue = chans.some(
+          (channel) =>
+            channel.id !== channelId && ((unread[channel.id] ?? false) || (mention[channel.id] ?? 0) > 0)
         );
         if (prev[selectedCommunityId] === nextValue) return prev;
         return { ...prev, [selectedCommunityId]: nextValue };
       });
     }
-  }, [channelMentionCountById, channelUnreadById, channels, selectedCommunityId]);
+  }, [selectedCommunityId]);
 
   const handleDmReadStateUpdated = useCallback((conversationId: string, _messageId: string, timeuuid: string) => {
     setDmUnreadById((prev) => {
@@ -433,7 +504,7 @@ export default function ChatPage() {
       map[me.internal_id] = me.profile.displayName || me.username;
     }
     for (const u of dmUsers) {
-      map[u.internal_id] = u.profile.displayName || u.username;
+      map[u.internal_id] = displayNameForDmUser(u);
     }
     return map;
   }, [me, dmUsers]);
@@ -533,7 +604,7 @@ export default function ChatPage() {
         onBack={() => setCommunityModal("menu")}
         onClose={closeCommunityModals}
         onCreated={async (created) => {
-          await refreshCommunities({ preferSelectId: created.id });
+          await refreshCommunities({ preferSelectId: created.id, mergeCommunity: created });
         }}
       />
       <JoinCommunityPlaceholderModal
@@ -624,7 +695,7 @@ export default function ChatPage() {
                           : "flex items-center justify-center rounded-[2rem] bg-[#171a1f] text-gray-400 w-12 h-12 hover:bg-[#5865F2] hover:text-white cursor-pointer transition-all"
                       }
                     >
-                      <span className="text-sm font-bold">{c.name.slice(0, 2).toUpperCase()}</span>
+                      <span className="text-sm font-bold">{(c.name ?? "?").slice(0, 2).toUpperCase()}</span>
                     </button>
                     {communityUnreadById[c.id] ? (
                       <span className="absolute -right-0.5 top-1/2 -translate-y-1/2 h-2.5 w-2.5 rounded-full bg-[#5865F2]" aria-label="Unread channels" />
@@ -827,8 +898,8 @@ export default function ChatPage() {
           <div className="flex-1 overflow-hidden">
             <UserPresence
               userId={me?.internal_id ?? ""}
-              displayName={me?.profile.displayName ?? "..."}
-              avatarUrl={me?.profile.avatar ?? undefined}
+              displayName={me?.profile?.displayName ?? me?.username ?? "..."}
+              avatarUrl={me?.profile?.avatar ?? undefined}
               presence={getPresence(me?.internal_id ?? "")}
               size="sm"
             />
@@ -927,7 +998,7 @@ export default function ChatPage() {
                   <div className="flex flex-col gap-0.5">
                     <UserPresence
                       userId={m.user_id}
-                      displayName={m.display_name}
+                      displayName={m.display_name ?? m.username ?? "User"}
                       presence={getPresence(m.user_id)}
                       size="sm"
                     />

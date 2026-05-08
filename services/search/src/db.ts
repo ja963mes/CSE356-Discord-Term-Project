@@ -4,7 +4,7 @@ import { env } from "./env";
 import * as schema from "./db/schema";
 
 const pool = new Pool({
-  connectionString: env.DATABASE_URL,
+  connectionString: process.env.DATABASE_URL_DIRECT || env.DATABASE_URL,
 });
 
 export const db = drizzle(pool, { schema });

@@ -99,30 +99,24 @@ export async function listMessages(
 
 export async function editMessage(
   conversationId: string,
-  messageId: string,
   content: string,
   timeuuid: string
 ): Promise<DmMessage> {
   const data = await fetchApi<{ message: DmMessage }>(
-    `/dms/${conversationId}/messages/${messageId}`,
+    `/dms/${conversationId}/messages/${encodeURIComponent(timeuuid)}`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content, timeuuid }),
+      body: JSON.stringify({ content }),
     }
   );
   return data.message;
 }
 
-export async function deleteMessage(
-  conversationId: string,
-  messageId: string,
-  timeuuid: string
-): Promise<void> {
-  await fetchApi(
-    `/dms/${conversationId}/messages/${messageId}?timeuuid=${encodeURIComponent(timeuuid)}`,
-    { method: "DELETE" }
-  );
+export async function deleteMessage(conversationId: string, timeuuid: string): Promise<void> {
+  await fetchApi(`/dms/${conversationId}/messages/${encodeURIComponent(timeuuid)}`, {
+    method: "DELETE",
+  });
 }
 
 export async function getDmReadState(): Promise<Array<{
@@ -145,10 +139,19 @@ export async function getConversationReadState(conversationId: string): Promise<
   return data.readState;
 }
 
-export async function markConversationRead(conversationId: string, messageId: string, timeuuid: string): Promise<void> {
+/** Include `messageId` when available so older read-state deployments (pre–timeuuid-only API) still accept the body. */
+export async function markConversationRead(
+  conversationId: string,
+  timeuuid: string,
+  messageId?: string
+): Promise<void> {
+  const body =
+    messageId !== undefined && messageId !== ""
+      ? { timeuuid, messageId }
+      : { timeuuid };
   await fetchApi(`/read-state/dms/${conversationId}/read`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messageId, timeuuid }),
+    body: JSON.stringify(body),
   });
 }

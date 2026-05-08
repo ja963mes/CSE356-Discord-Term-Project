@@ -1,0 +1,56 @@
+## Messages VM (messages-service only). Hosts must be in [messages] inventory group.
+messages_systemd_services:
+  - discord-messages
+
+messages_workspace_build_commands:
+  - npm run build --workspace @discord/pubsub
+  - npm run build --workspace messages-service
+
+messages_nginx_conf_src: "{{ deploy_path }}/docs/nginx/production-messages.conf.example"
+
+## /etc/discord.env values for messages-service
+messages_log_level: warn
+messages_log_pretty: "true"
+messages_port: "3003"
+
+# 4 vCPU / 8GB messages VM (override in inventory if you resize the instance)
+messages_pg_pool_max: "16"
+messages_cassandra_local_core_connections: "4"
+messages_cassandra_max_requests_per_connection: "8192"
+messages_node_options: "--max-old-space-size=4096"
+messages_service_limit_nofile: "65536"
+
+## REQUIRED: set these to reachable endpoints (likely private IPs)
+messages_database_url: "postgresql://postgres:123456789@10.0.2.247:6432/auth_db"
+messages_database_url_direct: "postgresql://postgres:123456789@10.0.2.247:5433/auth_db"
+messages_redis_url: "redis://10.0.3.49:6379"
+# pubsub2 (port 6381) — odd-hashed channel:events shard.
+messages_pubsub2_redis_url: "redis://10.0.3.49:6381"
+# kv (port 6380) — sessions only.
+messages_kv_redis_url: "redis://10.0.3.49:6380"
+# kv2 (port 6382) — rs:latest:ch:* writes after each insert, used by read-state.
+messages_kv_cache_redis_url: "redis://10.0.3.49:6382"
+
+## Cassandra cluster (channel message history)
+messages_cassandra_contact_points: "10.0.2.111,10.0.0.225,10.0.1.200"
+messages_cassandra_port: "9042"
+messages_cassandra_local_datacenter: "datacenter1"
+messages_cassandra_keyspace: "messaging"
+
+## Optional: auth to Cassandra if enabled
+# messages_cassandra_username: ""
+# messages_cassandra_password: ""
+
+## Replication/consistency knobs (match services/messages/src/env.ts)
+messages_cassandra_topology: "simple"
+messages_cassandra_replication_factor: "3"
+messages_cassandra_read_consistency: "localOne"
+messages_cassandra_write_consistency: "localQuorum"
+
+## MinIO / attachments (messages service issues presign URLs)
+messages_minio_endpoint: "https://group-6.cse356.compas.cs.stonybrook.edu"
+messages_minio_access_key: "minioadmin"
+messages_minio_secret_key: "minioadmin"
+messages_minio_bucket: "discord-attachments"
+messages_attachment_base_url: "https://group-6.cse356.compas.cs.stonybrook.edu/discord-attachments"
+

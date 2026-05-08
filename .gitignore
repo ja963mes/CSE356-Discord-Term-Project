@@ -7,6 +7,10 @@ node_modules/
 .env.*
 !.env.example
 
+# Ansible secrets (real OAuth/API keys — never commit)
+ansible/inventory/group_vars/auth/secrets.yml
+ansible/inventory/group_vars/all/local.yml
+
 # Build output
 dist/
 **/dist/

@@ -1,0 +1,29 @@
+name: Lint
+
+on:
+  push:
+    branches: [main-dev]
+    paths:
+      - 'ansible/**'
+      - '.github/workflows/lint.yml'
+  pull_request:
+    branches: [main-dev]
+    paths:
+      - 'ansible/**'
+      - '.github/workflows/lint.yml'
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Ansible
+        run: pip install ansible
+      - name: Install Ansible collections
+        working-directory: ansible
+        run: ansible-galaxy collection install -r requirements.yml
+      - name: Ansible syntax check
+        working-directory: ansible
+        env:
+          ANSIBLE_CONFIG: ${{ github.workspace }}/ansible/ansible.cfg
+        run: ansible-playbook --syntax-check -i inventory/hosts.ini playbooks/site.yml

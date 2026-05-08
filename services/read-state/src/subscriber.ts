@@ -1,4 +1,5 @@
 import Redis from "ioredis";
+import { CHANNEL_EVENTS, subscribeChannelEvents } from "@discord/pubsub";
 import { env } from "./env";
 import { incrementMentionCounts } from "./repo";
 
@@ -23,10 +24,15 @@ type ChannelEvent =
       communityId: string;
     };
 
-const sub = new Redis(env.REDIS_URL);
+// channel:events sharded across REDIS_URL (shard 0) and META_REDIS_URL (shard 1).
+// Order MUST match @discord/pubsub channelEventsShard mapping; the shared module
+// owns the math so subscribe-side stays in sync with publish-side automatically.
+const channelEventClients = [new Redis(env.REDIS_URL), new Redis(env.META_REDIS_URL)];
 
-sub.on("connect", () => console.log("[read-state] Redis subscriber connected"));
-sub.on("error", (err) => console.error("[read-state] Redis subscriber error:", err));
+channelEventClients.forEach((c, i) => {
+  c.on("connect", () => console.log(`[read-state] Redis subscriber (shard ${i}) connected`));
+  c.on("error", (err) => console.error(`[read-state] Redis subscriber (shard ${i}) error:`, err));
+});
 
 async function handleChannelEvent(event: ChannelEvent): Promise<void> {
   if (event.type !== "channel:message:create") return;
@@ -34,7 +40,7 @@ async function handleChannelEvent(event: ChannelEvent): Promise<void> {
 }
 
 function onMessage(channel: string, message: string): void {
-  if (channel !== "channel:events") return;
+  if (channel !== CHANNEL_EVENTS) return;
 
   let parsed: ChannelEvent;
   try {
@@ -50,7 +56,7 @@ function onMessage(channel: string, message: string): void {
 }
 
 export async function startSubscriber(): Promise<void> {
-  await sub.subscribe("channel:events");
-  sub.on("message", onMessage);
-  console.log("[read-state] Subscribed to channel:events");
+  await subscribeChannelEvents(channelEventClients);
+  channelEventClients.forEach((c) => c.on("message", onMessage));
+  console.log(`[read-state] Subscribed to ${CHANNEL_EVENTS} on ${channelEventClients.length} shards`);
 }

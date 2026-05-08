@@ -1,42 +1,60 @@
 /// <reference path="./types/express.d.ts" />
 import express, { Request, Response } from "express";
 import cookieParser from "cookie-parser";
-import { eq, and, asc, desc, sql, or, isNotNull, max, inArray, count } from "drizzle-orm";
-import { db } from "./db";
 import { env } from "./env";
 import { requireAuth } from "./middleware/session";
-import { communities, communityMembers, channels, channelMembers, users } from "./db/schema";
 import { publishCommunityEvent } from "./events";
+import { httpLogger, logger, logRouteError } from "./logger";
+import * as communitiesDao from "./dao/communitiesDao";
+import * as communityMembersDao from "./dao/communityMembersDao";
+import * as channelsDao from "./dao/channelsDao";
+import * as channelMembersDao from "./dao/channelMembersDao";
+import * as usersDao from "./dao/usersDao";
+import {
+  bumpAfterCommunityCreate,
+  bumpAllForUserCommunity,
+  bumpCommunityEpochs,
+  cacheTtl,
+  channelsCacheKey,
+  getCachedJson,
+  getCommunityChEpoch,
+  getCommunityMemEpoch,
+  getUserCommunityEpoch,
+  membersCacheKey,
+  getDirectorySearchEpoch,
+  searchCacheKey,
+  setCachedJson,
+  userCommunitiesCacheKey,
+} from "./readCache";
+
+const MAX_COMMUNITIES_PER_USER = 100;
+const MAX_COMMUNITY_NAME_LENGTH = 100;
 
 function isCommunityAdminRole(role: string): boolean {
   return role === "owner" || role === "admin";
 }
 
 async function addUserToAllPublicChannels(communityId: string, userId: string): Promise<void> {
-  const publicChans = await db
-    .select({ id: channels.id })
-    .from(channels)
-    .where(and(eq(channels.community_id, communityId), eq(channels.is_private, false)));
-  for (const c of publicChans) {
-    await db.insert(channelMembers).values({ channel_id: c.id, user_id: userId }).onConflictDoNothing();
-  }
+  const publicChannelIds = await channelsDao.listPublicIdsByCommunity(communityId);
+  await channelMembersDao.addUserToChannels(userId, publicChannelIds);
 }
 
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
+app.use(httpLogger);
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "communities-service" });
 });
 
 /**
- * Public directory search: all communities matching name (no membership filter).
+ * Public directory search (no membership filter): Redis cache + **search-service** / Elasticsearch.
  * Query: q (required for results), limit (optional, default 25, max 100).
  */
 app.get("/search-communities", async (req, res) => {
   const qRaw = String(req.query.q ?? "");
-  const q = qRaw.trim();
+  const q = qRaw.trim().replace(/\s+/g, " ");
   const limitRaw = req.query.limit;
   const limit = Math.min(Number(limitRaw ?? 25) || 25, 100);
 
@@ -46,22 +64,97 @@ app.get("/search-communities", async (req, res) => {
   }
 
   try {
-    const pattern = `%${q}%`;
-    const rows = await db
-      .select({
-        id: communities.id,
-        name: communities.name,
-        created_at: communities.created_at,
-      })
-      .from(communities)
-      .where(sql`${communities.name} ILIKE ${pattern}`)
-      .orderBy(desc(communities.created_at))
-      .limit(limit);
+    const epoch = await getDirectorySearchEpoch();
+    const ck = searchCacheKey(epoch, q, limit);
+    const hit = await getCachedJson<{ query: string; communities: Array<{ id: string; name: string; created_at: string }> }>(
+      ck,
+    );
+    if (hit) {
+      res.json(hit);
+      return;
+    }
 
-    res.json({ query: q, communities: rows });
+    const base = env.SEARCH_SERVICE_URL.replace(/\/+$/, "");
+    const url = new URL(`${base}/directory/communities`);
+    url.searchParams.set("q", q);
+    url.searchParams.set("limit", String(limit));
+
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 12_000);
+    let fetchRes: Awaited<ReturnType<typeof fetch>>;
+    try {
+      fetchRes = await fetch(url.toString(), { signal: ctrl.signal, headers: { Accept: "application/json" } });
+    } finally {
+      clearTimeout(t);
+    }
+
+    if (!fetchRes.ok) {
+      logRouteError("GET /search-communities search-service error", new Error(`HTTP ${fetchRes.status}`), {
+        reqId: req.id,
+        q,
+        url: url.toString(),
+      });
+      res.status(502).json({ error: "Directory search temporarily unavailable" });
+      return;
+    }
+
+    const payload = (await fetchRes.json()) as {
+      query: string;
+      communities: Array<{ id: string; name: string; created_at: string }>;
+    };
+    void setCachedJson(ck, cacheTtl.search, payload);
+    res.json(payload);
   } catch (e) {
-    console.error(e);
+    logRouteError("GET /search-communities failed", e, { reqId: req.id, q });
     res.status(500).json({ error: "Failed to search communities" });
+  }
+});
+
+/** Create a community (caps at 100/user, seeds #general, owner membership). */
+app.post("/create-community", requireAuth, async (req: Request, res: Response) => {
+  const userId = req.user!.internal_id;
+  const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+  if (!name) {
+    res.status(400).json({ error: "name is required" });
+    return;
+  }
+  if (name.length > MAX_COMMUNITY_NAME_LENGTH) {
+    res.status(400).json({ error: `name must be ${MAX_COMMUNITY_NAME_LENGTH} characters or fewer` });
+    return;
+  }
+
+  try {
+    const result = await communitiesDao.createWithOwnerAndGeneralChannel(
+      userId,
+      name,
+      MAX_COMMUNITIES_PER_USER,
+    );
+    if (!result.ok) {
+      res.status(403).json({ error: `You can create at most ${MAX_COMMUNITIES_PER_USER} communities` });
+      return;
+    }
+
+    const createdAtIso = result.created_at.toISOString();
+
+    void bumpAfterCommunityCreate(userId, result.id);
+    void publishCommunityEvent({
+      type: "community:directory:upsert",
+      communityId: result.id,
+      name: result.name,
+      created_at: createdAtIso,
+    });
+
+    res.status(201).json({
+      community: {
+        id: result.id,
+        name: result.name,
+        created_at: createdAtIso,
+        role: "owner" as const,
+      },
+    });
+  } catch (e) {
+    logRouteError("POST /create-community failed", e, { reqId: req.id, userId });
+    res.status(500).json({ error: "Failed to create community" });
   }
 });
 
@@ -69,20 +162,23 @@ app.get("/search-communities", async (req, res) => {
 app.get("/communities", requireAuth, async (req: Request, res: Response) => {
   const userId = req.user!.internal_id;
   try {
-    const rows = await db
-      .select({
-        id: communities.id,
-        name: communities.name,
-        created_at: communities.created_at,
-        role: communityMembers.role,
-      })
-      .from(communities)
-      .innerJoin(communityMembers, eq(communities.id, communityMembers.community_id))
-      .where(eq(communityMembers.user_id, userId));
+    const epoch = await getUserCommunityEpoch(userId);
+    const ck = userCommunitiesCacheKey(userId, epoch);
+    const hit = await getCachedJson<{
+      communities: Array<{ id: string; name: string; created_at: string; role: string }>;
+    }>(ck);
+    if (hit) {
+      res.json(hit);
+      return;
+    }
 
-    res.json({ communities: rows });
+    const rows = await communitiesDao.listForUser(userId);
+
+    const payload = { communities: rows };
+    void setCachedJson(ck, cacheTtl.userCommunities, payload);
+    res.json(payload);
   } catch (e) {
-    console.error(e);
+    logRouteError("GET /communities failed", e, { reqId: req.id, userId });
     res.status(500).json({ error: "Failed to list communities" });
   }
 });
@@ -93,32 +189,30 @@ app.post("/communities/:communityId/join", requireAuth, async (req: Request, res
   const communityId = String(req.params.communityId);
 
   try {
-    const [exists] = await db.select({ id: communities.id }).from(communities).where(eq(communities.id, communityId)).limit(1);
+    const exists = await communitiesDao.existsById(communityId);
     if (!exists) {
       res.status(404).json({ error: "Community not found" });
       return;
     }
 
-    const [already] = await db
-      .select()
-      .from(communityMembers)
-      .where(and(eq(communityMembers.community_id, communityId), eq(communityMembers.user_id, userId)))
-      .limit(1);
-
-    if (already) {
+    const existingMembership = await communityMembersDao.getMembership(communityId, userId);
+    if (existingMembership) {
       res.status(200).json({ message: "Already a member" });
       return;
     }
 
-    const [newMember] = await db.insert(communityMembers).values({
-      community_id: communityId,
-      user_id: userId,
-      role: "member",
-    }).returning();
+    const { joined_at: joinedAt, inserted } = await communityMembersDao.addMember(communityId, userId, "member");
+
+    if (!inserted) {
+      // Idempotent: heals rare partial state if another request inserted membership then failed mid-join.
+      await addUserToAllPublicChannels(communityId, userId);
+      res.status(200).json({ message: "Already a member" });
+      return;
+    }
 
     await addUserToAllPublicChannels(communityId, userId);
 
-    const [userRow] = await db.select({ username: users.username, profile: users.profile }).from(users).where(eq(users.internal_id, userId)).limit(1);
+    const userRow = await usersDao.getUsernameAndProfileById(userId);
     const profile = (userRow?.profile as { displayName?: string } | null) ?? {};
     void publishCommunityEvent({
       type: "community:member:join",
@@ -127,12 +221,14 @@ app.post("/communities/:communityId/join", requireAuth, async (req: Request, res
       username: userRow?.username ?? "",
       displayName: profile.displayName ?? userRow?.username ?? "",
       role: "member",
-      joinedAt: newMember.joined_at.toISOString(),
+      joinedAt: joinedAt.toISOString(),
     });
+
+    void bumpAllForUserCommunity(userId, communityId);
 
     res.status(201).json({ message: "Joined community" });
   } catch (e) {
-    console.error(e);
+    logRouteError("POST /communities/:communityId/join failed", e, { reqId: req.id, userId, communityId });
     res.status(500).json({ error: "Failed to join community" });
   }
 });
@@ -143,34 +239,20 @@ app.post("/communities/:communityId/leave", requireAuth, async (req: Request, re
   const communityId = String(req.params.communityId);
 
   try {
-    const [exists] = await db.select({ id: communities.id }).from(communities).where(eq(communities.id, communityId)).limit(1);
+    const exists = await communitiesDao.existsById(communityId);
     if (!exists) {
       res.status(404).json({ error: "Community not found" });
       return;
     }
 
-    const deleted = await db
-      .delete(communityMembers)
-      .where(and(eq(communityMembers.community_id, communityId), eq(communityMembers.user_id, userId)))
-      .returning({ community_id: communityMembers.community_id });
-
-    if (deleted.length === 0) {
+    const removedMembership = await communityMembersDao.removeMember(communityId, userId);
+    if (!removedMembership) {
       res.status(404).json({ error: "Not a member of this community" });
       return;
     }
 
-    const channelIds = await db.select({ id: channels.id }).from(channels).where(eq(channels.community_id, communityId));
-    if (channelIds.length > 0) {
-      await db.delete(channelMembers).where(
-        and(
-          eq(channelMembers.user_id, userId),
-          inArray(
-            channelMembers.channel_id,
-            channelIds.map((r) => r.id)
-          )
-        )
-      );
-    }
+    const channelIds = await channelsDao.listIdsByCommunity(communityId);
+    await channelMembersDao.removeUserFromChannels(userId, channelIds);
 
     void publishCommunityEvent({
       type: "community:member:leave",
@@ -178,9 +260,11 @@ app.post("/communities/:communityId/leave", requireAuth, async (req: Request, re
       userId,
     });
 
+    void bumpAllForUserCommunity(userId, communityId);
+
     res.json({ message: "Left community" });
   } catch (e) {
-    console.error(e);
+    logRouteError("POST /communities/:communityId/leave failed", e, { reqId: req.id, userId, communityId });
     res.status(500).json({ error: "Failed to leave community" });
   }
 });
@@ -191,47 +275,37 @@ app.get("/communities/:communityId/channels", requireAuth, async (req: Request, 
   const communityId = String(req.params.communityId);
 
   try {
-    const [membership] = await db
-      .select()
-      .from(communityMembers)
-      .where(and(eq(communityMembers.community_id, communityId), eq(communityMembers.user_id, userId)))
-      .limit(1);
+    const membership = await communityMembersDao.getMembership(communityId, userId);
 
     if (!membership) {
       res.status(403).json({ error: "Not a member of this community" });
       return;
     }
 
-    const rows = await db
-      .select({
-        id: channels.id,
-        name: channels.name,
-        type: channels.type,
-        position: channels.position,
-        is_private: channels.is_private,
-        channel_member_user_id: channelMembers.user_id,
-      })
-      .from(channels)
-      .leftJoin(
-        channelMembers,
-        and(eq(channelMembers.channel_id, channels.id), eq(channelMembers.user_id, userId))
-      )
-      .where(
-        and(
-          eq(channels.community_id, communityId),
-          or(eq(channels.is_private, false), isNotNull(channelMembers.user_id))
-        )
-      )
-      .orderBy(asc(channels.position), asc(channels.name));
+    const chEpoch = await getCommunityChEpoch(communityId);
+    const ck = channelsCacheKey(communityId, userId, chEpoch);
+    const hit = await getCachedJson<{
+      channels: Array<{
+        id: string;
+        name: string;
+        type: string;
+        position: number;
+        is_private: boolean;
+        joined: boolean;
+      }>;
+    }>(ck);
+    if (hit) {
+      res.json(hit);
+      return;
+    }
 
-    const channelsOut = rows.map(({ channel_member_user_id, ...ch }) => ({
-      ...ch,
-      joined: channel_member_user_id != null,
-    }));
+    const channelsOut = await channelsDao.listVisibleForUser(communityId, userId);
 
-    res.json({ channels: channelsOut });
+    const payload = { channels: channelsOut };
+    void setCachedJson(ck, cacheTtl.channels, payload);
+    res.json(payload);
   } catch (e) {
-    console.error(e);
+    logRouteError("GET /communities/:communityId/channels failed", e, { reqId: req.id, userId, communityId });
     res.status(500).json({ error: "Failed to list channels" });
   }
 });
@@ -242,44 +316,36 @@ app.get("/communities/:communityId/members", requireAuth, async (req: Request, r
   const communityId = String(req.params.communityId);
 
   try {
-    const [membership] = await db
-      .select()
-      .from(communityMembers)
-      .where(and(eq(communityMembers.community_id, communityId), eq(communityMembers.user_id, userId)))
-      .limit(1);
+    const membership = await communityMembersDao.getMembership(communityId, userId);
 
     if (!membership) {
       res.status(403).json({ error: "Not a member of this community" });
       return;
     }
 
-    const rows = await db
-      .select({
-        user_id: communityMembers.user_id,
-        username: users.username,
-        profile: users.profile,
-        role: communityMembers.role,
-        joined_at: communityMembers.joined_at,
-      })
-      .from(communityMembers)
-      .innerJoin(users, eq(users.internal_id, communityMembers.user_id))
-      .where(eq(communityMembers.community_id, communityId));
+    const memEpoch = await getCommunityMemEpoch(communityId);
+    const mk = membersCacheKey(communityId, memEpoch);
+    const memHit = await getCachedJson<{
+      members: Array<{
+        user_id: string;
+        username: string;
+        display_name: string;
+        role: string;
+        joined_at: string;
+      }>;
+    }>(mk);
+    if (memHit) {
+      res.json(memHit);
+      return;
+    }
 
-    const members = rows.map((row) => {
-      const profile = (row.profile as { displayName?: string } | null) ?? {};
-      const displayName = profile.displayName ?? row.username;
-      return {
-        user_id: row.user_id,
-        username: row.username,
-        display_name: displayName,
-        role: row.role,
-        joined_at: row.joined_at,
-      };
-    });
+    const members = await communityMembersDao.listMembersWithProfiles(communityId);
 
-    res.json({ members });
+    const memPayload = { members };
+    void setCachedJson(mk, cacheTtl.members, memPayload);
+    res.json(memPayload);
   } catch (e) {
-    console.error(e);
+    logRouteError("GET /communities/:communityId/members failed", e, { reqId: req.id, userId, communityId });
     res.status(500).json({ error: "Failed to list members" });
   }
 });
@@ -297,11 +363,7 @@ app.post("/communities/:communityId/channels", requireAuth, async (req: Request,
   const isPrivate = Boolean(req.body?.is_private);
 
   try {
-    const [membership] = await db
-      .select()
-      .from(communityMembers)
-      .where(and(eq(communityMembers.community_id, communityId), eq(communityMembers.user_id, userId)))
-      .limit(1);
+    const membership = await communityMembersDao.getMembership(communityId, userId);
 
     if (!membership) {
       res.status(403).json({ error: "Not a member of this community" });
@@ -312,33 +374,25 @@ app.post("/communities/:communityId/channels", requireAuth, async (req: Request,
       return;
     }
 
-    const [agg] = await db.select({ mx: max(channels.position) }).from(channels).where(eq(channels.community_id, communityId));
+    const maxPosition = await channelsDao.getMaxPosition(communityId);
     const nextPosition =
       typeof req.body?.position === "number" && Number.isFinite(req.body.position)
         ? Math.trunc(req.body.position)
-        : Number(agg?.mx ?? -1) + 1;
+        : maxPosition + 1;
 
-    const [created] = await db
-      .insert(channels)
-      .values({
-        community_id: communityId,
-        name,
-        type,
-        position: nextPosition,
-        is_private: isPrivate,
-      })
-      .returning();
+    const created = await channelsDao.createChannel({
+      communityId,
+      name,
+      type,
+      position: nextPosition,
+      isPrivate,
+    });
 
     if (isPrivate) {
-      await db.insert(channelMembers).values({ channel_id: created.id, user_id: userId }).onConflictDoNothing();
+      await channelMembersDao.addMember(created.id, userId);
     } else {
-      const members = await db
-        .select({ user_id: communityMembers.user_id })
-        .from(communityMembers)
-        .where(eq(communityMembers.community_id, communityId));
-      for (const m of members) {
-        await db.insert(channelMembers).values({ channel_id: created.id, user_id: m.user_id }).onConflictDoNothing();
-      }
+      const memberIds = await communityMembersDao.listUserIdsByCommunity(communityId);
+      await channelMembersDao.addMembers(created.id, memberIds);
     }
 
     await publishCommunityEvent({
@@ -353,9 +407,11 @@ app.post("/communities/:communityId/channels", requireAuth, async (req: Request,
       },
     });
 
+    void bumpCommunityEpochs(communityId, { ch: true });
+
     res.status(201).json({ channel: created });
   } catch (e) {
-    console.error(e);
+    logRouteError("POST /communities/:communityId/channels failed", e, { reqId: req.id, userId, communityId });
     res.status(500).json({ error: "Failed to create channel" });
   }
 });
@@ -367,22 +423,14 @@ app.patch("/communities/:communityId/channels/:channelId", requireAuth, async (r
   const channelId = String(req.params.channelId);
 
   try {
-    const [membership] = await db
-      .select()
-      .from(communityMembers)
-      .where(and(eq(communityMembers.community_id, communityId), eq(communityMembers.user_id, userId)))
-      .limit(1);
+    const membership = await communityMembersDao.getMembership(communityId, userId);
 
     if (!membership || !isCommunityAdminRole(membership.role)) {
       res.status(403).json({ error: "Only community administrators can update channels" });
       return;
     }
 
-    const [ch] = await db
-      .select()
-      .from(channels)
-      .where(and(eq(channels.id, channelId), eq(channels.community_id, communityId)))
-      .limit(1);
+    const ch = await channelsDao.getByIdInCommunity(communityId, channelId);
 
     if (!ch) {
       res.status(404).json({ error: "Channel not found" });
@@ -404,22 +452,20 @@ app.patch("/communities/:communityId/channels/:channelId", requireAuth, async (r
       return;
     }
 
-    await db.update(channels).set(updates).where(eq(channels.id, channelId));
+    await channelsDao.updateChannel(channelId, updates);
 
     if (updates.is_private === false) {
-      const members = await db
-        .select({ user_id: communityMembers.user_id })
-        .from(communityMembers)
-        .where(eq(communityMembers.community_id, communityId));
-      for (const m of members) {
-        await db.insert(channelMembers).values({ channel_id: channelId, user_id: m.user_id }).onConflictDoNothing();
-      }
+      const memberIds = await communityMembersDao.listUserIdsByCommunity(communityId);
+      await channelMembersDao.addMembers(channelId, memberIds);
     }
 
-    const [updated] = await db.select().from(channels).where(eq(channels.id, channelId)).limit(1);
+    const updated = await channelsDao.getById(channelId);
+
+    void bumpCommunityEpochs(communityId, { ch: true });
+
     res.json({ channel: updated });
   } catch (e) {
-    console.error(e);
+    logRouteError("PATCH /communities/:communityId/channels/:channelId failed", e, { reqId: req.id, userId, communityId, channelId });
     res.status(500).json({ error: "Failed to update channel" });
   }
 });
@@ -431,22 +477,14 @@ app.post("/communities/:communityId/channels/:channelId/join", requireAuth, asyn
   const channelId = String(req.params.channelId);
 
   try {
-    const [membership] = await db
-      .select()
-      .from(communityMembers)
-      .where(and(eq(communityMembers.community_id, communityId), eq(communityMembers.user_id, userId)))
-      .limit(1);
+    const membership = await communityMembersDao.getMembership(communityId, userId);
 
     if (!membership) {
       res.status(403).json({ error: "Not a member of this community" });
       return;
     }
 
-    const [ch] = await db
-      .select()
-      .from(channels)
-      .where(and(eq(channels.id, channelId), eq(channels.community_id, communityId)))
-      .limit(1);
+    const ch = await channelsDao.getByIdInCommunity(communityId, channelId);
 
     if (!ch) {
       res.status(404).json({ error: "Channel not found" });
@@ -458,10 +496,13 @@ app.post("/communities/:communityId/channels/:channelId/join", requireAuth, asyn
       return;
     }
 
-    await db.insert(channelMembers).values({ channel_id: channelId, user_id: userId }).onConflictDoNothing();
+    await channelMembersDao.addMember(channelId, userId);
+
+    void bumpCommunityEpochs(communityId, { ch: true });
+
     res.status(201).json({ message: "Joined channel" });
   } catch (e) {
-    console.error(e);
+    logRouteError("POST .../channels/:channelId/join failed", e, { reqId: req.id, userId, communityId, channelId });
     res.status(500).json({ error: "Failed to join channel" });
   }
 });
@@ -473,22 +514,14 @@ app.post("/communities/:communityId/channels/:channelId/leave", requireAuth, asy
   const channelId = String(req.params.channelId);
 
   try {
-    const [membership] = await db
-      .select()
-      .from(communityMembers)
-      .where(and(eq(communityMembers.community_id, communityId), eq(communityMembers.user_id, userId)))
-      .limit(1);
+    const membership = await communityMembersDao.getMembership(communityId, userId);
 
     if (!membership) {
       res.status(403).json({ error: "Not a member of this community" });
       return;
     }
 
-    const [ch] = await db
-      .select()
-      .from(channels)
-      .where(and(eq(channels.id, channelId), eq(channels.community_id, communityId)))
-      .limit(1);
+    const ch = await channelsDao.getByIdInCommunity(communityId, channelId);
 
     if (!ch) {
       res.status(404).json({ error: "Channel not found" });
@@ -499,19 +532,17 @@ app.post("/communities/:communityId/channels/:channelId/leave", requireAuth, asy
       return;
     }
 
-    const removed = await db
-      .delete(channelMembers)
-      .where(and(eq(channelMembers.channel_id, channelId), eq(channelMembers.user_id, userId)))
-      .returning({ channel_id: channelMembers.channel_id });
-
-    if (removed.length === 0) {
+    const removed = await channelMembersDao.removeMember(channelId, userId);
+    if (!removed) {
       res.status(404).json({ error: "Not a member of this channel" });
       return;
     }
 
+    void bumpCommunityEpochs(communityId, { ch: true });
+
     res.json({ message: "Left channel" });
   } catch (e) {
-    console.error(e);
+    logRouteError("POST .../channels/:channelId/leave failed", e, { reqId: req.id, userId, communityId, channelId });
     res.status(500).json({ error: "Failed to leave channel" });
   }
 });
@@ -523,22 +554,14 @@ app.get("/communities/:communityId/channels/:channelId/members", requireAuth, as
   const channelId = String(req.params.channelId);
 
   try {
-    const [adminMembership] = await db
-      .select()
-      .from(communityMembers)
-      .where(and(eq(communityMembers.community_id, communityId), eq(communityMembers.user_id, userId)))
-      .limit(1);
+    const adminMembership = await communityMembersDao.getMembership(communityId, userId);
 
     if (!adminMembership || !isCommunityAdminRole(adminMembership.role)) {
       res.status(403).json({ error: "Only community administrators can view channel members" });
       return;
     }
 
-    const [ch] = await db
-      .select()
-      .from(channels)
-      .where(and(eq(channels.id, channelId), eq(channels.community_id, communityId)))
-      .limit(1);
+    const ch = await channelsDao.getByIdInCommunity(communityId, channelId);
 
     if (!ch) {
       res.status(404).json({ error: "Channel not found" });
@@ -549,35 +572,11 @@ app.get("/communities/:communityId/channels/:channelId/members", requireAuth, as
       return;
     }
 
-    const rows = await db
-      .select({
-        user_id: users.internal_id,
-        username: users.username,
-        profile: users.profile,
-        role: communityMembers.role,
-      })
-      .from(channelMembers)
-      .innerJoin(users, eq(users.internal_id, channelMembers.user_id))
-      .innerJoin(
-        communityMembers,
-        and(eq(communityMembers.community_id, communityId), eq(communityMembers.user_id, channelMembers.user_id))
-      )
-      .where(eq(channelMembers.channel_id, channelId))
-      .orderBy(asc(users.username));
-
-    const members = rows.map((row) => {
-      const profile = (row.profile as { displayName?: string } | null) ?? {};
-      return {
-        user_id: row.user_id,
-        username: row.username,
-        display_name: profile.displayName ?? row.username,
-        role: row.role,
-      };
-    });
+    const members = await channelMembersDao.listPrivateChannelMembers(communityId, channelId);
 
     res.json({ members });
   } catch (e) {
-    console.error(e);
+    logRouteError("GET .../channels/:channelId/members failed", e, { reqId: req.id, userId, communityId, channelId });
     res.status(500).json({ error: "Failed to list channel members" });
   }
 });
@@ -595,22 +594,14 @@ app.post("/communities/:communityId/channels/:channelId/members", requireAuth, a
   }
 
   try {
-    const [adminMembership] = await db
-      .select()
-      .from(communityMembers)
-      .where(and(eq(communityMembers.community_id, communityId), eq(communityMembers.user_id, userId)))
-      .limit(1);
+    const adminMembership = await communityMembersDao.getMembership(communityId, userId);
 
     if (!adminMembership || !isCommunityAdminRole(adminMembership.role)) {
       res.status(403).json({ error: "Only community administrators can add channel members" });
       return;
     }
 
-    const [ch] = await db
-      .select()
-      .from(channels)
-      .where(and(eq(channels.id, channelId), eq(channels.community_id, communityId)))
-      .limit(1);
+    const ch = await channelsDao.getByIdInCommunity(communityId, channelId);
 
     if (!ch) {
       res.status(404).json({ error: "Channel not found" });
@@ -621,29 +612,21 @@ app.post("/communities/:communityId/channels/:channelId/members", requireAuth, a
       return;
     }
 
-    const [targetMembership] = await db
-      .select()
-      .from(communityMembers)
-      .where(and(eq(communityMembers.community_id, communityId), eq(communityMembers.user_id, targetUserId)))
-      .limit(1);
+    const targetMembership = await communityMembersDao.getMembership(communityId, targetUserId);
 
     if (!targetMembership) {
       res.status(400).json({ error: "User is not a member of this community" });
       return;
     }
 
-    const [alreadyInChannel] = await db
-      .select()
-      .from(channelMembers)
-      .where(and(eq(channelMembers.channel_id, channelId), eq(channelMembers.user_id, targetUserId)))
-      .limit(1);
+    const alreadyInChannel = await channelMembersDao.hasMembership(channelId, targetUserId);
 
     if (alreadyInChannel) {
       res.status(200).json({ message: "User is already in this channel", status: "already_member" });
       return;
     }
 
-    await db.insert(channelMembers).values({ channel_id: channelId, user_id: targetUserId });
+    await channelMembersDao.addMemberNoConflict(channelId, targetUserId);
     await publishCommunityEvent({
       type: "community:channel:member:add",
       communityId,
@@ -657,9 +640,12 @@ app.post("/communities/:communityId/channels/:channelId/members", requireAuth, a
         is_private: ch.is_private,
       },
     });
+
+    void bumpCommunityEpochs(communityId, { ch: true });
+
     res.status(201).json({ message: "Added to channel", status: "added" });
   } catch (e) {
-    console.error(e);
+    logRouteError("POST .../channels/:channelId/members failed", e, { reqId: req.id, userId, communityId, channelId, targetUserId });
     res.status(500).json({ error: "Failed to add channel member" });
   }
 });
@@ -672,22 +658,14 @@ app.delete("/communities/:communityId/channels/:channelId/members/:targetUserId"
   const targetUserId = String(req.params.targetUserId);
 
   try {
-    const [adminMembership] = await db
-      .select()
-      .from(communityMembers)
-      .where(and(eq(communityMembers.community_id, communityId), eq(communityMembers.user_id, userId)))
-      .limit(1);
+    const adminMembership = await communityMembersDao.getMembership(communityId, userId);
 
     if (!adminMembership || !isCommunityAdminRole(adminMembership.role)) {
       res.status(403).json({ error: "Only community administrators can remove channel members" });
       return;
     }
 
-    const [ch] = await db
-      .select()
-      .from(channels)
-      .where(and(eq(channels.id, channelId), eq(channels.community_id, communityId)))
-      .limit(1);
+    const ch = await channelsDao.getByIdInCommunity(communityId, channelId);
 
     if (!ch) {
       res.status(404).json({ error: "Channel not found" });
@@ -702,12 +680,8 @@ app.delete("/communities/:communityId/channels/:channelId/members/:targetUserId"
       return;
     }
 
-    const removed = await db
-      .delete(channelMembers)
-      .where(and(eq(channelMembers.channel_id, channelId), eq(channelMembers.user_id, targetUserId)))
-      .returning({ user_id: channelMembers.user_id });
-
-    if (removed.length === 0) {
+    const removed = await channelMembersDao.removeMember(channelId, targetUserId);
+    if (!removed) {
       res.status(404).json({ error: "User is not a member of this channel" });
       return;
     }
@@ -718,9 +692,18 @@ app.delete("/communities/:communityId/channels/:channelId/members/:targetUserId"
       channelId,
       userId: targetUserId,
     });
+
+    void bumpCommunityEpochs(communityId, { ch: true });
+
     res.status(204).send();
   } catch (e) {
-    console.error(e);
+    logRouteError("DELETE .../channels/:channelId/members/:targetUserId failed", e, {
+      reqId: req.id,
+      userId,
+      communityId,
+      channelId,
+      targetUserId,
+    });
     res.status(500).json({ error: "Failed to remove channel member" });
   }
 });
@@ -732,39 +715,27 @@ app.delete("/communities/:communityId/channels/:channelId", requireAuth, async (
   const channelId = String(req.params.channelId);
 
   try {
-    const [membership] = await db
-      .select()
-      .from(communityMembers)
-      .where(and(eq(communityMembers.community_id, communityId), eq(communityMembers.user_id, userId)))
-      .limit(1);
+    const membership = await communityMembersDao.getMembership(communityId, userId);
 
     if (!membership || !isCommunityAdminRole(membership.role)) {
       res.status(403).json({ error: "Only community administrators can delete channels" });
       return;
     }
 
-    const [ch] = await db
-      .select()
-      .from(channels)
-      .where(and(eq(channels.id, channelId), eq(channels.community_id, communityId)))
-      .limit(1);
+    const ch = await channelsDao.getByIdInCommunity(communityId, channelId);
 
     if (!ch) {
       res.status(404).json({ error: "Channel not found" });
       return;
     }
 
-    const [cnt] = await db
-      .select({ c: count() })
-      .from(channels)
-      .where(eq(channels.community_id, communityId));
-
-    if (Number(cnt?.c ?? 0) <= 1) {
+    const channelCount = await channelsDao.countByCommunity(communityId);
+    if (channelCount <= 1) {
       res.status(400).json({ error: "Cannot delete the last channel in a community" });
       return;
     }
 
-    await db.delete(channels).where(eq(channels.id, channelId));
+    await channelsDao.deleteById(channelId);
 
     await publishCommunityEvent({
       type: "community:channel:delete",
@@ -772,14 +743,31 @@ app.delete("/communities/:communityId/channels/:channelId", requireAuth, async (
       channelId,
     });
 
+    void bumpCommunityEpochs(communityId, { ch: true });
+
     res.status(204).send();
   } catch (e) {
-    console.error(e);
+    logRouteError("DELETE /communities/:communityId/channels/:channelId failed", e, { reqId: req.id, userId, communityId, channelId });
     res.status(500).json({ error: "Failed to delete channel" });
   }
 });
 
-const port = Number(env.COMMUNITIES_PORT);
-app.listen(port, () => {
-  console.log(`Communities service running on port ${port}`);
+app.post("/internal/log-level", (req: Request, res: Response) => {
+  const { level } = req.body as { level?: string };
+  const valid = ["trace", "debug", "info", "warn", "error", "fatal"];
+  if (!level || !valid.includes(level)) {
+    res.status(400).json({ error: `level must be one of: ${valid.join(", ")}` });
+    return;
+  }
+  logger.level = level;
+  res.json({ level: logger.level });
 });
+
+const port = Number(env.COMMUNITIES_PORT);
+const server = app.listen(port, () => {
+  logger.info({ port }, "service started");
+});
+// keepAliveTimeout > nginx upstream keepalive_timeout (60s default) + headersTimeout > keepAliveTimeout
+// Prevents ERR_INCOMPLETE_CHUNKED_ENCODING when nginx reuses a socket Node just closed.
+server.keepAliveTimeout = 65_000;
+server.headersTimeout = 66_000;

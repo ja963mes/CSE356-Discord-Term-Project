@@ -1,6 +1,10 @@
-import { redis } from "./redis";
+import { publishChannelEvent as sharedPublishChannelEvent } from "@discord/pubsub";
+import { redis, pubsub2Redis } from "./redis";
+import { logger } from "./logger";
 
-const CHANNEL = "channel:events";
+// Shard order MUST match the consumer side (read-state, search, realtime).
+// Shared module enforces consistent hashing across publishers/subscribers.
+const channelEventClients = [redis, pubsub2Redis];
 
 export type ChannelMessageEvent =
   | {
@@ -34,14 +38,33 @@ export type ChannelMessageEvent =
       channelId: string;
       communityId: string;
       messageId: string;
+      id: string;
       timeuuid: string;
       authorId: string;
+      message: {
+        id: string;
+        messageId: string;
+        timeuuid: string;
+        authorId: string;
+      };
     };
 
 export const publishChannelEvent = async (event: ChannelMessageEvent): Promise<void> => {
-  try {
-    await redis.publish(CHANNEL, JSON.stringify(event));
-  } catch (err) {
-    console.error("[messages] failed to publish event", event.type, err);
+  const payload = JSON.stringify(event);
+  const maxAttempts = 4;
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await sharedPublishChannelEvent(channelEventClients, event.channelId, payload);
+      if (attempt > 1) logger.info({ eventType: event.type, attempt }, "channel event published after retry");
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (attempt >= maxAttempts) break;
+      const backoff = Math.min(50 * 2 ** (attempt - 1), 500);
+      logger.warn({ err, eventType: event.type, attempt, backoff }, "channel event publish failed; retrying");
+      await new Promise((r) => setTimeout(r, backoff));
+    }
   }
+  logger.error({ err: lastErr, eventType: event.type, attempts: maxAttempts }, "channel event publish failed after retries");
 };

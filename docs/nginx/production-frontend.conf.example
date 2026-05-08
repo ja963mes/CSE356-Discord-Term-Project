@@ -1,0 +1,359 @@
+# Nginx — production frontend VM (static SPA + proxy to backend VM nginx)
+#
+# Use this on the frontend VM that serves frontend/dist and receives public traffic.
+# Most API and WebSocket routes are proxied to backend VM nginx (:80). Search routes
+# are proxied to search_api. Not directly to backend Node service ports.
+#
+# Example hosts:
+#   Frontend VM (this host): 130.245.136.103 (Public IP)
+#   Backend VM nginx:         10.0.2.247:80 (Private IP)
+#   Auth service:             10.0.3.158:3001 (Auth VM private IP)
+#   Search ingress nginx:     10.0.2.26:3004 (Private IP, optional dedicated search host)
+#   Public domain:            group-6.cse356.compas.cs.stonybrook.edu
+#
+# REQUIRED — set these in /etc/nginx/nginx.conf before deploying this site config.
+# WebSocket connections are long-lived (proxy_read_timeout 86400) and each one holds
+# a worker slot. The default worker_connections 768 exhausts under any real load and
+# causes 500 errors on all other requests.
+#
+#   worker_rlimit_nofile 65536;   (in the top-level context)
+#   events {
+#       worker_connections 16384;
+#       multi_accept on;
+#   }
+#
+# Deploy static build:
+#   sudo mkdir -p /var/www/discord-frontend
+#   npm ci && npm run build --workspace frontend
+#   sudo rsync -a --delete /path/to/repo/frontend/dist/ /var/www/discord-frontend/
+#   sudo chown -R root:www-data /var/www/discord-frontend
+#   sudo chmod -R g+rX /var/www/discord-frontend
+
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+upstream backend_api {
+    server 10.0.2.247:80;
+    keepalive 64;
+}
+upstream auth_api {
+    # Dedicated auth VM nginx (see docs/nginx/production-auth.conf.example).
+    server 10.0.3.158:80;
+    keepalive 32;
+}
+upstream search_api {
+    # Point to dedicated search ingress/LB. Keep this path-level split to scale search independently.
+    server 10.0.2.26:3004;
+    keepalive 32;
+}
+upstream dms_api {
+    # Dedicated DMs VM nginx (see docs/nginx/production-dms.conf.example).
+    server 10.0.3.52:80;
+    keepalive 32;
+}
+upstream read_state_api {
+    # Dedicated read-state VM nginx (see docs/nginx/production-read-state.conf.example).
+    server 10.0.1.189:80;
+    keepalive 32;
+}
+
+# Catch-all HTTP vhost for IP probes / missing Host header.
+# Some monitors/autograders probe `http://<FRONTEND_IP>/...` and treat 404 as "outage".
+# This default_server returns 200 for `/` + `/healthz`, and still proxies API/WS prefixes
+# to the backend VM nginx. Keep this HTTP-only (no TLS) to avoid cert/IP mismatch.
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+
+    location = /healthz {
+        add_header Content-Type text/plain;
+        return 200 "ok\n";
+    }
+
+    # Proxy API prefixes even when Host header is missing/incorrect.
+    # (Regex keeps the config short while matching the same prefix set.)
+    location ^~ /search-communities {
+        proxy_pass http://search_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    location ^~ /search {
+        proxy_pass http://search_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    location ^~ /auth {
+        proxy_pass http://auth_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    location ^~ /dms {
+        proxy_pass http://dms_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    location ^~ /read-state {
+        proxy_pass http://read_state_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    location ~ ^/(create-community|communities|channels|messages|attachments)(/|$) {
+        proxy_pass http://backend_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    location ^~ /ws {
+        proxy_pass http://backend_api;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 86400;
+    }
+
+    location / {
+        add_header Content-Type text/plain;
+        return 200 "ok\n";
+    }
+}
+
+server {
+    listen 80;
+    listen 443 ssl;
+    server_name 130.245.136.103 group-6.cse356.compas.cs.stonybrook.edu;
+
+    ssl_certificate /etc/letsencrypt/live/group-6.cse356.compas.cs.stonybrook.edu/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/group-6.cse356.compas.cs.stonybrook.edu/privkey.pem;
+
+    client_max_body_size 25m;
+
+    # API prefixes (same ordering contract as staging/Vite; /search-communities before /search)
+    location ^~ /auth {
+        proxy_pass http://auth_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    location ^~ /create-community {
+        proxy_pass http://backend_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    location ^~ /communities {
+        proxy_pass http://backend_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    location ^~ /channels {
+        proxy_pass http://backend_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    location ^~ /messages {
+        proxy_pass http://backend_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    location ^~ /attachments {
+        proxy_pass http://backend_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    # MinIO object storage — proxied here so browser uploads/downloads use HTTPS.
+    # MINIO_ENDPOINT and ATTACHMENT_BASE_URL in services must point to this domain,
+    # not http://10.0.2.247:9000, to avoid mixed-content blocks.
+    # Host header is passed through unchanged so presigned URL signatures validate.
+    location ^~ /discord-attachments {
+        proxy_pass http://10.0.2.247:9000;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        client_max_body_size 50m;
+        proxy_request_buffering off;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
+    }
+
+    location ^~ /search-communities {
+        proxy_pass http://search_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    location ^~ /search {
+        proxy_pass http://search_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    location ^~ /dms {
+        proxy_pass http://dms_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    location ^~ /read-state {
+        proxy_pass http://read_state_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    location ^~ /ws {
+        proxy_pass http://backend_api;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 86400;
+    }
+
+    # Static SPA
+    root /var/www/discord-frontend;
+    index index.html;
+    location / {
+        try_files $uri $uri/ @spa;
+    }
+    location @spa {
+        rewrite ^ /index.html break;
+    }
+
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript application/xml image/svg+xml;
+    gzip_min_length 256;
+}

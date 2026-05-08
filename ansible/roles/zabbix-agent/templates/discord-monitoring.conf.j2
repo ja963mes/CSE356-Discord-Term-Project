@@ -1,0 +1,13 @@
+# 1 = active/running, 0 = anything else
+UserParameter=discord.service.active[*],systemctl is-active "$1" >/dev/null 2>&1 && echo 1 || echo 0
+
+# 1 = HTTP endpoint returns 2xx/3xx, 0 = request failure
+UserParameter=discord.health[*],curl -fsS --max-time 5 "$1" >/dev/null 2>&1 && echo 1 || echo 0
+
+# count recent journald lines for a systemd unit in the last 5 minutes
+UserParameter=discord.log.count[*],journalctl -u "$1" --since "-5 min" --grep "$2" -q --no-pager 2>/dev/null | wc -l
+
+# Per-port redis-server process count — used to alarm on a dead instance even
+# if the agent2 Redis plugin keeps reporting 0 for hung sockets. Argument is
+# the port number (e.g. discord.redis.proc[6382]).
+UserParameter=discord.redis.proc[*],pgrep -fc "redis-server.*:$1" 2>/dev/null || echo 0

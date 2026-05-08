@@ -1,0 +1,28 @@
+## Managed by ansible — roles/redis. Per-instance config rendered from
+## redis_instances in group_vars/redis.yml.
+bind {{ redis_bind }}
+protected-mode {{ redis_protected_mode }}
+port {{ instance.port }}
+
+# Each instance gets its own pidfile + working dir so they cannot collide.
+pidfile /var/run/redis/{{ instance.name }}.pid
+dir /var/lib/redis/{{ instance.name }}
+logfile ""
+loglevel notice
+
+# systemd notifies readiness via NOTIFY_SOCKET (set in unit file).
+supervised systemd
+
+maxmemory {{ instance.maxmemory }}
+maxmemory-policy {{ instance.maxmemory_policy }}
+
+{% if instance.client_output_buffer_limit is defined %}
+# Disconnect slow pub/sub subscribers before their output buffers exhaust VM RAM.
+client-output-buffer-limit {{ instance.client_output_buffer_limit }}
+{% endif %}
+# Disable persistence — both workloads (pubsub + sessions/cache) are
+# recoverable from upstream sources of truth (Postgres for users, login
+# flow for sessions, dms-service for pending hints, etc.). Skipping RDB
+# + AOF avoids fork() pauses that stall the event loop on large heaps.
+save ""
+appendonly no
