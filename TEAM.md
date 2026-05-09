@@ -10,15 +10,22 @@ CSE 356, Stony Brook University. Group 6 — Discord-style messaging system.
 
 ### Nicholas Gitman (`ngitman` / `nicholasgitman@gmail.com`)
 
-- **Main responsibilities:** Realtime service (WebSocket fan-out, presence, instance registry), Redis topology and scaling, monitoring (Zabbix), deploy automation (Ansible).
+- **Main responsibilities:** Realtime service (WebSocket fan-out, presence, instance registry), Redis topology and scaling, read-state service, search service, communities/channels, monitoring (Zabbix), CI/CD and deploy automation (Ansible + GitHub Actions), nginx + multi-VM infrastructure.
 - **Major contributions:**
-  - Designed and shipped the four-instance Redis split (`pubsub`, `pubsub2`, `kv`, `kv2`) and the per-port `maxmemory` / eviction policy choices.
-  - Diagnosed the SMEMBERS hot-key bottleneck on `kv2` (320k calls / 366 µs avg, 1521-member set) and shipped the in-memory TTL cache + inflight dedupe in `services/realtime/src/index.ts`.
-  - Replaced `SCAN MATCH presence:conns:*` with the maintained `presence:conns:index` set in `services/realtime/src/presence.ts`; reaper now self-heals empty hashes.
-  - Scaled the Redis VM 4 vCPU → 8 vCPU and reserved capacity for future per-workload splits.
-  - Wired Zabbix agent2's built-in Redis plugin per port + per-port process-liveness UserParameter; documented server-side trigger setup in `docs/zabbix-redis-monitoring.md`.
-  - Maintained the Ansible playbook (`ansible/playbooks/site.yml`) and inventory.
-- **Leadership / coordination:** Drove the load-test → measure → fix → re-measure loop on the Redis bottleneck. Wrote scaling and architecture documentation.
+  - **Redis topology.** Designed and shipped the four-instance Redis split (`pubsub`, `pubsub2`, `kv`, `kv2`) with per-port `maxmemory` / eviction policy; scaled the Redis VM 4 vCPU → 8 vCPU.
+  - **Realtime fan-out perf.** Diagnosed the SMEMBERS hot-key bottleneck on `kv2` (320k calls / 366 µs avg, 1521-member set) and shipped the in-memory TTL cache + inflight dedupe in `services/realtime/src/index.ts`.
+  - **Presence index.** Replaced `SCAN MATCH presence:conns:*` with the maintained `presence:conns:index` set in `services/realtime/src/presence.ts`; reaper self-heals empty hashes; TTL on `presence:away` to cap growth.
+  - **DM delivery reliability.** Direct HTTP fanout between `dms` and `realtime` to cut the live-delivery race, outbound pending-dm queue for live fanout misses, Cassandra catch-up path gated on offline marker, dead-instance eviction from registry.
+  - **Read-state service.** Scaled out to its own VM (10.0.1.189), added Redis cache to cut Cassandra reads ~70%, batched channel-state reads via MGET, cached `assertChannelAccess` in Redis.
+  - **Search service.** Replaced Postgres trigram directory search with Elasticsearch for community directory; centralized pubsub publishers + shard math through `@discord/pubsub` workspace; subscribed search to `channel:events` and `dm:events`.
+  - **Communities + channels.** Built the communities/guilds stack (DB migration, services, chat UI), private channel ACLs + invite UI, Cassandra-backed channel history migration, Redis read cache for hot GET endpoints.
+  - **Monitoring.** Wired Zabbix agent2's built-in Redis plugin per port + per-port process-liveness UserParameter; documented server-side trigger setup in `docs/zabbix-redis-monitoring.md`.
+  - **CI/CD + Ansible.** Set up GitHub Actions SSH deploys to staging on `main-dev`, dedicated workflow for `zabbix-agent` deploys, skip-CI on docs-only changes; built and maintained the Ansible playbook (`ansible/playbooks/site.yml`), inventory, per-VM nginx configs, dms / realtime / read-state VM roles.
+  - **Auth + Postgres.** PgBouncer for connection pooling, fixed Postgres connection exhaustion under load, Drizzle migration runner via ts-node + journal stamping for DBs predating `__drizzle_migrations`, 409 on username unique race.
+  - **Observability.** Added Pino structured logging across communities/auth/messages, per-stage timing for the channel-message delivery path, WS server heartbeat to prevent idle disconnects.
+  - **Frontend hardening.** Stopped the channel read/fetch loop hitting `ERR_INSUFFICIENT_RESOURCES`; guarded `.slice`/displayName paths to prevent crashes on undefined values.
+  - **Project docs.** Modernized README, ARCHITECTURE, SCALING, TEAM, branching workflow, staging rollout runbook.
+- **Leadership / coordination:** Drove the load-test → measure → fix → re-measure loop on the Redis and read-state bottlenecks. Owned the deploy + CI pipeline so any teammate could ship to staging. Wrote scaling, architecture, and branching documentation.
 
 ### James Barrera (`ja963mes` / `james.barrera@stonybrook.edu`)
 
