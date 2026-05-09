@@ -50,9 +50,13 @@ CSE 356, Stony Brook University. Group 6 — Discord-style messaging system.
 
 ### Yuchen Lin (`PunchyCandy` / `linyuchen12345@gmail.com`)
 
-- **Main responsibilities:** _[fill in — typical: search service, Elasticsearch indexing, frontend]_
-- **Major contributions:** _[fill in]_
-- **Leadership / coordination:** _[fill in]_
+- **Main responsibilities:** Read-state service, Zabbix monitoring stack, realtime delivery instrumentation, observability tooling.
+- **Major contributions:**
+  - **Read-state service.** Built the initial `read-state` microservice covering channel + DM read tracking, unread counts, and DM read receipts.
+  - **Zabbix monitoring stack.** Added the Zabbix server + agent deploy role, host bootstrap script, log-based delivery monitoring, and agent-interface requirements; iterated on the Ansible role for older versions and fixed group_vars override layout.
+  - **Realtime + DM diagnostics.** Added DM delivery trace instrumentation and Prometheus metrics for `realtime` and `dms`; wrote a closing-socket race repro script and shipped the closing-socket eviction fix on send.
+  - **Observability polish.** Reduced realtime fan-out log volume to keep journald tractable under load; carried forward nginx group_var changes during the Ansible refactor.
+- **Leadership / coordination:** Owned the team's monitoring surface end-to-end (Zabbix triggers, Prometheus metrics, delivery traces) so other members could see what their fixes were actually doing under load.
 
 ---
 
