@@ -147,7 +147,7 @@ Redis is single-threaded, so a single instance saturates one core regardless of 
 - **Read-state cache.** Cassandra reads dominated the read-state service under load. Added a Redis read-through cache (`rs:latest:ch:*`, `rs:cs:*`, `rs:ds:*`, `rs:mc:*`) with batched MGETs, plus a Redis cache for `assertChannelAccess`. Cut Cassandra reads by ~70 %.
 - **Postgres connection pooling.** Cluster-mode workers + 7 services × N connections each blew past Postgres's connection limit. Added **PgBouncer** in front of Postgres; clients reconnect to the pooler, not the DB.
 - **Indexes for hot queries.** Added composite indexes on `community_members`, `channel_members`, `dm_participants`, and the directory ILIKE path. 20–100× speed-ups on the affected queries.
-- **Search → Elasticsearch.** The community directory originally used Postgres trigram + ILIKE. Replaced with an ES projection populated from Postgres on startup and live `community:events`. The SPA's `/search-communities` became a thin BFF over ES with a Redis epoch-cache (`comm:e:*`, `comm:c:*`).
+- **Search → Elasticsearch.** Both message search and the community directory run on ES. Message search uses ES natively (Postgres trigram doesn't scale to message volume); the directory was migrated off Postgres `ILIKE` + trigram once query cost grew. Both indexes project from Postgres / Cassandra and are kept fresh by Redis pub-sub events. See §4 for the rationale, §1 for how the projections fit into the topology.
 
 ### 3.5 DM delivery reliability
 
@@ -181,7 +181,9 @@ We couldn't fix what we couldn't see. Zabbix agent2 runs on every VM with the bu
 
 ## 4. Design Decisions
 
-**Storage.** Postgres for identity / communities / channels / membership (ACID, low row count, easy Drizzle migrations). Cassandra for channel + DM history (append-only, partitioned, scales without app-level sharding). Elasticsearch for full-text + directory search (Postgres `LIKE` doesn't fit). MinIO for attachments via presigned URLs (binary stays off the JSON path).
+**Storage.** Postgres for identity / communities / channels / membership (ACID, low row count, easy Drizzle migrations). Cassandra for channel + DM history (append-only, partitioned, scales without app-level sharding). MinIO for attachments via presigned URLs (binary stays off the JSON path).
+
+**Search (Elasticsearch).** Two distinct use cases, one engine. **Message search** indexes channel + DM message bodies for full-text queries — Postgres `LIKE` / trigram doesn't scale to message volume and lacks ranking, scoring, and analyzer support; an ES inverted index handles it natively. **Community directory** indexes community names for the join-a-server modal — originally Postgres `ILIKE` + trigram, replaced because directory queries grew costly and ES gave us better fuzzy matching for free. Both indexes are projections: Postgres / Cassandra remain source of truth, ES is fed live by Redis events (`channel:events`, `dm:events`, `community:events`) plus a startup reindex from Postgres so a fresh ES node bootstraps without manual ops. The SPA's `/search-communities` is a thin BFF on the communities service with a Redis epoch-cache (`comm:e:*`, `comm:c:*`) sitting in front of ES; `/search/messages` hits the search service directly.
 
 **Redis split.** Four single-threaded `redis-server` instances on a dedicated VM, one per workload (msg pub-sub, meta pub-sub, sessions, cache). Stops session GETs queuing behind pub-sub fan-out on a single event loop.
 
