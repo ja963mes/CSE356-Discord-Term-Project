@@ -44,9 +44,18 @@ CSE 356, Stony Brook University. Group 6 — Discord-style messaging system.
 
 ### Robert Wong (`robw0ng` / `robwong15@gmail.com`)
 
-- **Main responsibilities:** _[fill in — typical: messages service, Cassandra schema, attachments]_
-- **Major contributions:** _[fill in]_
-- **Leadership / coordination:** _[fill in]_
+- **Main responsibilities:** Messages service (channel messages + attachments), DM delivery reliability under load, CI/CD pipeline, Ansible env handling, presence (initial build), read-state hardening.
+- **Major contributions:**
+  - **Messages + attachments.** Built channel-message edit/delete/real-time delivery, MinIO presigned-URL attachments for channels + DMs, added Elasticsearch + MinIO to docker compose, frontend for messages, attachment race-condition fix, MinIO CORS + crash hardening.
+  - **DM delivery under load.** Headline fix that eliminated `Delivery timeout`: sharded DM pub-sub across 20 user-feed channels, per-socket outbound queue with backpressure kill, synchronous dead-socket eviction, timestamp-based Cassandra replay on reconnect, server-side dedup, Redis publish retries.
+  - **Presence (initial build).** Wrote the first presence pipeline — activity detection, broadcast, viewable own + other-user presence, AUTH ↔ realtime decoupling so presence didn't block auth.
+  - **DM metadata migration.** Moved DM conversation metadata from Cassandra to Postgres (DEV-31) for relational lookups + tests.
+  - **CI/CD.** Added targeted-deploy workflow with concurrent-deploy cancellation, deploy summary, post-deploy health checks, retry-on-health-check, and rollback support.
+  - **Ansible env handling.** Built the env-sync playbook and per-VM env templating for auth / Redis / Postgres / realtime-2.
+  - **Cluster mode.** Clustered auth, communities, and messages to one worker per core.
+  - **Read-state hardening.** Scaled up read-state workers, wrapped async handlers in try/catch, fixed invalid-timeuuid process crash, added communities batching + index + pool tweaks for speed.
+  - **Dev workflow + logging.** Structured-logging refactor, hybrid dev workflow (one service local, rest on staging), test-harness overhaul, local-dev-against-staging docs.
+- **Leadership / coordination:** Owned the messages + attachments stack end-to-end and the deploy pipeline — kept staging shippable and recoverable while the rest of the team iterated on perf fixes.
 
 ### Yuchen Lin (`PunchyCandy` / `linyuchen12345@gmail.com`)
 
@@ -77,10 +86,10 @@ When a feature spanned services (e.g. DM delivery reliability touched `dms`, `re
 
 - **GitHub issues + PRs.** PR titles followed `feat: ...` / `fix: ...` / `perf: ...` / `docs: ...` so the merge log doubles as a change log (`git log --oneline main..nick`).
 - **Branching model.** Feature branches → `nick` (integration) → `main-dev` (auto-deploy to staging) → `main` (release). Documented in `docs/branching.md`.
-- **Staging-driven verification.** Every non-trivial change was verified on staging against the autograder before declaring done.
+- **Staging-driven verification.** Every non-trivial change was verified on staging against the load generator before declaring done.
 
 ## Deadline handling
 
 - We worked backwards from each course milestone, checkpoint-tested on staging, and kept the `main-dev` branch always-deployable so a teammate could ship at any time.
-- Load-test results drove the prioritisation: when the autograder reported `Delivery timeout`, that became the next sprint's headline regardless of what was originally planned for the week.
+- Load-test results drove the prioritisation: when the load generator reported `Delivery timeout`, that became the next sprint's headline regardless of what was originally planned for the week.
 - Documentation was written alongside the work, not at the end — the per-decision Ansible/Zabbix docs and `docs/SCALING.md` were updated as fixes landed.

@@ -41,7 +41,7 @@ Real-time text messaging server modelled on Discord. Users register or sign in (
 
 ```mermaid
 flowchart LR
-  Client[Browser / Autograder] --> FE[frontend-vm<br/>nginx + SPA]
+  Client[Browser / Load generator] --> FE[frontend-vm<br/>nginx + SPA]
   FE -->|/auth /communities /messages /search<br/>/dms /read-state| BE[backend-vm<br/>nginx]
   FE -->|/ws| RT[realtime VMs]
   BE --> AUTH[auth] & COMM[communities] & MSG[messages] & SRC[search] & DM[dms] & RS[read-state]
@@ -112,7 +112,7 @@ Runbooks: [docs/STAGING-ROLLOUT.md](./docs/STAGING-ROLLOUT.md), [docs/PROD-SPLIT
 
 ## 3. Scaling and Load Handling
 
-We load-tested with the course autograder (concurrent WebSocket clients pushing channel + DM traffic, plus search and presence). Each round we measured, fixed the headline bottleneck, redeployed, and ran again. Below is the high-level summary; per-bottleneck evidence (commandstats, slowlog, RT spans, autograder errors) lives in [docs/SCALING.md](./docs/SCALING.md).
+We load-tested with the course load generator (concurrent WebSocket clients pushing channel + DM traffic, plus search and presence). Each round we measured, fixed the headline bottleneck, redeployed, and ran again. Below is the high-level summary; per-bottleneck evidence (commandstats, slowlog, RT spans, load-generator errors) lives in [docs/SCALING.md](./docs/SCALING.md).
 
 ### 3.1 From one backend VM to a service-per-VM split
 
